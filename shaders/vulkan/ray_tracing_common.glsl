@@ -24,18 +24,27 @@
 // instance's mesh index sits above RAY_INSTANCE_MESH_SHIFT.
 #define RAY_INSTANCE_SKIP 1u
 #define RAY_INSTANCE_DYNAMIC 2u
-#define RAY_INSTANCE_BLEND 4u
+#define RAY_INSTANCE_NO_SHADOW 4u
+#define RAY_INSTANCE_BLEND 8u
 #define RAY_INSTANCE_MESH_SHIFT 4u
 
 // Which instances a ray sees, matching kRayMask* in ray_acceleration.h (the top level's instance
-// masks). The probes' rays leave moving instances out, so a passing car leaves no trail in their
-// light; the per-pixel visibility rays (shadows, occlusion, reflections) see everything traceable but
-// the Blend surfaces (decals, glass), which only the path tracer's rays meet.
-#define RAY_MASK_STATIC 1u
-#define RAY_MASK_DYNAMIC 2u
-#define RAY_MASK_BLEND 4u
-#define RAY_MASK_PROBE RAY_MASK_STATIC
-#define RAY_MASK_VISIBILITY (RAY_MASK_STATIC | RAY_MASK_DYNAMIC)
+// masks, one bit each for static and moving instances that do and do not cast shadows, and one for
+// the Blend surfaces). The probes' rays leave moving instances out, so a passing car leaves no trail in
+// their light; the per-pixel visibility rays (occlusion, reflections) see everything traceable but the
+// Blend surfaces (decals, glass), which only the path tracer's rays meet. Shadow rays, towards a light,
+// leave out what casts no shadow (a track's ground and grass, as its model says).
+#define RAY_MASK_STATIC_CASTER 1u
+#define RAY_MASK_DYNAMIC_CASTER 2u
+#define RAY_MASK_STATIC_NO_SHADOW 4u
+#define RAY_MASK_DYNAMIC_NO_SHADOW 8u
+#define RAY_MASK_BLEND 16u
+#define RAY_MASK_DYNAMIC (RAY_MASK_DYNAMIC_CASTER | RAY_MASK_DYNAMIC_NO_SHADOW)
+#define RAY_MASK_NO_SHADOW (RAY_MASK_STATIC_NO_SHADOW | RAY_MASK_DYNAMIC_NO_SHADOW)
+#define RAY_MASK_PROBE (RAY_MASK_STATIC_CASTER | RAY_MASK_STATIC_NO_SHADOW)
+#define RAY_MASK_VISIBILITY (RAY_MASK_STATIC_CASTER | RAY_MASK_DYNAMIC_CASTER | RAY_MASK_NO_SHADOW)
+#define RAY_MASK_SHADOW (RAY_MASK_STATIC_CASTER | RAY_MASK_DYNAMIC_CASTER)
+#define RAY_MASK_PROBE_SHADOW RAY_MASK_STATIC_CASTER
 #define RAY_MASK_PATH (RAY_MASK_VISIBILITY | RAY_MASK_BLEND)
 
 // Ray material flags (RayMaterial.emissionFlags.w as uint bits), matching ray_scene.cpp.
@@ -256,6 +265,7 @@ bool TraceSceneRayMasked(vec3 origin, vec3 direction, float tMin, float tMax, bo
 bool TraceSceneRayMasked(vec3 origin, vec3 direction, float tMin, float tMax, bool anyHit, uint rayId, uint rayMask, out RayHit hit)
 {
     uint skipFlags = RAY_INSTANCE_SKIP | ((rayMask & RAY_MASK_DYNAMIC) != 0u ? 0u : RAY_INSTANCE_DYNAMIC) |
+                     ((rayMask & RAY_MASK_NO_SHADOW) != 0u ? 0u : RAY_INSTANCE_NO_SHADOW) |
                      ((rayMask & RAY_MASK_BLEND) != 0u ? 0u : RAY_INSTANCE_BLEND);
     hit.t = tMax;
     hit.instance = 0u;
@@ -376,6 +386,12 @@ bool TraceSceneRayMasked(vec3 origin, vec3 direction, float tMin, float tMax, bo
 bool TraceSceneRay(vec3 origin, vec3 direction, float tMin, float tMax, bool anyHit, uint rayId, out RayHit hit)
 {
     return TraceSceneRayMasked(origin, direction, tMin, tMax, anyHit, rayId, RAY_MASK_PROBE, hit);
+}
+
+// A probe's shadow ray, towards a light: its static casters alone.
+bool TraceSceneShadowRay(vec3 origin, vec3 direction, float tMin, float tMax, uint rayId, out RayHit hit)
+{
+    return TraceSceneRayMasked(origin, direction, tMin, tMax, true, rayId, RAY_MASK_PROBE_SHADOW, hit);
 }
 
 // The hit triangle's normal in world space, unit length, on its front (glTF's counter-clockwise)

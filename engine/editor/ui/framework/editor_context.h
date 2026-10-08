@@ -10,6 +10,7 @@
 #include <engine/editor/services/vehicle_drive_service.h>
 #include <engine/editor/services/vehicle_driver_service.h>
 #include <engine/editor/services/vehicle_rig_service.h>
+#include <engine/platform/display/display_hdr.h>
 #include <engine/renderer/camera.h>
 #include <engine/renderer/rhi/backend.h>
 
@@ -65,7 +66,21 @@ struct EditorVehicleSettings
     VehicleHapticsSettings haptics;
     VehicleSteeringAssistSettings steeringAssist;
     bool manualGearbox = false;
+    // The physics' fixed step as a rate, steps per simulated second.
+    int physicsRateHz = static_cast<int>(1.0f / PhysicsWorld::kDefaultStepSeconds + 0.5f);
     VehiclePhysicsOverlaySettings overlay;
+};
+
+// The display the editor shows on, as the backend sees it each frame (the display calibration).
+struct EditorDisplayStatus
+{
+    // What the OS reports about the display.
+    platform::display::DisplayHdrInfo report;
+    // Whether the output settings ask for HDR10, and whether the swapchain is HDR10.
+    bool hdrRequested = false;
+    bool hdrActive = false;
+    // The values the output uses this frame.
+    DisplayOutput output;
 };
 
 // The editor state more than one window reads or writes, kept across frames by the editor shell.
@@ -107,6 +122,7 @@ struct EditorSharedState
     bool dlssRayReconstructionAvailable = false;
     std::string dlssStatus;
     std::string gpuMemoryStatus;
+    EditorDisplayStatus display;
     // The size the backend renders the scene at whatever the editor asks (--viewport-size, or a
     // recording's size while it runs); unset when the viewport's own settings decide.
     std::optional<RenderExtent> forcedViewportExtent;

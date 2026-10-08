@@ -75,6 +75,11 @@ struct CpuRenderSubmesh
     bool decal = false;
     // The top of water (ModelSubmeshData::water): drawn, and never collided with.
     bool water = false;
+    // ModelSubmeshData::castShadows and drawDistance: false for a submesh no shadow map or shadow ray
+    // sees, and the distances from the drawing camera within which it is drawn (and, from the main
+    // camera, casts its shadow).
+    bool castShadows = true;
+    DrawDistanceRange drawDistance;
     // An anime character material (MINIENGINE_toon), which the toon passes shade; null for PBR.
     std::shared_ptr<const ToonMaterialData> toon;
     // Skinned (MeshData::skin): its joints are the entity's joint palette (RendererWorld::

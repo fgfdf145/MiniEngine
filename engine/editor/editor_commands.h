@@ -62,10 +62,10 @@ struct EditorCommandState
     // assists) along its bottom, and the minimap moves to the top right.
     bool drivingHud = true;
     // The scene's map at a corner of the viewport (the bottom left, the top right under the driving HUD).
-    bool minimap = false;
-    // Everything the editor draws over the viewport's picture: the help text, the view manipulator, the
-    // minimap, the driving HUD and the car's physics overlays. Off leaves the picture clean except for
-    // the gizmos and the selection, which View > Gizmos switches, and a recording's indicator.
+    bool minimap = true;
+    // Everything the editor draws over the viewport's picture: the help text, the minimap, the driving
+    // HUD and the car's physics overlays. Off leaves the picture clean except for the gizmos and the
+    // selection, which View > Gizmos switches, and a recording's indicator.
     bool viewportUi = true;
     // The viewport fills the whole screen, borderless, with every panel, menu and toolbar hidden.
     // The editor UI turns the window fullscreen and back.
@@ -134,6 +134,8 @@ struct EditorSceneCommands
     std::function<void()> createEntity;
     std::function<void(LightType)> createLight;
     std::function<void()> openSceneSettings;
+    // View > Display Calibration: the PS5 / GT7 calibration screens.
+    std::function<void()> openDisplayCalibration;
     std::function<void()> captureViewport;
     std::function<void()> toggleVideoRecording; // Record Viewport: starts or stops
     std::function<void()> toggleQuadRecording;  // Record Quad Cameras: starts or stops

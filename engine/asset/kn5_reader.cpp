@@ -188,7 +188,8 @@ Kn5Node ReadNode(ByteReader& reader, bool readGeometry, int depth)
     {
         node.type = static_cast<Kn5NodeType>(type);
         const bool skinned = node.type == Kn5NodeType::Skinned;
-        reader.Skip(3); // castShadows, isVisible, isTransparent
+        node.castShadows = reader.U8() != 0;
+        reader.Skip(2); // isVisible, isTransparent
         if (skinned)
         {
             const std::uint32_t boneCount = reader.Count(4 + 64, "bones");
@@ -237,7 +238,7 @@ Kn5Node ReadNode(ByteReader& reader, bool readGeometry, int depth)
         node.materialIndex = reader.U32();
         reader.Skip(4);     // layer
         node.lodIn = reader.F32();
-        reader.Skip(4); // lodOut
+        node.lodOut = reader.F32();
         // Only a plain mesh carries a bounding sphere and the isRenderable byte. A skinned one
         // ends at lodOut; reading them anyway desyncs the rest of the tree.
         if (node.type == Kn5NodeType::Mesh)

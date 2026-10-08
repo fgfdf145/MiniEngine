@@ -235,7 +235,7 @@ void main()
                 vec3 toLight = -normalize(sceneLights.lights[0].directionAndType.xyz);
                 float cosine = max(dot(normal, toLight), 0.0);
                 RayHit shadowHit;
-                if (cosine > 0.0 && !TraceSceneRay(OffsetRayOrigin(position, normal), toLight, 0.0, 1e30, true, rayId ^ 0x9e3779b9u, shadowHit))
+                if (cosine > 0.0 && !TraceSceneShadowRay(OffsetRayOrigin(position, normal), toLight, 0.0, 1e30, rayId ^ 0x9e3779b9u, shadowHit))
                 {
                     lit = cosine;
                 }

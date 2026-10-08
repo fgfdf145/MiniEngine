@@ -99,7 +99,7 @@ float TraceLocalLightShadow(SceneLightData light, vec3 worldPosition, vec3 offse
     }
     RayHit hit;
     uint rayId = uint(gl_FragCoord.x) * 73856093u ^ uint(gl_FragCoord.y) * 19349663u ^ uint(frame) * 83492791u;
-    return TraceSceneRayMasked(origin, toTarget / distance, 0.0, reach, true, rayId, RAY_MASK_VISIBILITY, hit) ? 0.0 : 1.0;
+    return TraceSceneRayMasked(origin, toTarget / distance, 0.0, reach, true, rayId, RAY_MASK_SHADOW, hit) ? 0.0 : 1.0;
 }
 #endif
 

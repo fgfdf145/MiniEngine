@@ -7,7 +7,7 @@ SvgIcon / SvgFont as filled geometry, so it stays sharp at any size:
 
   fonts/gt7_meter.svg      the meter's thin, wide digits (speed, gear), drawn here as strokes and
                            filled; an SVG 1.1 font
-  fonts/gt7_sans.svg       Noto Sans SC at weight 350 (Latin and the few Chinese labels), an SVG font
+  fonts/gt7_sans.svg       Noto Sans SC at weight 350, Latin only (the labels are English), an SVG font
   fonts/gt7_sans_bold.svg  the same at weight 700, Latin only (tyre compounds)
   icons/*.svg              the warning lamps and gauge icons, one colour each
 
@@ -30,9 +30,6 @@ from shapely.ops import unary_union
 
 REPO = Path(__file__).resolve().parents[2]
 OUT = REPO / "engine" / "editor" / "ui" / "gt7_hud"
-
-# Chinese labels the HUD uses (km/h, automatic / manual gearbox).
-CJK_LABELS = "公里/小时自动挡手动挡"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -458,8 +455,7 @@ def main():
               "'Source'; licensed under the SIL Open Font License 1.1 (OFL.txt). Written by "
               "tools/gt7_hud/make_gt7_hud_svgs.py.")
     ascii_chars = "".join(chr(c) for c in range(32, 127))
-    labels = "".join(dict.fromkeys(CJK_LABELS))
-    write_sans_font(regular, OUT / "fonts" / "gt7_sans.svg", "GT7HudSans", ascii_chars + labels.replace("/", ""), notice)
+    write_sans_font(regular, OUT / "fonts" / "gt7_sans.svg", "GT7HudSans", ascii_chars, notice)
     bold_chars = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     write_sans_font(bold, OUT / "fonts" / "gt7_sans_bold.svg", "GT7HudSansBold", bold_chars, notice)
     write_svg_font(

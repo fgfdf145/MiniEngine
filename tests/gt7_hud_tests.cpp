@@ -1,8 +1,8 @@
 // The GT7 driving HUD and the SVG fonts it is drawn with: SvgFont reads a font's glyphs and character
 // references and sets text; the HUD's built-in fonts carry every character it writes; the HUD draws in
 // a few states. With MINIENGINE_UI_SNAPSHOT_DIR set the HUD is written there as PNGs:
-//   gt7_hud_reference.png  at the recording's own scale, cropped as the recording is (2000 x 356), to be
-//                          laid over it
+//   gt7_hud_reference.png  the bottom 300 rows of a 3840 x 2160 frame, to be laid over the same rows
+//                          of the game's 4K recording
 //   gt7_hud_states.png     cruising; braking on ABS at the limiter; reversing with traction control
 //                          cutting, each in a 1280 x 720 viewport
 
@@ -16,6 +16,7 @@
 #include "test_fixture_paths.h"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -99,10 +100,6 @@ void TestHudFonts()
     {
         Require(sans->HasGlyph(c), "the sans font has U+" + std::to_string(static_cast<uint32_t>(c)));
     }
-    for (const char32_t c : DecodeUtf8("\xE5\x85\xAC\xE9\x87\x8C\xE5\xB0\x8F\xE6\x97\xB6\xE8\x87\xAA\xE5\x8A\xA8\xE6\x8C\xA1\xE6\x89\x8B"))
-    {
-        Require(sans->HasGlyph(c), "the sans font has the label character U+" + std::to_string(static_cast<uint32_t>(c)));
-    }
     for (const char32_t c : std::u32string(U"SMHV0123456789"))
     {
         Require(bold->HasGlyph(c), "the bold font has U+" + std::to_string(static_cast<uint32_t>(c)));
@@ -128,7 +125,7 @@ Gt7HudInput Cruising()
     Gt7HudInput input;
     input.speedKmh = 88.0f;
     input.rpm = 4200.0f;
-    input.maxRpm = 8000.0f;
+    input.shiftRpm = 7600.0f;
     input.gear = 2;
     input.throttle = 1.0f;
     input.steering = 0.04f;
@@ -163,45 +160,62 @@ std::vector<float> Render(int width, int height, const std::vector<std::pair<ImV
     return Rasterise(*drawData, width, height);
 }
 
+void TestShiftLight()
+{
+    // Dark below 85 % of the revs to change up at, filling up to them, full and teal at them.
+    Require(ComputeGt7ShiftLight(6400.0f, 8000.0f).fill == 0.0f, "the shift light is dark low in the revs");
+    const Gt7ShiftLight starting = ComputeGt7ShiftLight(7200.0f, 8000.0f);
+    const Gt7ShiftLight nearly = ComputeGt7ShiftLight(7900.0f, 8000.0f);
+    Require(starting.fill > 0.2f && starting.fill < nearly.fill && nearly.fill < 1.0f, "the shift light fills with the revs");
+    Require((starting.colour & 0xFF) > (starting.colour >> 16 & 0xFF), "it starts orange (more red than blue)");
+    Require((nearly.colour >> 16 & 0xFF) > (nearly.colour >> 8 & 0xFF), "it turns lilac (more blue than green)");
+    const Gt7ShiftLight full = ComputeGt7ShiftLight(8000.0f, 8000.0f);
+    Require(full.fill == 1.0f && full.colour == IM_COL32(120, 190, 195, 255), "at the shift point it is full and teal");
+}
+
 void TestHud()
 {
     const char* snapshots = std::getenv("MINIENGINE_UI_SNAPSHOT_DIR");
 
-    // At the recording's own scale (a 2270 x 1277 frame), whose bottom 356 rows and first 2000 columns are
-    // the recording.
+    // In a 3840 x 2160 frame, as the game's own 4K recording, whose bottom 300 rows are the snapshot.
     {
-        constexpr int kWidth = 2270;
-        constexpr int kHeight = 1277;
+        constexpr int kWidth = 3840;
+        constexpr int kHeight = 2160;
         const std::vector<float> image = Render(kWidth, kHeight, {{ImVec4(0.0f, 0.0f, kWidth, kHeight), Cruising()}});
-        // The strip has something in it: the speed's digits are white over the panel.
         const auto pixel = [&](int x, int y)
         {
             return image[(static_cast<size_t>(y) * kWidth + x) * 3];
         };
-        const int top = kHeight - 356;
+        // The speed's digits are white over the panel, between x 1740 and 1885 at row 1997 as in the
+        // game's frame.
         float brightest = 0.0f;
-        for (int x = 995; x < 1108; ++x)
+        for (int x = 1740; x < 1885; ++x)
         {
-            brightest = std::max(brightest, pixel(x, top + 232));
+            brightest = std::max(brightest, pixel(x, 1997));
         }
-        Require(brightest > 0.85f, "the speed's digits are drawn where the recording has them");
+        Require(brightest > 0.85f, "the speed's digits are drawn where the game has them");
+        // The brackets beside the pedal bars stand where the game's do (within 2 px): at x 1449 and
+        // 2390, from row 1920 to 2100.
+        const auto near = [&](int x, int y)
+        {
+            float value = 0.0f;
+            for (int dx = -2; dx <= 2; ++dx)
+            {
+                value = std::max(value, pixel(x + dx, y));
+            }
+            return value;
+        };
+        for (const int x : {1449, 2390})
+        {
+            Require(near(x, 2010) > 0.8f && near(x, 1910) < 0.65f && near(x, 2110) < 0.65f,
+                    "a pedal bracket at x " + std::to_string(x) + " spans the game's rows");
+        }
         if (snapshots != nullptr)
         {
-            constexpr int kCropWidth = 2000;
-            constexpr int kCropHeight = 356;
-            std::vector<float> crop(static_cast<size_t>(kCropWidth) * kCropHeight * 3);
-            for (int y = 0; y < kCropHeight; ++y)
-            {
-                for (int x = 0; x < kCropWidth; ++x)
-                {
-                    for (int c = 0; c < 3; ++c)
-                    {
-                        crop[(static_cast<size_t>(y) * kCropWidth + x) * 3 + c] = image[(static_cast<size_t>(top + y) * kWidth + x) * 3 + c];
-                    }
-                }
-            }
+            constexpr int kCropHeight = 300;
+            const std::vector<float> crop(image.end() - static_cast<std::ptrdiff_t>(kCropHeight) * kWidth * 3, image.end());
             std::filesystem::create_directories(snapshots);
-            WritePng(crop, kCropWidth, kCropHeight, std::filesystem::path(snapshots) / "gt7_hud_reference.png");
+            WritePng(crop, kWidth, kCropHeight, std::filesystem::path(snapshots) / "gt7_hud_reference.png");
         }
     }
 
@@ -218,7 +232,6 @@ void TestHud()
         braking.handBrake = true;
         braking.steering = -0.6f;
         braking.boostBar = -0.4f;
-        braking.time = 0.02;
         Gt7HudInput reversing = Cruising();
         reversing.speedKmh = 7.0f;
         reversing.rpm = 6900.0f;
@@ -260,6 +273,7 @@ int main()
     {
         TestSvgFont();
         TestHudFonts();
+        TestShiftLight();
         TestHud();
         std::cout << "gt7 hud tests passed\n";
     }

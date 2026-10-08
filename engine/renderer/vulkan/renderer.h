@@ -57,6 +57,7 @@
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
 #include <engine/renderer/path_tracing.h>
+#include <engine/platform/display/display_hdr.h>
 #include <engine/renderer/local_shadows.h>
 #include <engine/renderer/render_features.h>
 
@@ -131,6 +132,9 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     mutable VkDescriptorSet skinningSet = VK_NULL_HANDLE;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
+    // CpuRenderSubmesh::castShadows and drawDistance.
+    bool castShadows = true;
+    DrawDistanceRange drawDistance;
     std::string name;
     // The entity and this submesh's position among that entity's submeshes, which is what
     // MotionHistory finds last frame's model matrix by. A revision keeps its position: replacing an
@@ -308,6 +312,13 @@ class VulkanRenderer : public EditorRenderBackendBase
     void UpdateMinimapTexture(const std::string& path);
     void ReleaseMinimapTexture();
     void CreateSwapchainResources();
+    // Copies the display monitor's latest answer (main thread).
+    void UpdateDisplayReport();
+    // Whether the output settings ask for HDR10 on this display, and the UI white it would use.
+    bool WantsHdrSwapchain() const;
+    float WantedUiWhiteNits() const;
+    // Gives the HDR10 swapchain the content's luminance range when it changed (render thread).
+    void ApplyHdrMetadata(const DisplayOutput& display);
     // A view's passes on its targets; the viewport's also build the material pipelines every view
     // draws with (the views' render passes are alike, so compatible).
     void CreateScenePasses(VulkanSceneView& view);
@@ -369,13 +380,19 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Destroys the stored textures no live submesh names (after the material sets that named them).
     void DropUnreferencedTextures();
     // models is parallel to m_renderSubmeshes: this frame's model matrix of each submesh. Submeshes
-    // whose bounding sphere is outside the frustum of viewProjection get no draw item.
+    // whose bounding sphere is outside the frustum of viewProjection, or whose centre is outside their
+    // draw distance from the camera of view, get no draw item.
     std::vector<VulkanDrawItem> BuildDrawItems(
         uint32_t imageIndex,
         std::span<const glm::mat4> models,
         const glm::mat4& viewProjection,
         const glm::mat4& view) const;
-    std::vector<ShadowDrawItem> BuildShadowDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const;
+    // The shadow casters: every submesh that casts shadows and that the main camera, at cameraPosition,
+    // is within the draw distance of, so a level of detail casts only where it is drawn.
+    std::vector<ShadowDrawItem> BuildShadowDrawItems(
+        uint32_t imageIndex,
+        std::span<const glm::mat4> models,
+        const glm::vec3& cameraPosition) const;
     // One submesh's draw item and sort key, unless the frustum culls it; BuildDrawItems' loop body.
     static void AppendDrawItem(
         const RenderSubmesh& renderSubmesh,
@@ -391,15 +408,18 @@ class VulkanRenderer : public EditorRenderBackendBase
         Opaque,
         Masked,
     };
-    static ShadowCaster ClassifyShadowCaster(const RenderSubmesh& renderSubmesh);
+    static ShadowCaster ClassifyShadowCaster(const RenderSubmesh& renderSubmesh, const glm::mat4& model, const glm::vec3& cameraPosition);
+    // Whether a camera at cameraPosition is within the submesh's draw distance of its bounds' centre.
+    static bool WithinDrawDistance(const RenderSubmesh& renderSubmesh, const glm::mat4& model, const glm::vec3& cameraPosition);
     static void FillShadowDrawItem(const RenderSubmesh& renderSubmesh, const glm::mat4& model, ShadowDrawItem& item);
     // The selected entity's submeshes the selection outline draws (ScenePassFrameContext::
-    // selectionDrawItems): every one but its decals whose bounds reach the frustum of viewProjection.
-    // Empty without a selection (entt::null).
+    // selectionDrawItems): every one but its decals whose bounds reach the frustum of viewProjection
+    // and that a camera at cameraPosition draws. Empty without a selection (entt::null).
     std::vector<ShadowDrawItem> BuildSelectionDrawItems(
         entt::entity selected,
         std::span<const glm::mat4> models,
-        const glm::mat4& viewProjection) const;
+        const glm::mat4& viewProjection,
+        const glm::vec3& cameraPosition) const;
     void RecordTransitions(
         VkCommandBuffer commandBuffer,
         VulkanSceneView& view,
@@ -636,8 +656,17 @@ class VulkanRenderer : public EditorRenderBackendBase
     // the adapted white point; empty until the first balanced frame.
     WhiteBalanceReferences m_whiteBalanceReferences;
     std::optional<glm::vec2> m_adaptedWhiteXy;
-    // The HDR output setting the current swapchain was created for; a different one recreates it.
+    // What the OS says about the window's display, polled on its own thread; the main thread copies
+    // the latest answer at the start of each frame.
+    std::unique_ptr<platform::display::DisplayHdrMonitor> m_displayMonitor;
+    platform::display::DisplayHdrInfo m_displayInfo;
+    DisplayReport m_displayReport;
+    // The HDR output the current swapchain was created for, and the UI white ImGui's HDR shader was
+    // built with; a different wish recreates them.
     bool m_swapchainHdrRequested = false;
+    float m_swapchainUiWhiteNits = kDefaultUiWhiteNits;
+    // The HDR metadata last given to the swapchain (render thread); reset with the swapchain.
+    std::optional<DisplayOutput> m_appliedHdrMetadata;
     uint32_t m_droppedLightCount = 0;
     uint32_t m_droppedClusterLightCount = 0;
     uint32_t m_droppedLocalShadowCount = 0;

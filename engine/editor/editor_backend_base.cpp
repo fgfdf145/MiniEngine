@@ -298,6 +298,8 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     State().vehicleDrive.haptics = uiFrame.vehicleHaptics;
     State().vehicleDrive.steeringAssist = uiFrame.vehicleSteeringAssist;
     State().vehicleDrive.manualGearbox = uiFrame.vehicleManualGearbox;
+    State().vehicleDrive.physicsStepSeconds =
+        std::clamp(uiFrame.vehiclePhysicsStepSeconds, PhysicsWorld::kMinStepSeconds, PhysicsWorld::kMaxStepSeconds);
     if (actions.stopVehicleDrive)
     {
         VehicleDriveService::Stop(State());

@@ -203,6 +203,8 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         renderSubmesh.alphaMode = material.alphaMode;
         renderSubmesh.localBoundsCenter = submesh.boundsCenter;
         renderSubmesh.localBoundsRadius = submesh.boundsRadius;
+        renderSubmesh.castShadows = submesh.castShadows;
+        renderSubmesh.drawDistance = submesh.drawDistance;
         renderSubmesh.material.baseColorFactor[0] = material.baseColor[0];
         renderSubmesh.material.baseColorFactor[1] = material.baseColor[1];
         renderSubmesh.material.baseColorFactor[2] = material.baseColor[2];

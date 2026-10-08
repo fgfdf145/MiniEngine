@@ -4,6 +4,7 @@
 #include "gt7_tonemap.glsl"
 #include "pre_exposure.glsl"
 #include "hdr_output.glsl"
+#include "display_calibration.glsl"
 #include "pbr_neutral.glsl"
 #include "gbuffer_common.glsl"
 #include "gbuffer_inputs.glsl"
@@ -41,13 +42,26 @@ const uint TONEMAP_OPERATOR_NONE = 3u;
 layout(push_constant) uniform TonemapConstants
 {
     uint gbufferView;
-    // 1 for HDR10 output: GT7's HDR curve for peakNits, written relative to kUiWhiteNits.
+    // 1 for HDR10 output: GT7's HDR curve for peakNits, lifted to blackNits, written relative to
+    // uiWhiteNits (imgui_hdr10.frag puts 1.0 there).
     uint hdrOutput;
     float peakNits;
     // One of the TONEMAP_OPERATOR_* values below.
     uint toneOperator;
     // Auto white balance, linear Rec.709 to linear Rec.709, as three columns (xyz used).
     vec4 whiteBalance[3];
+    // The display calibration (display_calibration.glsl).
+    float uiWhiteNits;
+    float blackNits;
+    // GT7's Exposure, as a scale, and Saturation.
+    float exposureScale;
+    float saturation;
+    // SDR bright and dark section correction: the signal white and black go to.
+    float sdrWhite;
+    float sdrBlack;
+    // A CALIBRATION_* pattern in place of the scene, and its trial level.
+    uint pattern;
+    float patternLevel;
 }
 constants;
 
@@ -59,7 +73,26 @@ void main()
 {
     vec3 color;
 
-    if (constants.gbufferView == GBUFFER_VIEW_ALBEDO)
+    const vec2 outputSize = vec2(textureSize(hdrTexture, 0));
+    const float aspect = outputSize.x / max(outputSize.y, 1.0f);
+    const vec2 centred = (fragTexCoord - vec2(0.5f)) * vec2(aspect, 1.0f);
+    const bool hdrPattern = constants.pattern == CALIBRATION_HDR_FULL_FRAME || constants.pattern == CALIBRATION_HDR_WINDOW ||
+                            constants.pattern == CALIBRATION_HDR_BLACK;
+    const bool sdrPattern = constants.pattern == CALIBRATION_SDR_BRIGHT || constants.pattern == CALIBRATION_SDR_DARK;
+    const bool samplePattern = constants.pattern == CALIBRATION_SAMPLE_WEDGE || constants.pattern == CALIBRATION_SAMPLE_SKY;
+
+    if (hdrPattern)
+    {
+        // Absolute luminance, past every adjustment: what the display is asked to show is exactly the
+        // level (or the ring's), relative to the UI white that imgui_hdr10.frag undoes.
+        color = vec3(CalibrationHdrNits(constants.pattern, constants.patternLevel, centred, aspect) / constants.uiWhiteNits);
+    }
+    else if (sdrPattern)
+    {
+        // The checkerboard's signal through the correction being tried.
+        color = vec3(CorrectSdrSignal(SrgbDecode(CalibrationSdrSignal(constants.pattern, centred)), constants.sdrWhite, constants.sdrBlack));
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_ALBEDO)
     {
         // Sampled through the _SRGB format, so already linear; the sRGB LDR target re-encodes it.
         // Shows albedo as stored: unshaded, unexposed and not tone mapped.
@@ -160,11 +193,19 @@ void main()
         // pre_exposure.glsl). Clamp below fp16's maximum before the operator: an infinite input
         // would turn into NaN inside it and show a very bright pixel as black.
         color = min(texture(hdrTexture, fragTexCoord).rgb, vec3(65504.0));
+        if (samplePattern)
+        {
+            // A test card in place of the scene, through everything the scene goes through.
+            color = constants.pattern == CALIBRATION_SAMPLE_WEDGE ? CalibrationSampleWedge(fragTexCoord) : CalibrationSampleSky(fragTexCoord, aspect);
+        }
 
         // Auto white balance, before the operator: a partial chromatic adaptation toward D65 (see
         // engine/renderer/white_balance.h). It can push a saturated colour slightly negative; the
         // operator clamps at zero.
         color = mat3(constants.whiteBalance[0].xyz, constants.whiteBalance[1].xyz, constants.whiteBalance[2].xyz) * color;
+
+        // The display calibration's Exposure and Saturation (1 and 1 for the Khronos reference view).
+        color = AdjustSaturation(color * constants.exposureScale, constants.saturation);
 
         if (constants.toneOperator == TONEMAP_OPERATOR_KHRONOS_REFERENCE || constants.toneOperator == TONEMAP_OPERATOR_PBR_NEUTRAL)
         {
@@ -178,6 +219,10 @@ void main()
             {
                 color = KhronosViewerOutputForSrgbTarget(color);
             }
+            else if (constants.hdrOutput == 0u)
+            {
+                color = CorrectSdr3(color, constants.sdrWhite, constants.sdrBlack);
+            }
         }
         else if (constants.toneOperator == TONEMAP_OPERATOR_NONE)
         {
@@ -185,24 +230,26 @@ void main()
             // HDR10 output, frame-buffer units become nits relative to the UI white, up to the peak.
             if (constants.hdrOutput != 0u)
             {
-                color = clamp(color * (Gt7FrameBufferToPhysical(1.0f) / kUiWhiteNits), vec3(0.0f), vec3(constants.peakNits / kUiWhiteNits));
+                vec3 nits = clamp(color * Gt7FrameBufferToPhysical(1.0f), vec3(0.0f), vec3(constants.peakNits));
+                color = LiftToBlackFloorNits3(nits, constants.blackNits) / constants.uiWhiteNits;
             }
             else
             {
-                color = clamp(color * kExposedPerFrameBufferUnit, vec3(0.0f), vec3(1.0f));
+                color = CorrectSdr3(clamp(color * kExposedPerFrameBufferUnit, vec3(0.0f), vec3(1.0f)), constants.sdrWhite, constants.sdrBlack);
             }
         }
         // GT7's operator (see gt7_tonemap.glsl). The result is display-referred linear Rec.709;
         // the LDR target's sRGB format applies the transfer function on write.
         else if (constants.hdrOutput != 0u)
         {
-            // Frame-buffer units (1.0 = 100 cd/m^2) up to the display peak, then relative to the UI
-            // white that imgui_hdr10.frag maps to kUiWhiteNits.
-            color = TonemapFrameBufferRec709Hdr(color, constants.peakNits) * (Gt7FrameBufferToPhysical(1.0f) / kUiWhiteNits);
+            // Frame-buffer units (1.0 = 100 cd/m^2) up to the display peak, lifted onto the display's
+            // black floor, then relative to the UI white that imgui_hdr10.frag maps back to nits.
+            vec3 nits = TonemapFrameBufferRec709Hdr(color, constants.peakNits) * Gt7FrameBufferToPhysical(1.0f);
+            color = LiftToBlackFloorNits3(nits, constants.blackNits) / constants.uiWhiteNits;
         }
         else
         {
-            color = TonemapFrameBufferRec709(color);
+            color = CorrectSdr3(TonemapFrameBufferRec709(color), constants.sdrWhite, constants.sdrBlack);
         }
     }
 

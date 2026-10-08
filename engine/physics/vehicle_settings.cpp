@@ -866,7 +866,8 @@ void WorkGearboxClutch(const VehicleGearbox& gearbox, VehicleGearboxState& state
 }
 }
 
-void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds, float engineRpm)
+void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds, float engineRpm,
+                            int shifts)
 {
     const int top = static_cast<int>(gearbox.forwardRatios.size());
     const float throttle = std::clamp(std::abs(forward), 0.0f, 1.0f);
@@ -879,12 +880,62 @@ void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& 
     if ((forward > 0.0f && state.gear < 0) || (forward < 0.0f && state.gear > 0) || state.gear == 0)
     {
         state.gear = forward < 0.0f ? -1 : 1;
+        state.manualHoldLeft = 0.0f;
         StartGearChange(gearbox, state, false);
         StartLaunch(gearbox, state, engineRpm);
     }
 
+    // The driver's changes (the paddles), forward only: the box holds the gear for a while after each.
+    state.manualHoldLeft = std::max(state.manualHoldLeft - deltaSeconds, 0.0f);
+    if (shifts != 0 && state.gear > 0 && top > 0)
+    {
+        state.manualHoldLeft = gearbox.manualHoldSeconds;
+        for (; shifts != 0; shifts += shifts > 0 ? -1 : 1)
+        {
+            const int from = state.gear;
+            const int to = std::clamp(from + (shifts > 0 ? 1 : -1), 1, top);
+            if (to == from || (to < from && gearbox.limiterRpm > 0.0f && gearRpm(to) > gearbox.limiterRpm))
+            {
+                break; // past first or top, or a change down onto the limiter
+            }
+            state.gear = to;
+            if (!state.idling)
+            {
+                StartGearChange(gearbox, state, true, to > from);
+            }
+        }
+    }
+
     const bool ready = state.idling || (state.switchLeft <= 0.0f && state.releaseLeft <= 0.0f && state.latencyLeft <= 0.0f);
-    if (state.gear > 0 && top > 0 && ready)
+    if (state.manualHoldLeft > 0.0f && state.gear > 0 && top > 0)
+    {
+        // Holding the driver's gear: up only on the limiter (by the engine's revs too, which run ahead
+        // of the wheels while the clutch slips), down only where the engine would labour.
+        if (ready)
+        {
+            const float limiter = gearbox.limiterRpm > 0.0f ? 0.99f * gearbox.limiterRpm : gearbox.shiftPoints.upFull;
+            const float revs = std::max(gearRpm(state.gear), state.launching ? 0.0f : engineRpm);
+            int target = std::min(state.gear, top);
+            if (target < top && revs >= limiter)
+            {
+                ++target;
+            }
+            else if (target > 1 && gearRpm(target) < gearbox.shiftPoints.downClosed)
+            {
+                --target;
+            }
+            if (target != state.gear)
+            {
+                const bool up = target > state.gear;
+                state.gear = target;
+                if (!state.idling)
+                {
+                    StartGearChange(gearbox, state, true, up);
+                }
+            }
+        }
+    }
+    else if (state.gear > 0 && top > 0 && ready)
     {
         const VehicleShiftPoints& points = gearbox.shiftPoints;
         const float up = points.upLight + (points.upFull - points.upLight) * throttle;
@@ -931,6 +982,7 @@ void UpdateManualGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& sta
     const int top = static_cast<int>(gearbox.forwardRatios.size());
     const float throttle = std::clamp(std::abs(forward), 0.0f, 1.0f);
     const int lowest = gearbox.reverseRatio > 0.0f ? -1 : 0;
+    state.manualHoldLeft = 0.0f; // the automatic's hold, should the driver switch back to it
     for (; shifts != 0; shifts += shifts > 0 ? -1 : 1)
     {
         const int from = state.gear;

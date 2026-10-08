@@ -159,6 +159,10 @@ struct ModelSubmeshData
     int32_t skinBinding = -1;
     // Drawn by a MINIENGINE_water node: the top of water, which a car goes through rather than stands on.
     bool water = false;
+    // MINIENGINE_mesh_draw: false for a submesh that casts no shadow, and the camera distances it is
+    // drawn between.
+    bool castShadows = true;
+    DrawDistanceRange drawDistance;
     // KHR_materials_variants: the material each of the model's variants gives this primitive, one
     // entry per LoadedModelData::materialVariants (the primitive's own material where the variant
     // has no mapping). Empty for a model without variants.

@@ -19,12 +19,16 @@ namespace me
 
 struct RayTracingFunctions;
 
-// Top-level instance masks, matching RAY_MASK_* in shaders/vulkan/ray_tracing_common.glsl: the probes'
-// rays trace kRayMaskStatic only, the per-pixel visibility rays both.
-inline constexpr uint8_t kRayMaskStatic = 0x1;
-inline constexpr uint8_t kRayMaskDynamic = 0x2;
-// Blend surfaces (kRayInstanceBlend), moving or not: only the path tracer's rays name it.
-inline constexpr uint8_t kRayMaskBlend = 0x4;
+// Top-level instance masks, matching RAY_MASK_* in shaders/vulkan/ray_tracing_common.glsl: one each
+// for static and moving instances that do and do not cast shadows. The probes' rays trace the static
+// ones, shadow rays the casters, the per-pixel visibility rays all four.
+inline constexpr uint8_t kRayMaskStaticCaster = 0x1;
+inline constexpr uint8_t kRayMaskDynamicCaster = 0x2;
+inline constexpr uint8_t kRayMaskStaticNoShadow = 0x4;
+inline constexpr uint8_t kRayMaskDynamicNoShadow = 0x8;
+// Blend surfaces (kRayInstanceBlend), moving or not, casting shadows or not: only the path tracer's
+// rays name it.
+inline constexpr uint8_t kRayMaskBlend = 0x10;
 
 // One mesh's bottom-level acceleration structure, shared by every content that holds the mesh and
 // freed with the last of them. Made on the ray scene's worker, built on the GPU by the

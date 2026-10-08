@@ -12,6 +12,7 @@
 #include <imgui.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace me
@@ -132,6 +133,38 @@ void DrawDriverAids(VehicleSettings& tuning, const VehicleDriveStatus& status, E
     if (changed && status.active)
     {
         result.actions.driverAids = std::array<bool, 2>{tuning.useAbs, tuning.useTractionControl};
+    }
+}
+
+// How many fixed steps the physics takes a simulated second, which a car being driven takes at once.
+void DrawPhysicsRate(int& rateHz)
+{
+    const int minRate = static_cast<int>(std::lround(1.0f / PhysicsWorld::kMaxStepSeconds));
+    const int maxRate = static_cast<int>(std::lround(1.0f / PhysicsWorld::kMinStepSeconds));
+    DragIntInRange("Physics Rate (Hz)", &rateHz, minRate, maxRate);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "How many fixed steps the physics takes per simulated second (1000 by default; Assetto Corsa runs 333).\n"
+            "Faster follows stiff springs, kerbs and the tyres' contact more closely, at a cost that grows in step with\n"
+            "the rate (a world too slow for real time runs in slow motion); slower is cheaper but a stiff car or the\n"
+            "brush tyre can ring or go unstable. Applies at once, also while driving.");
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%.3f ms", 1000.0f / static_cast<float>(std::max(rateHz, 1)));
+    static constexpr int kPresets[] = {333, 500, 1000, 2000};
+    for (const int preset : kPresets)
+    {
+        if (preset != kPresets[0])
+        {
+            ImGui::SameLine();
+        }
+        char label[16];
+        std::snprintf(label, sizeof(label), "%d##rate", preset);
+        if (ImGui::SmallButton(label))
+        {
+            rateHz = preset;
+        }
     }
 }
 
@@ -331,14 +364,13 @@ void VehiclePanel::OnGui(EditorContext& context)
                 "The throttle only drives and the brake only brakes; reverse goes in once the car has (nearly) stopped,\n"
                 "and a change down that would over-rev the engine is refused. Holding the clutch (or the hand brake) opens it;\n"
                 "let go, it bites: rev the engine with it held and let go to launch or kick the car out.\n"
-                "Off: the automatic picks the gear and pulling back reverses once stopped.");
+                "Off: the automatic picks the gear and pulling back reverses once stopped. Its paddles (E/Q, R1/L1) still\n"
+                "change gear, as a tiptronic's: it then holds your gear (M on the HUD) until 8 s pass without a change,\n"
+                "changing up itself only on the limiter and down only where the engine would labour.");
         }
         ImGui::TextUnformatted(vehicle.manualGearbox ? "W/S or Up/Down: throttle and brake" : "W/S or Up/Down: throttle, brake and reverse");
         ImGui::TextUnformatted("A/D or Left/Right: steer    Space: hand brake");
-        if (vehicle.manualGearbox)
-        {
-            ImGui::TextUnformatted("E/Q: change up/down    N (held): clutch");
-        }
+        ImGui::TextUnformatted(vehicle.manualGearbox ? "E/Q: change up/down    N (held): clutch" : "E/Q: change up/down (holds the gear for 8 s)");
         ImGui::TextUnformatted("Backspace: reset the car    R: flip upright where it is    F5: stop");
         ImGui::TextUnformatted("V: change view (chase, cockpit, bonnet, bumper)");
         ImGui::TextUnformatted("B: ABS on/off    T: traction control on/off");
@@ -520,9 +552,10 @@ void VehiclePanel::OnGui(EditorContext& context)
 
     if (ImGui::CollapsingHeader("Tuning"))
     {
+        DrawPhysicsRate(vehicle.physicsRateHz);
         if (status.active)
         {
-            ImGui::TextDisabled("Changes apply the next time driving starts.");
+            ImGui::TextDisabled("Other changes apply the next time driving starts.");
         }
         if (DrawTuning(vehicle.tuning) && status.active)
         {

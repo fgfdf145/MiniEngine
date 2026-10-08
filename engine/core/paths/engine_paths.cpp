@@ -74,6 +74,30 @@ std::filesystem::path ResolveRoot(
     return Normalize(fallback);
 }
 
+// The per-user cache that every checkout and build directory on the machine shares, so a new
+// worktree reuses the textures another one already compressed instead of compressing them again.
+// Entries are keyed by source file path, size and write time, so sharing never serves a stale one.
+std::filesystem::path SharedCacheRoot()
+{
+#if defined(_WIN32)
+    if (const std::optional<std::filesystem::path> localAppData = ReadEnvironmentPath("LOCALAPPDATA");
+        localAppData.has_value())
+    {
+        return *localAppData / "MiniEngine" / "cache";
+    }
+#else
+    if (const std::optional<std::filesystem::path> xdgCache = ReadEnvironmentPath("XDG_CACHE_HOME"); xdgCache.has_value())
+    {
+        return *xdgCache / "miniengine";
+    }
+    if (const std::optional<std::filesystem::path> home = ReadEnvironmentPath("HOME"); home.has_value())
+    {
+        return *home / ".cache" / "miniengine";
+    }
+#endif
+    return MINIENGINE_DEFAULT_CACHE_DIR;
+}
+
 ResolvedRoots Resolve(const EnginePaths::Overrides& overrides)
 {
     ResolvedRoots roots;
@@ -82,7 +106,7 @@ ResolvedRoots Resolve(const EnginePaths::Overrides& overrides)
     roots.assets = ResolveRoot(
         overrides.assetsRoot, "MINIENGINE_ASSETS_DIR", roots.project / "assets");
     roots.cache = ResolveRoot(
-        overrides.cacheRoot, "MINIENGINE_CACHE_DIR", MINIENGINE_DEFAULT_CACHE_DIR);
+        overrides.cacheRoot, "MINIENGINE_CACHE_DIR", SharedCacheRoot());
     roots.shaders = ResolveRoot(
         overrides.shaderRoot, "MINIENGINE_SHADER_DIR", MINIENGINE_DEFAULT_SHADER_DIR);
     return roots;

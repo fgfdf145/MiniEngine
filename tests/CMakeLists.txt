@@ -234,6 +234,32 @@ endif()
 
 set_target_properties(miniengine_tonemap_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_display_calibration_tests
+    display_calibration_tests.cpp
+)
+miniengine_group_target_sources(miniengine_display_calibration_tests)
+
+target_link_libraries(miniengine_display_calibration_tests
+    PRIVATE
+        engine_render_core
+)
+
+add_test(
+    NAME miniengine.display_calibration
+    COMMAND miniengine_display_calibration_tests
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_display_calibration_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_display_calibration_tests>
+            $<TARGET_FILE_DIR:miniengine_display_calibration_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+set_target_properties(miniengine_display_calibration_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_scene_lighting_tests
     scene_lighting_tests.cpp
 )
@@ -1641,6 +1667,35 @@ add_test(
 )
 
 set_target_properties(miniengine_preferences_window_tests PROPERTIES FOLDER "Tests")
+
+# View > Display Calibration drawn headless: its steps, keys, Cancel and Finish.
+add_executable(miniengine_display_calibration_window_tests
+    display_calibration_window_tests.cpp
+    imgui_software_raster.h
+)
+miniengine_group_target_sources(miniengine_display_calibration_window_tests)
+
+target_link_libraries(miniengine_display_calibration_window_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_display_calibration_window_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_display_calibration_window_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_display_calibration_window_tests>
+            $<TARGET_FILE_DIR:miniengine_display_calibration_window_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.display_calibration_window
+    COMMAND miniengine_display_calibration_window_tests
+)
+
+set_target_properties(miniengine_display_calibration_window_tests PROPERTIES FOLDER "Tests")
 
 # The streamed world's manifest and what a cell shows near and far (WorldStreamingService). Links
 # engine_editor for the service; nothing is drawn.

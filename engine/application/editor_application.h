@@ -55,6 +55,9 @@ struct EditorApplicationOptions
     // --debug-view N starts with Graphics Debug's G-buffer view N (GBufferDebugView); --no-ddgi with
     // the DDGI probes off.
     std::optional<GBufferDebugView> debugView;
+    // --display-pattern N,LEVEL shows the display calibration's pattern N (CalibrationPattern) at
+    // LEVEL in place of the scene, to measure what reaches the display.
+    std::optional<DisplayCalibrationView> displayPattern;
     bool ddgiDisabled = false;
     // --software-rays: the ray scene's compute walk even where hardware ray tracing exists.
     bool softwareRays = false;
@@ -85,6 +88,8 @@ struct EditorApplicationOptions
     // where --camera (or the scene) puts it and does not follow the car.
     std::optional<VehicleCameraView> driveView;
     bool driveCameraFixed = false;
+    // --physics-rate HZ: the physics' fixed steps per second (the Vehicle panel's Physics Rate), 60 to 4000.
+    std::optional<int> physicsRateHz;
     // --no-audio: opens no playback device. Scripted runs (--frames) open none either: their sounds
     // are mixed into nothing.
     bool audioDisabled = false;

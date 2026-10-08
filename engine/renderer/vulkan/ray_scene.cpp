@@ -423,12 +423,12 @@ void VulkanRayScene::SetContent(
             meshes.reserve(submeshes->size());
             buffers.reserve(submeshes->size());
             slots.reserve(submeshes->size());
-            build.blend.reserve(submeshes->size());
+            build.flags.reserve(submeshes->size());
             for (const RaySceneSubmesh& submesh : *submeshes)
             {
                 meshes.push_back(submesh.mesh);
                 buffers.push_back(submesh.buffer);
-                build.blend.push_back(submesh.blend ? 1u : 0u);
+                build.flags.push_back(submesh.flags);
                 slots.push_back(submesh.slot);
             }
             // First the distinct meshes and which need building, then the builds on a few threads
@@ -561,7 +561,7 @@ void VulkanRayScene::SetContent(
             for (size_t index = 0; index < build.submeshMeshes.size() && index < models.size(); ++index)
             {
                 inputs.push_back(RayInstanceInput{
-                    build.submeshMeshes[index], models[index], slots[index], build.blend[index] != 0 ? kRayInstanceBlend : 0u});
+                    build.submeshMeshes[index], models[index], slots[index], build.flags[index]});
             }
             if (inputs.size() == build.submeshMeshes.size())
             {
@@ -607,7 +607,7 @@ void VulkanRayScene::InstallBuild(const std::function<void()>& waitForFrames)
     }
     DropFinishedStaleBuilds();
     m_submeshMeshes = std::move(build.submeshMeshes);
-    m_installedBlend = std::move(build.blend);
+    m_installedFlags = std::move(build.flags);
     // Only the build of the last SetContent installs (the others are stale), so its submeshes are
     // m_submeshes.
     m_installedSubmeshes = m_submeshes;
@@ -729,11 +729,13 @@ void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::ma
     for (uint32_t index = 0; index < static_cast<uint32_t>(m_submeshMeshes.size()); ++index)
     {
         const uint32_t current = m_installedToCurrent[index];
-        // Blend surfaces are seen by the path tracer's rays alone (kRayInstanceBlend). Submeshes
-        // streamed out since this content installed by none.
-        const bool blend = index < m_installedBlend.size() && m_installedBlend[index] != 0;
+        // Each submesh's own flags (RaySceneSubmesh::flags: Blend surfaces only the path tracer's rays
+        // meet, far levels of detail none, what casts no shadow): submeshes streamed out since this
+        // content installed are skipped by every ray.
+        const uint32_t ownFlags = index < m_installedFlags.size() ? m_installedFlags[index] : 0u;
         const bool moving = current != kNoSubmesh && current < movingInstances.size() && movingInstances[current] != 0;
-        const uint32_t flags = current == kNoSubmesh ? kRayInstanceSkip : (blend ? kRayInstanceBlend : 0u) | (moving ? kRayInstanceDynamic : 0u);
+        const uint32_t flags = (ownFlags & kRayInstanceSkip) != 0u || current == kNoSubmesh ? kRayInstanceSkip
+                                                                                             : ownFlags | (moving ? kRayInstanceDynamic : 0u);
         if (current != kNoSubmesh)
         {
             m_installedModels[index] = models[current];

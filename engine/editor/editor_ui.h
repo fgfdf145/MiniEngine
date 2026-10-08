@@ -178,6 +178,8 @@ struct EditorUiFrameResult
     VehicleHapticsSettings vehicleHaptics;
     VehicleSteeringAssistSettings vehicleSteeringAssist;
     bool vehicleManualGearbox = false;
+    // The Vehicle panel's physics rate as a fixed step (seconds), which a car being driven takes at once.
+    float vehiclePhysicsStepSeconds = PhysicsWorld::kDefaultStepSeconds;
     // The Suspension Rigs window's settings for the live rig, taken while it runs. Unset when the
     // window has never been opened: the rig then keeps what it has.
     std::optional<VehicleRigExcitation> vehicleRigExcitation;
@@ -216,6 +218,11 @@ class EditorUiController
     VehicleCameraSettings& EditVehicleCamera()
     {
         return m_state.vehicle.camera;
+    }
+    // The Vehicle panel's physics rate (steps per second), likewise.
+    int& EditVehiclePhysicsRate()
+    {
+        return m_state.vehicle.physicsRateHz;
     }
     EditorUiFrameResult Draw(
         Camera& camera,
@@ -282,6 +289,11 @@ class EditorUiController
         m_state.dlssAvailable = available;
         m_state.dlssRayReconstructionAvailable = rayReconstructionAvailable;
         m_state.dlssStatus = std::move(status);
+    }
+    // The display and its HDR output, for the display calibration and Graphics Debug's Output section.
+    void SetDisplayStatus(EditorDisplayStatus status)
+    {
+        m_state.display = std::move(status);
     }
     // Whether the render backend can path trace and use hardware ray tracing (the Render > Pipeline
     // modes and the Ray Tracing switch), and what the Graphics Debug window says of path tracing.

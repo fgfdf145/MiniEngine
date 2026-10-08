@@ -38,8 +38,6 @@ constexpr float kSelectionOutlineThickness = 2.0f;
 constexpr float kLightIconRadiusPixels = 10.0f;
 constexpr float kLightIconHitHalfSizePixels = 16.0f;
 constexpr float kLightSelectionRingRadiusPixels = 14.0f;
-constexpr float kViewCubeSizePixels = 128.0f;
-constexpr float kViewCubeMarginPixels = 16.0f;
 constexpr float kOverlayTextMarginPixels = 12.0f;
 constexpr float kMinimapSizePixels = 220.0f;
 constexpr float kMinimapMarginPixels = 16.0f;
@@ -164,16 +162,17 @@ void DrawViewportOverlay(const ViewportOverlayRect& rect, ImTextureID viewportTe
 
 // The driven car as the driving HUD shows it. The pedals are what the car takes: pulling the throttle
 // back brakes, except in the automatic's reverse, where it drives and pushing it brakes.
-Gt7HudInput BuildGt7HudInput(const VehicleDriveStatus& vehicle, double time)
+Gt7HudInput BuildGt7HudInput(const VehicleDriveStatus& vehicle)
 {
     const VehicleTelemetry& telemetry = vehicle.telemetry;
     const VehicleControls& controls = vehicle.controls;
     Gt7HudInput input;
     input.speedKmh = std::abs(telemetry.forwardSpeed) * 3.6f;
     input.rpm = telemetry.engineRpm;
-    input.maxRpm = vehicle.engineMaxRpm;
+    input.shiftRpm = vehicle.shiftUpRpm;
     input.gear = telemetry.gear;
     input.manualGearbox = vehicle.manualGearbox;
+    input.manualHold = telemetry.manualHold;
     const bool reversing = telemetry.gear < 0 && !vehicle.manualGearbox;
     const float drive = reversing ? -controls.throttle : controls.throttle;
     input.throttle = std::clamp(drive, 0.0f, 1.0f);
@@ -190,7 +189,6 @@ Gt7HudInput BuildGt7HudInput(const VehicleDriveStatus& vehicle, double time)
     input.odometerKm = vehicle.odometerMetres / 1000.0;
     input.frontTyre = vehicle.frontTyre;
     input.rearTyre = vehicle.rearTyre;
-    input.time = time;
     return input;
 }
 
@@ -218,7 +216,9 @@ void DrawFullscreenViewportHud(
     if (vehicle.active && !drivingHud)
     {
         const VehicleTelemetry& telemetry = vehicle.telemetry;
-        const std::string gear = telemetry.gear < 0 ? "R" : telemetry.gear == 0 ? "N" : std::to_string(telemetry.gear);
+        const std::string gear = telemetry.gear < 0    ? "R"
+                                 : telemetry.gear == 0 ? "N"
+                                                       : (telemetry.manualHold ? "M" : "") + std::to_string(telemetry.gear);
         const std::string text = std::to_string(static_cast<int>(std::abs(telemetry.forwardSpeed) * 3.6f + 0.5f)) + " km/h   " + gear;
         const ImVec2 size = ImGui::CalcTextSize(text.c_str());
         drawText(ImVec2(rect.origin.x + rect.size.x - size.x - margin, rect.origin.y + rect.size.y - size.y - margin), text);
@@ -708,34 +708,6 @@ void HandleViewportSelection(
     }
 
     scene.SetSelectedEntity(PickHoveredEntity(projectedCenters, uiScale));
-}
-
-void DrawViewManipulator(
-    Camera& camera,
-    ViewportMatrices& matrices,
-    const ViewportOverlayRect& viewportRect,
-    float uiScale)
-{
-    if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f || viewportRect.drawList == nullptr)
-    {
-        return;
-    }
-
-    ImGuizmo::SetDrawlist(viewportRect.drawList);
-    const glm::mat4 viewBefore = matrices.view;
-    const float cubeSize = kViewCubeSizePixels * uiScale;
-    const float cubeMargin = kViewCubeMarginPixels * uiScale;
-    ImGuizmo::ViewManipulate(
-        glm::value_ptr(matrices.view),
-        7.5f,
-        ImVec2(viewportRect.origin.x + viewportRect.size.x - cubeSize - cubeMargin, viewportRect.origin.y + cubeMargin),
-        ImVec2(cubeSize, cubeSize),
-        IM_COL32(32, 32, 32, 180));
-    if (matrices.view != viewBefore)
-    {
-        camera.SetFromViewMatrix(matrices.view);
-        matrices.view = camera.GetViewMatrix();
-    }
 }
 
 // ImGuizmo sizes its handle lines, arrows and circles in pixels; scale them from its defaults.
@@ -1369,7 +1341,7 @@ void ViewportPanel::OnGui(EditorContext& context)
     const bool drivingHud = viewportUi && state.vehicleStatus.active && state.commands.drivingHud;
     if (drivingHud && viewportRect.drawList != nullptr)
     {
-        DrawGt7Hud(*viewportRect.drawList, viewportRect.origin, viewportRect.size, BuildGt7HudInput(state.vehicleStatus, ImGui::GetTime()));
+        DrawGt7Hud(*viewportRect.drawList, viewportRect.origin, viewportRect.size, BuildGt7HudInput(state.vehicleStatus));
     }
     // Centred on the car while one is driven, else on the camera.
     const bool minimap = viewportUi && state.commands.minimap;
@@ -1395,11 +1367,6 @@ void ViewportPanel::OnGui(EditorContext& context)
             DrawFullscreenViewportHud(viewportRect, UiScale(), ImGui::GetTime() - state.fullscreenEnteredTime, state.vehicleStatus, drivingHud);
         }
         return;
-    }
-    if (viewportUi)
-    {
-        DrawViewManipulator(camera, matrices, viewportRect, UiScale());
-        RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
     }
     // View > Gizmos hides the transform gizmo and the lights' shapes; lights stay selectable.
     if (state.commands.gizmos)

@@ -91,7 +91,7 @@ float HitSunVisibility(vec3 position, vec3 faceNormal, uint rayId)
     }
     RayHit shadowHit;
     vec3 origin = OffsetRayOrigin(position, faceNormal);
-    return TraceSceneRayMasked(origin, toSun, 0.0, HIT_SHADOW_DISTANCE, true, rayId, RAY_MASK_VISIBILITY, shadowHit) ? 0.0 : 1.0;
+    return TraceSceneRayMasked(origin, toSun, 0.0, HIT_SHADOW_DISTANCE, true, rayId, RAY_MASK_SHADOW, shadowHit) ? 0.0 : 1.0;
 }
 
 void main()

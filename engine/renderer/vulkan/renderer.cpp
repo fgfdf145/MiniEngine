@@ -212,12 +212,6 @@ VulkanTextureFormat ToVulkanTextureFormat(TextureUsage usage)
     return usage == TextureUsage::Color ? VulkanTextureFormat::SrgbColor : VulkanTextureFormat::LinearData;
 }
 
-// Where compressed material textures are cached between runs.
-std::filesystem::path TextureCacheDirectory()
-{
-    return EnginePaths::CacheRoot() / "textures";
-}
-
 // Every material texture file a textured submesh samples, with the usage its slot gives it.
 // UploadSceneResources assigns the same slots with the same usages.
 template <typename Visit>
@@ -578,11 +572,14 @@ VulkanRenderer::VulkanRenderer(
     // encoding inside each texture.
     const bool compressTextures = m_device->SupportsBlockCompression();
     m_texturePreparation = std::make_unique<TexturePreparationQueue>(
-        [compressTextures, cacheDirectory = TextureCacheDirectory()](const std::string& path, TextureUsage usage)
+        [compressTextures, cacheDirectory = DefaultTextureCacheDirectory()](const std::string& path, TextureUsage usage)
         {
             return PrepareTexture(path, usage, compressTextures, cacheDirectory);
         },
         std::max(1u, std::thread::hardware_concurrency() / 2));
+    // Before the swapchain, whose mode follows the display's HDR switch.
+    m_displayMonitor = std::make_unique<platform::display::DisplayHdrMonitor>(GetWindow().GetSDLWindow());
+    UpdateDisplayReport();
     CreateSwapchainResources();
     // The startup scene uploads synchronously: there is nothing on screen to keep responsive yet,
     // and it has no texture files.
@@ -691,8 +688,12 @@ void VulkanRenderer::DrawFrame()
         return;
     }
     const VkExtent2D currentExtent = m_swapchain->GetExtent();
+    // The OS's HDR switch and SDR content brightness can change at any time; a different UI white
+    // means a different ImGui shader.
+    UpdateDisplayReport();
+    const bool uiWhiteChanged = m_swapchain->IsHdr() && std::abs(WantedUiWhiteNits() - m_swapchainUiWhiteNits) > 0.5f;
     if (m_swapchainOutOfDate.exchange(false) || wantedExtent.width != currentExtent.width ||
-        wantedExtent.height != currentExtent.height || State().renderDebug.hdrOutput != m_swapchainHdrRequested)
+        wantedExtent.height != currentExtent.height || WantsHdrSwapchain() != m_swapchainHdrRequested || uiWhiteChanged)
     {
         m_renderThread->RunExclusive([this]()
                                      {
@@ -707,6 +708,15 @@ void VulkanRenderer::DrawFrame()
 
     m_imguiLayer->BeginFrame();
     State().editorUi.BeginFrame(GetWindow().GetSDLWindow(), State().engineSettings);
+    {
+        EditorDisplayStatus display;
+        display.report = m_displayInfo;
+        display.hdrRequested = m_swapchainHdrRequested;
+        display.hdrActive = m_swapchain->IsHdr();
+        display.output = ResolveDisplayOutput(State().renderDebug.display, m_displayReport, display.hdrActive);
+        display.output.uiWhiteNits = m_swapchainUiWhiteNits;
+        State().editorUi.SetDisplayStatus(std::move(display));
+    }
     // The render thread owns the viewport's and the minimap's textures; the UI names them by ID.
     State().editorUi.SetMinimapTexture(m_minimapAvailable ? kMinimapTextureId : ImTextureID{});
     State().editorUi.SetSelectionOutlineTexture(kSelectionOutlineTextureId);
@@ -834,6 +844,10 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
     packet.camera = State().camera;
     packet.viewportMatrices = State().viewportMatrices;
     packet.renderDebug = State().renderDebug;
+    // The calibration's values, or the display's own until there are some; UI white is the one
+    // ImGui's HDR shader was built with, so the scene and the UI agree on it.
+    packet.display = ResolveDisplayOutput(State().renderDebug.display, m_displayReport, m_swapchain->IsHdr());
+    packet.display.uiWhiteNits = m_swapchainUiWhiteNits;
     packet.viewportExtent = viewportExtent;
     packet.displayExtent = {};
     if (State().fixedViewportExtent.has_value() || State().renderDebug.viewportResolution.fixed)
@@ -981,7 +995,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // The casters, built here because which cascades each view's map keeps depends on them. The
     // shader samples the cascades as the map holds them, which for one Plan left waiting is its
     // previous matrix.
-    shared.shadowDrawItems = BuildShadowDrawItems(imageIndex, models);
+    shared.shadowDrawItems = BuildShadowDrawItems(imageIndex, models, packet.camera.position);
     m_cpuStages.Mark("ShadowDrawItems");
     shared.shadowCasterKey = HashShadowCasters(shared.shadowDrawItems);
     m_cpuStages.Mark("ShadowPlan");
@@ -1962,12 +1976,17 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.bloom.enabled = renderDebug.bloom.enabled && features.bloom;
 
     frame.whiteBalance = shared.whiteBalance;
-    frame.hdrOutput = m_swapchain->IsHdr();
-    frame.hdrPeakNits = std::clamp(renderDebug.hdrPeakNits, 250.0f, 10000.0f);
+    frame.display = packet.display;
+    // The calibration screen's patterns are the viewport's alone; the quad recording films the scene.
+    if (viewport)
+    {
+        frame.calibrationView = renderDebug.calibrationView;
+        ApplyHdrMetadata(frame.display);
+    }
     // HDR output shows more of the highlight's brightness directly, so it needs less glare.
     frame.glareFNumber = GlareFNumberFromEv100(
         camera.exposureEv100,
-        frame.hdrOutput ? frame.hdrPeakNits : kGlareSdrPeakNits);
+        frame.display.hdr ? frame.display.maxLuminance : kGlareSdrPeakNits);
     frame.taaHistory = view.taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, view.taaHistoryPreExposure);
     if (dlssEnabled)
@@ -2003,7 +2022,7 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     if (viewport)
     {
         // Unjittered, as the editor's other overlays are drawn, so the outline holds still.
-        prepared->selectionDrawItems = BuildSelectionDrawItems(packet.selectedEntity, shared.models, viewProjection);
+        prepared->selectionDrawItems = BuildSelectionDrawItems(packet.selectedEntity, shared.models, viewProjection, camera.position);
         frame.selectionDrawItems = prepared->selectionDrawItems;
         frame.selectionViewProjection = viewProjection;
         // Blender's outline is about a pixel and a half at its UI scale; here in the output's pixels,
@@ -2086,6 +2105,61 @@ bool VulkanRenderer::WantsKeyboardCapture() const
     return m_imguiLayer->WantsKeyboardCapture();
 }
 
+void VulkanRenderer::UpdateDisplayReport()
+{
+    m_displayInfo = m_displayMonitor->Latest();
+    m_displayReport.known = m_displayInfo.known;
+    m_displayReport.hdrEnabled = m_displayInfo.hdrEnabled;
+    m_displayReport.maxLuminance = m_displayInfo.maxLuminance;
+    m_displayReport.maxFullFrameLuminance = m_displayInfo.maxFullFrameLuminance;
+    m_displayReport.minLuminance = m_displayInfo.minLuminance;
+    m_displayReport.sdrWhiteNits = m_displayInfo.sdrWhiteNits;
+}
+
+bool VulkanRenderer::WantsHdrSwapchain() const
+{
+    return WantsHdrOutput(State().renderDebug.display, m_displayReport, State().viewSettingsFromCommandLine);
+}
+
+float VulkanRenderer::WantedUiWhiteNits() const
+{
+    return ResolveDisplayOutput(State().renderDebug.display, m_displayReport, true).uiWhiteNits;
+}
+
+void VulkanRenderer::ApplyHdrMetadata(const DisplayOutput& display)
+{
+    if (!display.hdr || !m_device->SupportsHdrMetadata())
+    {
+        return;
+    }
+    if (m_appliedHdrMetadata.has_value() && m_appliedHdrMetadata->maxLuminance == display.maxLuminance &&
+        m_appliedHdrMetadata->maxFullFrameLuminance == display.maxFullFrameLuminance &&
+        m_appliedHdrMetadata->minLuminance == display.minLuminance)
+    {
+        return;
+    }
+    static const auto setHdrMetadata = reinterpret_cast<PFN_vkSetHdrMetadataEXT>(vkGetDeviceProcAddr(m_device->GetHandle(), "vkSetHdrMetadataEXT"));
+    if (setHdrMetadata == nullptr)
+    {
+        return;
+    }
+    // Rec.2020 primaries and D65: the HDR10 container. The content never exceeds the calibrated peak,
+    // and a full frame never averages above what the display holds over its whole area.
+    VkHdrMetadataEXT metadata{};
+    metadata.sType = VK_STRUCTURE_TYPE_HDR_METADATA_EXT;
+    metadata.displayPrimaryRed = {0.708f, 0.292f};
+    metadata.displayPrimaryGreen = {0.170f, 0.797f};
+    metadata.displayPrimaryBlue = {0.131f, 0.046f};
+    metadata.whitePoint = {0.3127f, 0.3290f};
+    metadata.maxLuminance = display.maxLuminance;
+    metadata.minLuminance = display.minLuminance;
+    metadata.maxContentLightLevel = display.maxLuminance;
+    metadata.maxFrameAverageLightLevel = std::min(display.maxFullFrameLuminance, display.maxLuminance);
+    const VkSwapchainKHR swapchain = m_swapchain->GetHandle();
+    setHdrMetadata(m_device->GetHandle(), 1, &swapchain, &metadata);
+    m_appliedHdrMetadata = display;
+}
+
 void VulkanRenderer::CreateSwapchainResources()
 {
     const SwapchainSupportDetails supportDetails = m_device->QuerySwapchainSupport();
@@ -2095,8 +2169,14 @@ void VulkanRenderer::CreateSwapchainResources()
         m_instance->GetSurface(),
         m_device->GetQueueFamilies(),
         supportDetails,
-        State().renderDebug.hdrOutput);
-    m_swapchainHdrRequested = State().renderDebug.hdrOutput;
+        WantsHdrSwapchain());
+    m_swapchainHdrRequested = WantsHdrSwapchain();
+    m_swapchainUiWhiteNits = WantedUiWhiteNits();
+    m_appliedHdrMetadata.reset();
+    LOG_INFO(
+        "Display output: {}{}",
+        m_swapchain->IsHdr() ? "HDR10" : "SDR",
+        m_swapchain->IsHdr() ? std::format(", UI white {:.0f} cd/m^2", m_swapchainUiWhiteNits) : std::string());
     m_renderPass = std::make_unique<VulkanRenderPass>(
         m_device->GetHandle(),
         m_swapchain->GetImageFormat(),
@@ -2109,7 +2189,8 @@ void VulkanRenderer::CreateSwapchainResources()
     m_imguiLayer->CreateOrUpdateVulkanResources(
         m_renderPass->GetHandle(),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
-        m_swapchain->IsHdr());
+        m_swapchain->IsHdr(),
+        m_swapchainUiWhiteNits);
     if (!State().requestedViewportExtent.IsValid())
     {
         State().requestedViewportExtent = FromVkExtent(m_swapchain->GetExtent());
@@ -3462,7 +3543,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
         try
         {
             std::unique_ptr<VulkanTexture> texture = UploadPreparedTexture(
-                PrepareTexture(texturePath, usage, compressTextures, TextureCacheDirectory()),
+                PrepareTexture(texturePath, usage, compressTextures, DefaultTextureCacheDirectory()),
                 usage,
                 *uploadBatch);
             flushUploadBatchIfNeeded();
@@ -3618,6 +3699,8 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             }
             renderSubmesh->localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
             renderSubmesh->localBoundsRadius = cpuRenderSubmesh.localBoundsRadius;
+            renderSubmesh->castShadows = cpuRenderSubmesh.castShadows;
+            renderSubmesh->drawDistance = cpuRenderSubmesh.drawDistance;
             renderSubmesh->name = cpuRenderSubmesh.name;
 
             MaterialTextureSlots slots = defaultSlots;
@@ -4204,8 +4287,13 @@ void VulkanRenderer::ApplyRenderContent(
                     for (uint32_t index = begin; index < end; ++index)
                     {
                         const RenderSubmesh& renderSubmesh = *newRenderSubmeshes[index];
-                        raySubmeshes[index] = RaySceneSubmesh{
-                            renderSubmesh.mesh, renderSubmesh.buffer, renderSubmesh.alphaMode == MaterialAlphaMode::Blend, renderSubmesh.drawSlot};
+                        // Rays see a track's nearest level of detail at every distance: a far one would
+                        // stand in the same place. Blend surfaces only the path tracer's rays meet.
+                        const bool farLevel = renderSubmesh.drawDistance.min > 0.0f;
+                        const bool blend = renderSubmesh.alphaMode == MaterialAlphaMode::Blend;
+                        const uint32_t flags = (farLevel ? kRayInstanceSkip : blend ? kRayInstanceBlend : 0u) |
+                                               (renderSubmesh.castShadows ? 0u : kRayInstanceNoShadow);
+                        raySubmeshes[index] = RaySceneSubmesh{renderSubmesh.mesh, renderSubmesh.buffer, flags, renderSubmesh.drawSlot};
                         rayModels[index] = frame.transforms.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal);
                     }
                 },
@@ -4357,15 +4445,17 @@ void VulkanRenderer::AppendDrawItem(
     {
         return;
     }
+    // The view is rigid, so the view-space centre's length is the camera's distance to it.
+    const glm::vec4 viewCenter = view * glm::vec4(worldCenter, 1.0f);
+    if (!renderSubmesh.drawDistance.Contains(glm::length(glm::vec3(viewCenter))))
+    {
+        return;
+    }
     ObjectPushConstants drawConstants{};
     drawConstants.model = model;
     const MaterialPipelineKey pipelineKey{
         renderSubmesh.alphaMode,
         renderSubmesh.doubleSided};
-    const glm::vec4 viewCenter =
-        view *
-        drawConstants.model *
-        glm::vec4(renderSubmesh.localBoundsCenter, 1.0f);
     // A toon material's opaque draw is the geometry pass's like any deferred one (its forward flag
     // keeps the lighting pass off it), and the toon passes shade it; triangle.frag never does.
     const bool forwardShaded = !renderSubmesh.toon && renderSubmesh.alphaMode != MaterialAlphaMode::Blend &&
@@ -4395,7 +4485,8 @@ void VulkanRenderer::AppendDrawItem(
 std::vector<ShadowDrawItem> VulkanRenderer::BuildSelectionDrawItems(
     entt::entity selected,
     std::span<const glm::mat4> models,
-    const glm::mat4& viewProjection) const
+    const glm::mat4& viewProjection,
+    const glm::vec3& cameraPosition) const
 {
     std::vector<ShadowDrawItem> items;
     if (selected == entt::null)
@@ -4406,8 +4497,10 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildSelectionDrawItems(
     for (size_t submeshIndex = 0; submeshIndex < m_renderSubmeshes.size(); ++submeshIndex)
     {
         const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[submeshIndex];
-        // A decal is a box projected onto what is under it; its own shape is not the entity's.
-        if (renderSubmesh.entity != selected || renderSubmesh.decal)
+        // A decal is a box projected onto what is under it; its own shape is not the entity's. A level
+        // of detail the camera does not draw is not part of what is seen either.
+        if (renderSubmesh.entity != selected || renderSubmesh.decal ||
+            !WithinDrawDistance(renderSubmesh, models[submeshIndex], cameraPosition))
         {
             continue;
         }
@@ -4431,7 +4524,10 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildSelectionDrawItems(
     return items;
 }
 
-std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const
+std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(
+    uint32_t imageIndex,
+    std::span<const glm::mat4> models,
+    const glm::vec3& cameraPosition) const
 {
     // Opaque casters first, then alpha-tested ones, so the pass switches pipeline once. On the task
     // system in chunks: each chunk counts its casters of either kind, which places them in the list,
@@ -4454,7 +4550,7 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
                  {
                      for (size_t submeshIndex = begin; submeshIndex < end; ++submeshIndex)
                      {
-                         const ShadowCaster caster = ClassifyShadowCaster(*m_renderSubmeshes[submeshIndex]);
+                         const ShadowCaster caster = ClassifyShadowCaster(*m_renderSubmeshes[submeshIndex], models[submeshIndex], cameraPosition);
                          if (caster == ShadowCaster::Opaque)
                          {
                              ++opaqueCounts[chunk];
@@ -4486,7 +4582,7 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
                      for (size_t submeshIndex = begin; submeshIndex < end; ++submeshIndex)
                      {
                          const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[submeshIndex];
-                         const ShadowCaster caster = ClassifyShadowCaster(renderSubmesh);
+                         const ShadowCaster caster = ClassifyShadowCaster(renderSubmesh, models[submeshIndex], cameraPosition);
                          if (caster != ShadowCaster::None)
                          {
                              FillShadowDrawItem(renderSubmesh, models[submeshIndex], items[caster == ShadowCaster::Opaque ? nextOpaque++ : nextMasked++]);
@@ -4496,17 +4592,32 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
     return items;
 }
 
-VulkanRenderer::ShadowCaster VulkanRenderer::ClassifyShadowCaster(const RenderSubmesh& renderSubmesh)
+VulkanRenderer::ShadowCaster VulkanRenderer::ClassifyShadowCaster(
+    const RenderSubmesh& renderSubmesh,
+    const glm::mat4& model,
+    const glm::vec3& cameraPosition)
 {
     // Blend materials are glass, foliage cards and the like; a solid shadow from them would be
     // wrong more often than none, so they cast none.
-    // Transmissive surfaces let most light through; they cast none either.
+    // Transmissive surfaces let most light through; they cast none either. Nor does a submesh its
+    // model says casts none, or one the camera is too near or too far from to draw.
     if (renderSubmesh.alphaMode == MaterialAlphaMode::Blend ||
-        (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u)
+        (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u || !renderSubmesh.castShadows ||
+        !WithinDrawDistance(renderSubmesh, model, cameraPosition))
     {
         return ShadowCaster::None;
     }
     return renderSubmesh.alphaMode == MaterialAlphaMode::Mask ? ShadowCaster::Masked : ShadowCaster::Opaque;
+}
+
+bool VulkanRenderer::WithinDrawDistance(const RenderSubmesh& renderSubmesh, const glm::mat4& model, const glm::vec3& cameraPosition)
+{
+    if (!renderSubmesh.drawDistance.IsLimited())
+    {
+        return true;
+    }
+    const glm::vec3 worldCenter = glm::vec3(model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
+    return renderSubmesh.drawDistance.Contains(glm::distance(worldCenter, cameraPosition));
 }
 
 void VulkanRenderer::FillShadowDrawItem(const RenderSubmesh& renderSubmesh, const glm::mat4& model, ShadowDrawItem& item)

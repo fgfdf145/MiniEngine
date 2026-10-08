@@ -34,8 +34,11 @@ struct RaySceneSubmesh
     // The mesh's GPU buffers, device addressable with hardware ray tracing: hit shading reads the hit's
     // vertices through them. Held while any content naming them is installed.
     std::shared_ptr<const VulkanBuffer> buffer;
-    // Rays pass through Blend surfaces.
-    bool blend = false;
+    // Its instance's flags (kRayInstance*): kRayInstanceSkip for a surface every ray passes through (a
+    // far level of detail, which would double the near one it stands in for), kRayInstanceBlend for a
+    // Blend one only the path tracer's rays meet, and kRayInstanceNoShadow for one that casts no
+    // shadow. The frame adds kRayInstanceDynamic.
+    uint32_t flags = 0;
     // The submesh's draw slot, which is where its ray material lives.
     uint32_t slot = 0;
 };
@@ -198,8 +201,8 @@ class VulkanRayScene
     {
         RayScene scene;
         std::vector<uint32_t> submeshMeshes;
-        // Per submesh, 1 for a Blend material, which rays pass through.
-        std::vector<uint8_t> blend;
+        // Per submesh, RaySceneSubmesh::flags.
+        std::vector<uint32_t> flags;
         Buffer meshNodes;
         Buffer meshTriangles;
         size_t meshNodeCount = 0;
@@ -310,7 +313,7 @@ class VulkanRayScene
     uint64_t m_setsGeneration = 0;
     std::vector<uint64_t> m_slotSetsGenerations;
     std::vector<uint32_t> m_submeshMeshes;
-    std::vector<uint8_t> m_installedBlend;
+    std::vector<uint32_t> m_installedFlags;
     // The installed content's submeshes, and for each the index of the same submesh in m_submeshes
     // (kNoSubmesh when the content after it dropped it).
     static constexpr uint32_t kNoSubmesh = ~0u;

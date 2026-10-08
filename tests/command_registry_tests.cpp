@@ -76,6 +76,30 @@ void TestWindowStatesSurviveTheSettingsFile()
     Require(loaded.editorUi.windows.open == saved.editorUi.windows.open, "every window's open state comes back");
 }
 
+// The display calibration survives the settings file, the output mode (an enum) as its number.
+void TestDisplayCalibrationSurvivesTheSettingsFile()
+{
+    EngineSettings saved;
+    DisplaySettings& display = saved.view.renderDebug.display;
+    display.outputMode = DisplayOutputMode::Hdr;
+    display.calibrated = true;
+    display.maxLuminance = 720.0f;
+    display.maxFullFrameLuminance = 380.0f;
+    display.minLuminance = 0.01f;
+    display.exposureEv = -0.5f;
+    display.saturation = 1.2f;
+    display.sdrWhite = 0.95f;
+    display.sdrBlack = 0.03f;
+    display.uiWhiteNits = 300.0f;
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_display_calibration_test.json";
+    std::string error;
+    Require(SaveEngineSettings(path, saved, error), ("the settings save: " + error).c_str());
+    EngineSettings loaded;
+    Require(LoadEngineSettings(path, loaded, error), ("the settings load: " + error).c_str());
+    std::filesystem::remove(path);
+    Require(loaded.view.renderDebug.display == display, "the calibration comes back");
+}
+
 // The Preferences window's master volume and mute survive the settings file; a file from before
 // they existed plays at full volume.
 void TestAudioSettingsSurviveTheSettingsFile()
@@ -490,7 +514,7 @@ void TestEditorCommands()
 
     Require(Run(registry, "tool.rotate") && state.transformTool == TransformTool::Rotate, "the rotate tool is a choice of its own");
     Require(Run(registry, "view.gizmos") && !state.gizmos, "gizmos toggle off");
-    Require(!state.minimap && Run(registry, "view.minimap") && state.minimap, "the minimap starts off and toggles on");
+    Require(state.minimap && Run(registry, "view.minimap") && !state.minimap, "the minimap starts on and toggles off");
     Require(state.viewportUi && Run(registry, "view.viewport_ui") && !state.viewportUi, "the viewport UI starts on and toggles off");
 
     // Play controls.
@@ -557,6 +581,7 @@ int main()
         TestThemeKeepsOnlyChangedColours();
         TestViewSettingsSurviveTheSettingsFile();
         TestAudioSettingsSurviveTheSettingsFile();
+        TestDisplayCalibrationSurvivesTheSettingsFile();
         TestProcessSettingsSurviveTheSettingsFile();
     }
     catch (const std::exception& error)

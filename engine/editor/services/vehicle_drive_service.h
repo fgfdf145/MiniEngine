@@ -125,12 +125,13 @@ struct VehicleDriveStatus
     // less when the build or the car is too slow and the drive runs in slow motion).
     float realTimeShare = 1.0f;
     // For the driving HUD: the controls the car took this frame (after the steering assist), the
-    // gearbox, the rev limit, which assists the car has and which of those are switched on, whether it
+    // gearbox, the rev limit and the revs the automatic changes up at on full throttle, which assists the car has and which of those are switched on, whether it
     // has turbos, the tyres' compound initials (front, rear; empty without the car's data) and how far
     // it has driven since the start.
     VehicleControls controls;
     bool manualGearbox = false;
     float engineMaxRpm = 7000.0f;
+    float shiftUpRpm = 6500.0f;
     bool absFitted = false;
     bool tractionControlFitted = false;
     bool absOn = false;
@@ -232,6 +233,8 @@ struct VehicleDriveSession
     // The engine's idle and rev limit, which the gamepad's rumble places the revs between.
     float engineMinRpm = 1000.0f;
     float engineMaxRpm = 7000.0f;
+    // Where the automatic changes up on full throttle (VehicleShiftPoints::upFull): the HUD's shift light.
+    float shiftUpRpm = 6500.0f;
     VehicleHapticsState haptics;
     // A DualSense on USB: its actuators play the engine, the road and the tyres (GamepadHaptics). Opened
     // once per connection of the pad, as finding its device takes a moment and over Bluetooth there is none.
@@ -262,6 +265,8 @@ struct VehicleDriveState
     std::unique_ptr<VehicleDriveSession> session;
     // A sequential manual gearbox (the driver changes gear) instead of the automatic.
     bool manualGearbox = false;
+    // The physics' fixed step (PhysicsWorld::SetStepSeconds), which a car being driven takes at once.
+    float physicsStepSeconds = PhysicsWorld::kDefaultStepSeconds;
     // A test drive without a driver (--drive-controls): the car takes these controls instead of the
     // keyboard's and gamepad's, advances a fixed 1/60 s a frame however long the frame took, and logs
     // its pose once a simulated second.
@@ -319,7 +324,8 @@ void RunWithVehicleAtStart(RendererSharedState& state, const std::function<void(
 // the view, B and the D-pad's left switch ABS, T and the D-pad's right traction control, which Tick
 // reads). Gamepad: right and left trigger, left
 // stick, East button (Circle on a DualSense) for the hand brake, right/left shoulder (R1/L1) to change
-// up/down and South (Cross, held) for the clutch. With `manualGearbox` the gear buttons change gear, once per press:
+// up/down and South (Cross, held) for the clutch (with `manualGearbox`). The gear buttons change gear once per press,
+// the automatic's too (it holds the gear a while after):
 // `gearButtonsHeld` is what was held the frame before, carried between frames like `keyboardSteering`,
 // the eased keyboard steering.
 VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptured, float deltaSeconds, float& keyboardSteering,

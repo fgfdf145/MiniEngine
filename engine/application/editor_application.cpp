@@ -1,7 +1,9 @@
 #include "editor_application.h"
 
+#include <engine/asset/compressed_texture_cache.h>
 #include <engine/audio/audio_engine.h>
 #include <engine/core/log/log.h>
+#include <engine/core/threading/task_future.h>
 #include <engine/core/threading/task_system.h>
 #include <engine/core/version/engine_version.h>
 #include <engine/editor/engine_settings.h>
@@ -229,6 +231,18 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--display-pattern")
+        {
+            const std::array<float, 2> pattern = ParseFloatList<2>(ReadRequiredArgument(i, argc, argv, argument), argument);
+            if (pattern[0] < 0.0f || pattern[0] > static_cast<float>(CalibrationPattern::SampleSky))
+            {
+                throw std::runtime_error("--display-pattern requires a pattern number from 0 to " +
+                                         std::to_string(static_cast<uint32_t>(CalibrationPattern::SampleSky)) + " and a level");
+            }
+            options.displayPattern = DisplayCalibrationView{static_cast<CalibrationPattern>(static_cast<uint32_t>(pattern[0])), pattern[1]};
+            continue;
+        }
+
         if (argument == "--debug-view")
         {
             const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
@@ -290,6 +304,19 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--no-ray-query")
         {
             options.rayQuery = false;
+            continue;
+        }
+
+        if (argument == "--physics-rate")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            int number = 0;
+            if (std::from_chars(value.data(), value.data() + value.size(), number).ptr != value.data() + value.size() ||
+                number < 60 || number > 4000)
+            {
+                throw std::runtime_error("--physics-rate requires an integer from 60 to 4000");
+            }
+            options.physicsRateHz = number;
             continue;
         }
 
@@ -513,6 +540,23 @@ int EditorApplication::Run()
         EnginePaths::CacheRoot().string(),
         EnginePaths::ShaderRoot().string());
 
+    // The texture cache is shared by every checkout on the machine and only grows; trim it in the
+    // background. Declared after the task system's guard, so it finishes before the workers stop.
+    TaskFuture<void> textureCacheTrim = RunAsync(TaskPriority::Low, []()
+    {
+        const std::filesystem::path directory = DefaultTextureCacheDirectory();
+        const TextureCacheTrim trim = TrimCompressedTextureCache(directory, kTextureCacheBudgetBytes);
+        if (trim.filesDeleted > 0)
+        {
+            LOG_INFO(
+                "Texture cache '{}': {:.1f} GB, deleted {} least recently used files ({:.1f} GB)",
+                directory.string(),
+                static_cast<double>(trim.bytesBefore) / 1e9,
+                trim.filesDeleted,
+                static_cast<double>(trim.bytesDeleted) / 1e9);
+        }
+    });
+
     // The assets folder is not version controlled, so a fresh checkout has none. Every asset browser
     // action works inside it; create it up front instead of leaving the browser empty and inert.
     std::error_code assetsRootError;
@@ -534,7 +578,7 @@ int EditorApplication::Run()
     // not save the camera or render settings its options changed.
     sharedState->viewSettingsFromCommandLine =
         m_options.maxFrames > 0 || m_options.statePath.has_value() || m_options.khronosReference ||
-        m_options.debugView.has_value() || m_options.ddgiDisabled || m_options.ddgiSpacing.has_value() ||
+        m_options.debugView.has_value() || m_options.displayPattern.has_value() || m_options.ddgiDisabled || m_options.ddgiSpacing.has_value() ||
         m_options.softwareRays;
     std::optional<std::string> startupScenePath = m_options.startupScenePath;
     std::optional<RenderExtent> viewportSize = m_options.viewportSize;
@@ -569,6 +613,10 @@ int EditorApplication::Run()
     if (m_options.debugView.has_value())
     {
         sharedState->editorUi.EditRenderDebug().gbufferView = *m_options.debugView;
+    }
+    if (m_options.displayPattern.has_value())
+    {
+        sharedState->editorUi.EditRenderDebug().calibrationView = *m_options.displayPattern;
     }
     if (m_options.ddgiDisabled)
     {
@@ -644,6 +692,10 @@ int EditorApplication::Run()
     if (m_options.driveView.has_value())
     {
         sharedState->vehicleDrive.cameraView = *m_options.driveView;
+    }
+    if (m_options.physicsRateHz.has_value())
+    {
+        sharedState->editorUi.EditVehiclePhysicsRate() = *m_options.physicsRateHz;
     }
     if (m_options.driveCameraFixed)
     {

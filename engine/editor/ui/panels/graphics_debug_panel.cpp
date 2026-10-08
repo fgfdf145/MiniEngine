@@ -2,6 +2,8 @@
 
 #include <engine/editor/editor_ui.h>
 #include <engine/editor/ui/editor_ui_internal.h>
+#include <engine/editor/ui/framework/editor_window_manager.h>
+#include <engine/editor/ui/windows/display_calibration_window.h>
 #include <engine/renderer/render_features.h>
 
 #include <IconsPhosphor.h>
@@ -477,11 +479,36 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
     DragFloatInRange("Exposure (EV)##toon", &debug.toonExposureEv, -4.0f, 4.0f, "%+.2f");
 
     ImGui::SeparatorText("Output");
-    // HDR10 when the display offers it (GT7's HDR curve); the UI keeps its SDR brightness.
-    ImGui::Checkbox("HDR output", &debug.hdrOutput);
-    ImGui::BeginDisabled(!debug.hdrOutput);
-    DragFloatInRange("Display peak (nits)", &debug.hdrPeakNits, 250.0f, 10000.0f, "%.0f");
-    ImGui::EndDisabled();
+    // HDR10 (GT7's HDR curve for the calibrated peak) or SDR; Auto follows Windows' HDR switch.
+    static constexpr std::array<const char*, 3> kOutputModeNames = {"Auto (follow Windows)", "HDR", "SDR"};
+    int outputMode = static_cast<int>(debug.display.outputMode);
+    if (ImGui::Combo("Display output", &outputMode, kOutputModeNames.data(), static_cast<int>(kOutputModeNames.size())))
+    {
+        debug.display.outputMode = static_cast<DisplayOutputMode>(outputMode);
+    }
+    {
+        const EditorDisplayStatus& display = context.state.display;
+        const DisplayOutput& output = display.output;
+        if (display.hdrActive)
+        {
+            ImGui::TextDisabled(
+                "HDR10: peak %.0f cd/m^2, black %.3f, UI white %.0f (%s)",
+                output.maxLuminance,
+                output.minLuminance,
+                output.uiWhiteNits,
+                debug.display.calibrated ? "calibrated" : "display's figures");
+        }
+        else
+        {
+            ImGui::TextDisabled(
+                "SDR%s",
+                display.hdrRequested ? ": the display offers no HDR10 format" : display.report.hdrEnabled ? " (Windows is in HDR)" : "");
+        }
+    }
+    if (ImGui::Button(ICON_PH_MONITOR " Calibrate Display..."))
+    {
+        context.windows.Open<DisplayCalibrationWindow>();
+    }
     // Also Render > Tone Mapping. The Khronos reference view always uses PBR Neutral.
     static constexpr std::array<const char*, 3> kToneMapperNames = {"GT7", "PBR Neutral", "None (clipped)"};
     int toneMapper = static_cast<int>(debug.toneMapper);
