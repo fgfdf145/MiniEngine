@@ -579,6 +579,10 @@ VulkanRenderer::VulkanRenderer(
         std::max(1u, std::thread::hardware_concurrency() / 2));
     // Before the swapchain, whose mode follows the display's HDR switch.
     m_displayMonitor = std::make_unique<platform::display::DisplayHdrMonitor>(GetWindow().GetSDLWindow());
+    if (const char* frameTimes = std::getenv("MINIENGINE_FRAME_TIMES"); frameTimes != nullptr && frameTimes[0] != 0)
+    {
+        m_frameTimesFile.open(frameTimes);
+    }
     UpdateDisplayReport();
     CreateSwapchainResources();
     // The startup scene uploads synchronously: there is nothing on screen to keep responsive yet,
@@ -1568,6 +1572,10 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
 
     const VkResult presentResult = m_commandContext->Present(m_device->GetPresentQueue(), m_swapchain->GetHandle(), imageIndex);
     m_cpuStages.Mark("Present");
+    if (m_frameTimesFile.is_open())
+    {
+        m_frameTimesFile << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << '\n';
+    }
     if (acquireResult == VK_SUBOPTIMAL_KHR || presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
     {
         // The main thread rebuilds it before its next frame.

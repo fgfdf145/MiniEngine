@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <optional>
 
 #if defined(_WIN32)
@@ -143,6 +144,11 @@ DisplayHdrMonitor::DisplayHdrMonitor(SDL_Window* window, int intervalMs)
 {
     // The first answer before the first frame, so the swapchain starts in the right mode.
     m_latest = QueryDisplayHdrInfo(m_window);
+    // MINIENGINE_NO_DISPLAY_MONITOR=1 asks once and never again (frame pacing comparisons).
+    if (const char* off = std::getenv("MINIENGINE_NO_DISPLAY_MONITOR"); off != nullptr && off[0] == '1')
+    {
+        return;
+    }
     m_thread = std::thread([this]
                            {
                                Run();
@@ -156,7 +162,10 @@ DisplayHdrMonitor::~DisplayHdrMonitor()
         m_stop = true;
     }
     m_wake.notify_all();
-    m_thread.join();
+    if (m_thread.joinable())
+    {
+        m_thread.join();
+    }
 }
 
 DisplayHdrInfo DisplayHdrMonitor::Latest() const

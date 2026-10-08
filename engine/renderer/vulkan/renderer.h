@@ -48,6 +48,7 @@
 #include "video_readback.h"
 
 #include <engine/editor/editor_backend_base.h>
+#include <fstream>
 #include <engine/renderer/volumetric_clouds.h>
 #include <engine/asset/texture_preparation.h>
 #include <engine/core/threading/render_thread.h>
@@ -659,6 +660,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // What the OS says about the window's display, polled on its own thread; the main thread copies
     // the latest answer at the start of each frame.
     std::unique_ptr<platform::display::DisplayHdrMonitor> m_displayMonitor;
+    // MINIENGINE_FRAME_TIMES=<file>: each present's time in microseconds, one per line (render thread),
+    // to measure frame pacing.
+    std::ofstream m_frameTimesFile;
     platform::display::DisplayHdrInfo m_displayInfo;
     DisplayReport m_displayReport;
     // The HDR output the current swapchain was created for, and the UI white ImGui's HDR shader was
