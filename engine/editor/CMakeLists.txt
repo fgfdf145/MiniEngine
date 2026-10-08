@@ -32,6 +32,10 @@ add_library(engine_editor
     services/vehicle_rig_service.cpp
     services/vehicle_rig_service.h
     services/vehicle_drive_service.h
+    services/vehicle_drive_log.cpp
+    services/vehicle_drive_log.h
+    services/vehicle_path_follower.cpp
+    services/vehicle_path_follower.h
     services/vehicle_driver_service.cpp
     services/vehicle_driver_service.h
     services/vehicle_gear_shift.cpp

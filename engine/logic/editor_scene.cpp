@@ -432,6 +432,40 @@ SerializedSceneData ReadSceneData(const YAML::Node& root)
             minimap.worldMax = glm::vec2(node[0].as<float>(), node[1].as<float>());
         }
     }
+    if (const YAML::Node pathsNode = root["drive_paths"]; pathsNode && pathsNode.IsSequence())
+    {
+        for (const YAML::Node& pathNode : pathsNode)
+        {
+            if (!pathNode.IsMap())
+            {
+                continue;
+            }
+            SceneDrivePath path;
+            path.name = pathNode["name"].as<std::string>(path.name);
+            path.closed = pathNode["closed"].as<bool>(path.closed);
+            path.speedKmh = std::max(pathNode["speed_kmh"].as<float>(path.speedKmh), 0.0f);
+            path.laps = std::max(pathNode["laps"].as<int>(path.laps), 1);
+            if (const YAML::Node pointsNode = pathNode["points"]; pointsNode && pointsNode.IsSequence())
+            {
+                // Each point is [x, y, z] or [x, y, z, speed_kmh].
+                for (const YAML::Node& pointNode : pointsNode)
+                {
+                    if (!pointNode.IsSequence() || pointNode.size() < 3)
+                    {
+                        continue;
+                    }
+                    SceneDrivePathPoint point;
+                    point.position = glm::dvec3(pointNode[0].as<double>(), pointNode[1].as<double>(), pointNode[2].as<double>());
+                    if (pointNode.size() > 3)
+                    {
+                        point.speedKmh = std::max(pointNode[3].as<float>(), 0.0f);
+                    }
+                    path.points.push_back(point);
+                }
+            }
+            sceneData.drivePaths.push_back(std::move(path));
+        }
+    }
 
     const YAML::Node entitiesNode = root["entities"];
     if (entitiesNode && entitiesNode.IsSequence())
@@ -648,6 +682,41 @@ std::string EmitSceneYaml(const SerializedSceneData& sceneData)
         emitter << YAML::EndMap;
     }
 
+    if (!sceneData.drivePaths.empty())
+    {
+        // To the millimetre: the points are placed by hand or driven, and the file stays readable.
+        const auto millimetres = [](double value)
+        {
+            return std::round(value * 1000.0) / 1000.0;
+        };
+        emitter << YAML::Key << "drive_paths" << YAML::Value << YAML::BeginSeq;
+        for (const SceneDrivePath& path : sceneData.drivePaths)
+        {
+            emitter << YAML::BeginMap;
+            emitter << YAML::Key << "name" << YAML::Value << path.name;
+            emitter << YAML::Key << "closed" << YAML::Value << path.closed;
+            emitter << YAML::Key << "speed_kmh" << YAML::Value << path.speedKmh;
+            if (path.closed)
+            {
+                emitter << YAML::Key << "laps" << YAML::Value << path.laps;
+            }
+            emitter << YAML::Key << "points" << YAML::Value << YAML::BeginSeq;
+            for (const SceneDrivePathPoint& point : path.points)
+            {
+                emitter << YAML::Flow << YAML::BeginSeq << millimetres(point.position.x) << millimetres(point.position.y)
+                        << millimetres(point.position.z);
+                if (point.speedKmh > 0.0f)
+                {
+                    emitter << point.speedKmh;
+                }
+                emitter << YAML::EndSeq;
+            }
+            emitter << YAML::EndSeq;
+            emitter << YAML::EndMap;
+        }
+        emitter << YAML::EndSeq;
+    }
+
     emitter << YAML::Key << "editor" << YAML::Value << YAML::BeginMap;
     emitter << YAML::Key << "gizmo" << YAML::Value << YAML::BeginMap;
     emitter << YAML::Key << "operation" << YAML::Value << ToString(sceneData.gizmo.operation);
@@ -757,6 +826,7 @@ void EditorScene::CreateTwoCubeTestScene()
     Clear();
     m_streaming.clear();
     m_minimap = {};
+    m_drivePaths.clear();
 
     SerializedEntityData leftCube{};
     leftCube.tagName = "Cube A";
@@ -779,6 +849,7 @@ void EditorScene::CreateEmptyScene()
     Clear();
     m_streaming.clear();
     m_minimap = {};
+    m_drivePaths.clear();
     AddDefaultSunAndSky();
 }
 
@@ -1092,6 +1163,7 @@ void EditorScene::ApplySceneData(const SerializedSceneData& sceneData)
     m_environment = sceneData.environment;
     m_streaming = sceneData.streaming;
     m_minimap = sceneData.minimap;
+    m_drivePaths = sceneData.drivePaths;
 
     for (const SerializedEntityData& entityData : sceneData.entities)
     {
@@ -1206,6 +1278,16 @@ void EditorScene::SetMinimap(SceneMinimap minimap)
     m_minimap = std::move(minimap);
 }
 
+const std::vector<SceneDrivePath>& EditorScene::GetDrivePaths() const
+{
+    return m_drivePaths;
+}
+
+void EditorScene::SetDrivePaths(std::vector<SceneDrivePath> paths)
+{
+    m_drivePaths = std::move(paths);
+}
+
 entt::entity EditorScene::CreateLightEntity(const SerializedLightData& lightData)
 {
     entt::entity entity = m_registry.create();
@@ -1249,6 +1331,7 @@ SerializedSceneData EditorScene::CaptureSceneData() const
     sceneData.environment = m_environment;
     sceneData.streaming = m_streaming;
     sceneData.minimap = m_minimap;
+    sceneData.drivePaths = m_drivePaths;
 
     // The on_destroy listener keeps scene order free of stale handles,
     // so entries can be read without per-entity validity checks. Streamed entities are the streaming's

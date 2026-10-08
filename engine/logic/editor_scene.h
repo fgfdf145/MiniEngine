@@ -73,6 +73,8 @@ class EditorScene final : public IEditorWorld
     void SetStreamingWorlds(std::vector<SceneStreamingWorld> worlds) override;
     const SceneMinimap& GetMinimap() const override;
     void SetMinimap(SceneMinimap minimap) override;
+    const std::vector<SceneDrivePath>& GetDrivePaths() const override;
+    void SetDrivePaths(std::vector<SceneDrivePath> paths) override;
     const SceneEnvironment& GetEnvironment() const override;
     void SetEnvironment(const SceneEnvironment& environment) override;
 
@@ -95,6 +97,7 @@ class EditorScene final : public IEditorWorld
     SceneEnvironment m_environment;
     std::vector<SceneStreamingWorld> m_streaming;
     SceneMinimap m_minimap;
+    std::vector<SceneDrivePath> m_drivePaths;
     std::string m_sceneFilePath;
     std::unordered_map<std::string, entt::entity> m_entityByUuid;
     // Declared last: the registry is destroyed first, so its on_destroy

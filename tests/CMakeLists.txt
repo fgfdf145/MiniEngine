@@ -2233,6 +2233,32 @@ add_test(
 
 set_target_properties(miniengine_steering_assist_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_drive_path_tests
+    drive_path_tests.cpp
+)
+miniengine_group_target_sources(miniengine_drive_path_tests)
+
+target_link_libraries(miniengine_drive_path_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_drive_path_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_drive_path_tests>
+            $<TARGET_FILE_DIR:miniengine_drive_path_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.drive_path
+    COMMAND miniengine_drive_path_tests
+)
+
+set_target_properties(miniengine_drive_path_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_asset_browser_window_tests
     asset_browser_window_tests.cpp
     imgui_software_raster.h
