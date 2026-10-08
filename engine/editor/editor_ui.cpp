@@ -15,7 +15,6 @@
 #include "ui/panels/theme_panel.h"
 #include "ui/panels/vehicle_panel.h"
 #include "ui/panels/viewport_panel.h"
-#include "ui/windows/display_calibration_window.h"
 #include "ui/windows/keyboard_shortcuts_window.h"
 #include "ui/windows/model_processor_window.h"
 #include "ui/windows/preferences_window.h"
@@ -92,7 +91,6 @@ void EditorUiController::RegisterWindows()
     m_windows.Register<ModelProcessorWindow>();
     m_windows.Register<PreferencesWindow>();
     m_windows.Register<KeyboardShortcutsWindow>();
-    m_windows.Register<DisplayCalibrationWindow>();
     // Modals, drawn last so they are over everything else.
     m_windows.Register<SceneResetModal>();
     m_windows.Register<Kn5ImportModal>();
@@ -193,10 +191,6 @@ void EditorUiController::RegisterCommands()
     scene.openSceneSettings = [this]
     {
         m_windows.Open<ScenePanel>();
-    };
-    scene.openDisplayCalibration = [this]
-    {
-        m_windows.Open<DisplayCalibrationWindow>();
     };
     scene.showDocumentation = [this]
     {

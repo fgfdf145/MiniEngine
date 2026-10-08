@@ -317,15 +317,7 @@ void ReadValue(const YAML::Node& node, T& value)
 {
     if (node && node.IsScalar())
     {
-        if constexpr (std::is_enum_v<T>)
-        {
-            // Enums are stored as their numbers.
-            value = static_cast<T>(node.as<std::underlying_type_t<T>>(static_cast<std::underlying_type_t<T>>(value)));
-        }
-        else
-        {
-            value = node.as<T>(value);
-        }
+        value = node.as<T>(value);
     }
 }
 
@@ -403,10 +395,6 @@ std::string JsonValue(const T& value)
         char buffer[32];
         const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
         return std::string(buffer, result.ptr);
-    }
-    else if constexpr (std::is_enum_v<T>)
-    {
-        return std::to_string(static_cast<std::underlying_type_t<T>>(value));
     }
     else
     {
@@ -534,8 +522,6 @@ bool UpdateEngineViewSettings(EngineViewSettings& view, const Camera& camera, co
     current.autoWhiteBalance = camera.autoWhiteBalance;
     current.renderDebug = renderDebug;
     current.renderDebug.gbufferView = GBufferDebugView::Off;
-    // The calibration screen's pattern is never saved.
-    current.renderDebug.calibrationView = {};
     if (current == view)
     {
         return false;

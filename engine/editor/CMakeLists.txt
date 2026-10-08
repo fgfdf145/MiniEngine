@@ -93,8 +93,6 @@ add_library(engine_editor
     ui/panels/vehicle_panel.h
     ui/panels/viewport_panel.cpp
     ui/panels/viewport_panel.h
-    ui/windows/display_calibration_window.cpp
-    ui/windows/display_calibration_window.h
     ui/windows/keyboard_shortcuts_window.cpp
     ui/windows/keyboard_shortcuts_window.h
     ui/windows/model_processor_window.cpp

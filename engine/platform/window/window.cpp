@@ -165,12 +165,6 @@ void Window::CreateNativeWindow()
     {
         flags |= SDL_WINDOW_HIDDEN;
     }
-    // Display measurements (Desktop Duplication of the composited desktop) need the window in front
-    // of whatever has the focus: MINIENGINE_TOPMOST_WINDOW=1 keeps it above every other window.
-    if (const char* topmost = std::getenv("MINIENGINE_TOPMOST_WINDOW"); topmost != nullptr && topmost[0] == '1')
-    {
-        flags |= SDL_WINDOW_ALWAYS_ON_TOP;
-    }
     switch (m_backendType)
     {
     case RenderBackendType::Vulkan:

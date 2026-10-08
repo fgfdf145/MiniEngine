@@ -147,12 +147,6 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
         enabledExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
         LOG_INFO("Enabling device extension: {}", VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
     }
-    m_supportsHdrMetadata = isAvailable(VK_EXT_HDR_METADATA_EXTENSION_NAME);
-    if (m_supportsHdrMetadata)
-    {
-        enabledExtensions.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
-        LOG_INFO("Enabling device extension: {}", VK_EXT_HDR_METADATA_EXTENSION_NAME);
-    }
 
     // The optional ones, and the buffer device address feature when one of them is that extension
     // (core since Vulkan 1.2, where the feature still has to be asked for).
@@ -337,11 +331,6 @@ bool VulkanDevice::SupportsRayQuery() const
 bool VulkanDevice::SupportsUpdateUnusedWhilePending() const
 {
     return m_supportsUpdateUnusedWhilePending;
-}
-
-bool VulkanDevice::SupportsHdrMetadata() const
-{
-    return m_supportsHdrMetadata;
 }
 
 VkPhysicalDevice VulkanDevice::GetPhysicalDevice() const

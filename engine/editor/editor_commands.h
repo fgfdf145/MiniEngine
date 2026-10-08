@@ -134,8 +134,6 @@ struct EditorSceneCommands
     std::function<void()> createEntity;
     std::function<void(LightType)> createLight;
     std::function<void()> openSceneSettings;
-    // View > Display Calibration: the PS5 / GT7 calibration screens.
-    std::function<void()> openDisplayCalibration;
     std::function<void()> captureViewport;
     std::function<void()> toggleVideoRecording; // Record Viewport: starts or stops
     std::function<void()> toggleQuadRecording;  // Record Quad Cameras: starts or stops

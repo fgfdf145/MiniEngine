@@ -6,7 +6,6 @@
 #include <engine/core/paths/engine_paths.h>
 
 #include <array>
-#include <cmath>
 #include <filesystem>
 #include <vector>
 
@@ -26,19 +25,9 @@ struct TonemapPushConstants
     uint32_t toneOperator = 0;
     // The white balance matrix's columns, xyz used (see WhiteBalanceMatrix).
     glm::vec4 whiteBalance[3] = {glm::vec4(1.0f, 0.0f, 0.0f, 0.0f), glm::vec4(0.0f, 1.0f, 0.0f, 0.0f), glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)};
-    // The display calibration (see DisplayOutput).
-    float uiWhiteNits = kDefaultUiWhiteNits;
-    float blackNits = 0.0f;
-    float exposureScale = 1.0f;
-    float saturation = 1.0f;
-    float sdrWhite = 1.0f;
-    float sdrBlack = 0.0f;
-    // A CalibrationPattern and its trial level.
-    uint32_t pattern = 0;
-    float patternLevel = 0.0f;
 };
 
-static_assert(sizeof(TonemapPushConstants) == 96, "TonemapPushConstants must match the shader's block");
+static_assert(sizeof(TonemapPushConstants) == 64, "TonemapPushConstants must match the shader's block");
 
 constexpr uint32_t kOperatorGt7 = 0;
 // The Khronos reference view: PBR Neutral plus the Sample Viewer's 2.2 gamma on an SDR display.
@@ -182,26 +171,13 @@ void VulkanTonemapPass::Record(
 
     TonemapPushConstants constants{};
     constants.gbufferView = static_cast<uint32_t>(frame.gbufferView);
-    constants.hdrOutput = frame.display.hdr ? 1u : 0u;
-    constants.peakNits = frame.display.maxLuminance;
+    constants.hdrOutput = frame.hdrOutput ? 1u : 0u;
+    constants.peakNits = frame.hdrPeakNits;
     constants.toneOperator = ToneOperator(frame);
     for (int column = 0; column < 3; ++column)
     {
         constants.whiteBalance[column] = glm::vec4(frame.whiteBalance[column], 0.0f);
     }
-    constants.uiWhiteNits = frame.display.uiWhiteNits;
-    constants.blackNits = frame.display.minLuminance;
-    // The Khronos reference view renders as the Sample Viewer does: no calibration in the way.
-    if (!frame.khronosReference)
-    {
-        // GT7's Exposure, and in HDR the paper white's lift over GT7's 250 cd/m^2.
-        constants.exposureScale = std::exp2(frame.display.exposureEv) * HdrPaperWhiteScale(frame.display);
-        constants.saturation = frame.display.saturation;
-        constants.sdrWhite = frame.display.sdrWhite;
-        constants.sdrBlack = frame.display.sdrBlack;
-    }
-    constants.pattern = static_cast<uint32_t>(frame.calibrationView.pattern);
-    constants.patternLevel = frame.calibrationView.level;
     vkCmdPushConstants(
         commandBuffer,
         m_pipelineLayout,

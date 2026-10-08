@@ -26,12 +26,8 @@ add_library(engine_render_core
     ddgi_volume.h
     environment_brdf.cpp
     environment_brdf.h
-    display_calibration.cpp
-    display_calibration.h
     exposure.cpp
     exposure.h
-    frame_pacing.cpp
-    frame_pacing.h
     light_clusters.cpp
     light_clusters.h
     local_shadows.cpp
@@ -63,8 +59,6 @@ add_library(engine_render_core
     specular_aa.h
     spherical_harmonics.cpp
     spherical_harmonics.h
-    spirv_patch.cpp
-    spirv_patch.h
     taa_jitter.cpp
     taa_jitter.h
     restir_pairing.cpp

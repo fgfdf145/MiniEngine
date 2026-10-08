@@ -45,9 +45,6 @@ class VulkanDevice
     // With hardware ray tracing: whether descriptorBindingUpdateUnusedWhilePending is enabled, so the
     // ray scene's texture table can take a new draw's textures while frames in flight use the table.
     bool SupportsUpdateUnusedWhilePending() const;
-    // Whether VK_EXT_hdr_metadata is enabled: the swapchain can tell the display the content's
-    // luminance range (vkSetHdrMetadataEXT).
-    bool SupportsHdrMetadata() const;
 
     // The device-local heaps' usage and budget summed, in bytes. With VK_EXT_memory_budget they are the
     // driver's (the budget shrinks as other processes take memory); without it the budget is 80 % of
@@ -76,7 +73,6 @@ class VulkanDevice
     bool m_supportsIndependentBlend = false;
     bool m_optionalExtensionsEnabled = true;
     bool m_supportsMemoryBudget = false;
-    bool m_supportsHdrMetadata = false;
     bool m_supportsRayQuery = false;
     bool m_supportsUpdateUnusedWhilePending = false;
 };

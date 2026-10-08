@@ -304,8 +304,6 @@ void RegisterViewCommands(CommandRegistry& registry, EditorCommandState& state, 
         {
             return state.viewportUi;
         });
-    registry.AddSeparator("View");
-    AddBound(registry, "view.display_calibration", "Display Calibration", "View/Display Calibration...", ICON_PH_MONITOR, 0, scene.openDisplayCalibration);
 }
 
 void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state, const EditorSceneCommands& scene)

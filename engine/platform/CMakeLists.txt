@@ -1,6 +1,4 @@
 add_library(engine_platform
-    display/display_hdr.cpp
-    display/display_hdr.h
     file_dialog/file_dialog.cpp
     file_dialog/file_dialog.h
     file_dialog/file_dialog_backend.cpp
@@ -29,9 +27,6 @@ target_link_libraries(engine_platform
         Vulkan::Vulkan
         SDL3::SDL3
 )
-if(WIN32)
-    target_link_libraries(engine_platform PRIVATE dxgi)
-endif()
 
 # macOS runs Vulkan through MoltenVK, which vcpkg does not provide. Bake in the driver manifest
 # of a Homebrew or Vulkan SDK install so the app starts without a hand-set VK_DRIVER_FILES.

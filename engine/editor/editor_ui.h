@@ -290,11 +290,6 @@ class EditorUiController
         m_state.dlssRayReconstructionAvailable = rayReconstructionAvailable;
         m_state.dlssStatus = std::move(status);
     }
-    // The display and its HDR output, for the display calibration and Graphics Debug's Output section.
-    void SetDisplayStatus(EditorDisplayStatus status)
-    {
-        m_state.display = std::move(status);
-    }
     // Whether the render backend can path trace and use hardware ray tracing (the Render > Pipeline
     // modes and the Ray Tracing switch), and what the Graphics Debug window says of path tracing.
     void SetPathTracingStatus(bool available, std::string status)

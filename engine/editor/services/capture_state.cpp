@@ -6,7 +6,6 @@
 
 #include <fstream>
 #include <stdexcept>
-#include <type_traits>
 
 namespace me
 {
@@ -23,15 +22,7 @@ void ReadField(const YAML::Node& node, const char* key, T& value)
 {
     if (node && node[key])
     {
-        if constexpr (std::is_enum_v<T>)
-        {
-            // Enums are stored as their numbers.
-            value = static_cast<T>(node[key].as<std::underlying_type_t<T>>());
-        }
-        else
-        {
-            value = node[key].as<T>();
-        }
+        value = node[key].as<T>();
     }
 }
 
@@ -63,15 +54,7 @@ void EmitGroups(YAML::Emitter& out, Visit&& visitAll)
                     out << YAML::Key << group << YAML::Value << YAML::BeginMap;
                 }
             }
-            using Value = std::remove_cvref_t<decltype(value)>;
-            if constexpr (std::is_enum_v<Value>)
-            {
-                out << YAML::Key << key << YAML::Value << static_cast<std::underlying_type_t<Value>>(value);
-            }
-            else
-            {
-                out << YAML::Key << key << YAML::Value << value;
-            }
+            out << YAML::Key << key << YAML::Value << value;
         });
     if (!openGroup.empty())
     {

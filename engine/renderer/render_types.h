@@ -1,7 +1,5 @@
 #pragma once
 
-#include <engine/renderer/display_calibration.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -417,11 +415,10 @@ struct RenderDebugSettings
     bool specularAntiAliasing = true;
     BloomSettings bloom;
     SsrSettings ssr;
-    // HDR10 or SDR output and the display calibration (display_calibration.h): GT7's HDR curve peaks
-    // at the calibrated maximum luminance, UI white follows the OS's SDR content brightness.
-    DisplaySettings display;
-    // What the calibration screen shows in place of the scene; never saved.
-    DisplayCalibrationView calibrationView;
+    // Presents to an HDR10 swapchain when the display offers one (see hdr_output.glsl), tone mapped
+    // with GT7's HDR curve for this peak luminance in cd/m^2, which Vulkan cannot query.
+    bool hdrOutput = false;
+    float hdrPeakNits = 1000.0f;
     // The anime characters' brightness over the physical scene's, in EV (toon_pass.h). Their shading
     // is display-referred in AnimateApp, where the lit albedo reaches the screen as it is; at 0 their
     // lit side is as bright as a white diffuse surface facing the same light, which keeps them in step

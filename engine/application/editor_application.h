@@ -55,9 +55,6 @@ struct EditorApplicationOptions
     // --debug-view N starts with Graphics Debug's G-buffer view N (GBufferDebugView); --no-ddgi with
     // the DDGI probes off.
     std::optional<GBufferDebugView> debugView;
-    // --display-pattern N,LEVEL shows the display calibration's pattern N (CalibrationPattern) at
-    // LEVEL in place of the scene, to measure what reaches the display.
-    std::optional<DisplayCalibrationView> displayPattern;
     bool ddgiDisabled = false;
     // --software-rays: the ray scene's compute walk even where hardware ray tracing exists.
     bool softwareRays = false;

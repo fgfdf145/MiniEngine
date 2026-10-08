@@ -48,7 +48,6 @@
 #include "video_readback.h"
 
 #include <engine/editor/editor_backend_base.h>
-#include <fstream>
 #include <engine/renderer/volumetric_clouds.h>
 #include <engine/asset/texture_preparation.h>
 #include <engine/core/threading/render_thread.h>
@@ -58,8 +57,6 @@
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
 #include <engine/renderer/path_tracing.h>
-#include <engine/renderer/frame_pacing.h>
-#include <engine/platform/display/display_hdr.h>
 #include <engine/renderer/local_shadows.h>
 #include <engine/renderer/render_features.h>
 
@@ -314,13 +311,6 @@ class VulkanRenderer : public EditorRenderBackendBase
     void UpdateMinimapTexture(const std::string& path);
     void ReleaseMinimapTexture();
     void CreateSwapchainResources();
-    // Copies the display monitor's latest answer (main thread).
-    void UpdateDisplayReport();
-    // Whether the output settings ask for HDR10 on this display, and the UI white it would use.
-    bool WantsHdrSwapchain() const;
-    float WantedUiWhiteNits() const;
-    // Gives the HDR10 swapchain the content's luminance range when it changed (render thread).
-    void ApplyHdrMetadata(const DisplayOutput& display);
     // A view's passes on its targets; the viewport's also build the material pipelines every view
     // draws with (the views' render passes are alike, so compatible).
     void CreateScenePasses(VulkanSceneView& view);
@@ -658,22 +648,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // the adapted white point; empty until the first balanced frame.
     WhiteBalanceReferences m_whiteBalanceReferences;
     std::optional<glm::vec2> m_adaptedWhiteXy;
-    // What the OS says about the window's display, polled on its own thread; the main thread copies
-    // the latest answer at the start of each frame.
-    std::unique_ptr<platform::display::DisplayHdrMonitor> m_displayMonitor;
-    // MINIENGINE_FRAME_TIMES=<file>: each present's time in microseconds, one per line (render thread),
-    // to measure frame pacing.
-    std::ofstream m_frameTimesFile;
-    // Even frame starts under HDR output (render thread).
-    FramePacer m_framePacer;
-    platform::display::DisplayHdrInfo m_displayInfo;
-    DisplayReport m_displayReport;
-    // The HDR output the current swapchain was created for, and the UI white ImGui's HDR shader was
-    // built with; a different wish recreates them.
+    // The HDR output setting the current swapchain was created for; a different one recreates it.
     bool m_swapchainHdrRequested = false;
-    float m_swapchainUiWhiteNits = kDefaultUiWhiteNits;
-    // The HDR metadata last given to the swapchain (render thread); reset with the swapchain.
-    std::optional<DisplayOutput> m_appliedHdrMetadata;
     uint32_t m_droppedLightCount = 0;
     uint32_t m_droppedClusterLightCount = 0;
     uint32_t m_droppedLocalShadowCount = 0;
