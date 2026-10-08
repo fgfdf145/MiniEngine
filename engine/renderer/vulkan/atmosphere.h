@@ -95,6 +95,9 @@ class VulkanAtmosphere
         View(const View&) = delete;
         View& operator=(const View&) = delete;
 
+        // The next frame's clouds keep no history and march from the block's first pixel.
+        void RestartHistory();
+
       private:
         friend class VulkanAtmosphere;
         explicit View(VkDevice device);
@@ -114,6 +117,8 @@ class VulkanAtmosphere
         bool m_initialized = false;
         // Steps the marched pixel through each 2 x 2 block, every frame, with TAA or without.
         uint32_t m_cloudFrame = 0;
+        // Set by RestartHistory: the next frame's reconstruction ignores the history.
+        bool m_cloudHistoryRestart = false;
         VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
         VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
     };

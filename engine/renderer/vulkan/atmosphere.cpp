@@ -186,6 +186,12 @@ VulkanAtmosphere::View::~View()
     }
 }
 
+void VulkanAtmosphere::View::RestartHistory()
+{
+    m_cloudFrame = 0;
+    m_cloudHistoryRestart = true;
+}
+
 void VulkanAtmosphere::DestroyImage(VkDevice device, LutImage& image)
 {
     if (image.view != VK_NULL_HANDLE)
@@ -288,7 +294,8 @@ void VulkanAtmosphere::RecordView(
 
 void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, View& view, VkDescriptorSet frameDescriptorSet, VulkanGpuTimer* timer)
 {
-    const bool historyValid = !view.m_cloudTargetFresh;
+    const bool historyValid = !view.m_cloudTargetFresh && !view.m_cloudHistoryRestart;
+    view.m_cloudHistoryRestart = false;
     if (view.m_cloudTargetFresh)
     {
         std::array<VkImageMemoryBarrier, 3> barriers{};

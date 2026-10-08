@@ -190,6 +190,10 @@ struct RendererSharedState
     // whose ray-traced scene (DDGI's) is still building. --wait-for-scene counts no frames until it
     // is done.
     bool rayScenePending = false;
+    // Bumped by a --wait-for-scene run when its frames start to count: the render thread starts every
+    // temporal effect over from that frame (VulkanRenderer::RestartTemporalEffects), so the frames
+    // drawn while loading, as many as the loading's timing makes, leave nothing in the capture.
+    uint32_t temporalRestart = 0;
     // The render thread's last measurement of GPU memory, which world streaming fits the scene in.
     GpuMemoryReport gpuMemory;
     RenderExtent requestedViewportExtent{};

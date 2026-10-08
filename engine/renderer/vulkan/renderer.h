@@ -221,6 +221,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     void ApplyImGuiTextureRequests(const ImDrawData& drawData);
     // Main thread: everything the render thread will read of this frame.
     void BuildFramePacket(RenderFramePacket& packet, bool contentChanged, RenderExtent viewportExtent);
+    // Every view's temporal effects start over: histories, the TAA jitter sequence, the AO noise,
+    // the clouds' reconstruction, the path tracer's accumulation and DLSS's history.
+    void RestartTemporalEffects();
     // A frame's work that every view shares, done once before the views (RenderFrame): the lights,
     // every draw's model matrix and the shadow casters, the sky, the probes, the local shadow atlas,
     // the skinning and the white balance.
@@ -462,6 +465,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     DlssPreset m_activeDlssPreset = DlssPreset::Default;
     bool m_activeDlssRayReconstruction = false;
     bool m_dlssResetPending = true;
+    // The last RenderFramePacket::temporalRestart drawn with.
+    uint32_t m_temporalRestart = 0;
     std::vector<std::shared_ptr<const RenderSubmesh>> m_renderSubmeshes;
     // m_renderSubmeshes by revision, for the next upload to keep.
     std::unordered_map<uint64_t, std::shared_ptr<const RenderSubmesh>> m_liveSubmeshes;

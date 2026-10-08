@@ -831,6 +831,27 @@ void VulkanRenderer::ApplyRenderFeedback()
     }
 }
 
+void VulkanRenderer::RestartTemporalEffects()
+{
+    const auto restart = [](VulkanSceneView& view)
+    {
+        view.ResetHistories();
+        view.taaFrameIndex = 0;
+        view.aoFrameIndex = 0;
+        if (view.atmosphere)
+        {
+            view.atmosphere->RestartHistory();
+        }
+    };
+    restart(m_view);
+    for (const std::unique_ptr<VulkanSceneView>& view : m_captureViews)
+    {
+        restart(*view);
+    }
+    m_pathTraceAccumulation.Reset();
+    m_dlssResetPending = true;
+}
+
 void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentChanged, RenderExtent viewportExtent)
 {
     packet.serial = ++m_frameSerial;
@@ -840,6 +861,7 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
     packet.camera = State().camera;
     packet.viewportMatrices = State().viewportMatrices;
     packet.renderDebug = State().renderDebug;
+    packet.temporalRestart = State().temporalRestart;
     packet.viewportExtent = viewportExtent;
     packet.displayExtent = {};
     if (State().fixedViewportExtent.has_value() || State().renderDebug.viewportResolution.fixed)
@@ -905,6 +927,11 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     }
     SyncSceneTargets(packet.viewportExtent, packet.renderDebug);
     SyncCaptureViews(packet.captureViews);
+    if (packet.temporalRestart != m_temporalRestart)
+    {
+        m_temporalRestart = packet.temporalRestart;
+        RestartTemporalEffects();
+    }
 
     uint32_t imageIndex = 0;
     const auto waitStart = std::chrono::steady_clock::now();

@@ -56,6 +56,8 @@ struct RenderFramePacket
     float uiScale = 1.0f;
     // The output's pixels per display pixel where the viewport shows them (EditorUiFrameResult).
     float viewportOutputScale = 1.0f;
+    // RendererSharedState::temporalRestart: a change starts every temporal effect over.
+    uint32_t temporalRestart = 0;
     // The renderables changed since the last frame: the render thread starts an upload.
     bool contentChanged = false;
     std::shared_ptr<const CpuRenderSubmeshList> renderSubmeshes;

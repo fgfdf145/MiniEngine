@@ -681,6 +681,7 @@ int EditorApplication::Run()
         SceneIoService::StartAsyncSceneLoad(*sharedState, *startupScenePath);
     }
     uint32_t renderedFrameCount = 0;
+    bool countingStarted = false;
     bool recordingStarted = false;
     bool quadRecordingStarted = false;
     bool driveStarted = false;
@@ -737,6 +738,12 @@ int EditorApplication::Run()
 
         const bool loading = sharedState->IsSceneLoading();
         const bool waiting = m_options.waitForScene && loading;
+        // The next frame built draws with every temporal effect started over.
+        if (m_options.waitForScene && !waiting && !countingStarted)
+        {
+            countingStarted = true;
+            ++sharedState->temporalRestart;
+        }
         if (m_options.driveEntity.has_value() && !driveStarted && !loading)
         {
             driveStarted = true;
