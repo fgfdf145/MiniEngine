@@ -1,6 +1,8 @@
 #include "command.h"
 
 #include <algorithm>
+#include <array>
+#include <utility>
 
 namespace me
 {
@@ -69,20 +71,28 @@ VkResult VulkanCommandContext::AcquireNextImage(VkSwapchainKHR swapchain, uint32
     return acquireResult;
 }
 
-void VulkanCommandContext::RecordCommandBuffer(uint32_t imageIndex, const std::function<void(VkCommandBuffer)>& recorder)
+void VulkanCommandContext::RecordCommandBuffers(
+    uint32_t imageIndex,
+    const std::function<void(VkCommandBuffer)>& work,
+    const std::function<void(VkCommandBuffer)>& present)
 {
-    CheckVulkan(vkResetCommandBuffer(m_commandBuffers[imageIndex], 0), "Failed to reset command buffer");
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    CheckVulkan(vkBeginCommandBuffer(m_commandBuffers[imageIndex], &beginInfo), "Failed to begin command buffer");
-
-    if (recorder)
+    // In order: the present buffer continues where the work buffer's layouts and barriers left off.
+    for (const auto& [commandBuffer, recorder] :
+         {std::pair{m_commandBuffers[imageIndex], &work}, std::pair{m_presentCommandBuffers[imageIndex], &present}})
     {
-        recorder(m_commandBuffers[imageIndex]);
-    }
+        CheckVulkan(vkResetCommandBuffer(commandBuffer, 0), "Failed to reset command buffer");
 
-    CheckVulkan(vkEndCommandBuffer(m_commandBuffers[imageIndex]), "Failed to end command buffer");
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        CheckVulkan(vkBeginCommandBuffer(commandBuffer, &beginInfo), "Failed to begin command buffer");
+
+        if (*recorder)
+        {
+            (*recorder)(commandBuffer);
+        }
+
+        CheckVulkan(vkEndCommandBuffer(commandBuffer), "Failed to end command buffer");
+    }
 }
 
 void VulkanCommandContext::Submit(VkQueue graphicsQueue, uint32_t imageIndex)
@@ -94,18 +104,23 @@ void VulkanCommandContext::Submit(VkQueue graphicsQueue, uint32_t imageIndex)
     const VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     const VkSemaphore signalSemaphores[] = {m_renderFinishedSemaphores[imageIndex]};
 
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = waitSemaphores;
-    submitInfo.pWaitDstStageMask = waitStages;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &m_commandBuffers[imageIndex];
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = signalSemaphores;
+    // The work first, waiting for nothing; then the present pass, which waits for the image. The fence
+    // covers both.
+    std::array<VkSubmitInfo, 2> submitInfos{};
+    submitInfos[0].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfos[0].commandBufferCount = 1;
+    submitInfos[0].pCommandBuffers = &m_commandBuffers[imageIndex];
+    submitInfos[1].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfos[1].waitSemaphoreCount = 1;
+    submitInfos[1].pWaitSemaphores = waitSemaphores;
+    submitInfos[1].pWaitDstStageMask = waitStages;
+    submitInfos[1].commandBufferCount = 1;
+    submitInfos[1].pCommandBuffers = &m_presentCommandBuffers[imageIndex];
+    submitInfos[1].signalSemaphoreCount = 1;
+    submitInfos[1].pSignalSemaphores = signalSemaphores;
 
     CheckVulkan(
-        vkQueueSubmit(graphicsQueue, 1, &submitInfo, currentFrameSyncObjects.inFlightFence),
+        vkQueueSubmit(graphicsQueue, static_cast<uint32_t>(submitInfos.size()), submitInfos.data(), currentFrameSyncObjects.inFlightFence),
         "Failed to submit draw command buffer");
     m_slotSubmits[m_currentFrame] = ++m_lastSubmit;
 }
@@ -180,6 +195,7 @@ void VulkanCommandContext::CreateCommandPool(const QueueFamilyIndices& queueFami
 void VulkanCommandContext::AllocateCommandBuffers(size_t commandBufferCount)
 {
     m_commandBuffers.resize(commandBufferCount);
+    m_presentCommandBuffers.resize(commandBufferCount);
 
     VkCommandBufferAllocateInfo allocateInfo{};
     allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -188,6 +204,7 @@ void VulkanCommandContext::AllocateCommandBuffers(size_t commandBufferCount)
     allocateInfo.commandBufferCount = static_cast<uint32_t>(m_commandBuffers.size());
 
     CheckVulkan(vkAllocateCommandBuffers(m_device, &allocateInfo, m_commandBuffers.data()), "Failed to allocate command buffers");
+    CheckVulkan(vkAllocateCommandBuffers(m_device, &allocateInfo, m_presentCommandBuffers.data()), "Failed to allocate present command buffers");
 }
 
 void VulkanCommandContext::CreateSyncObjects(size_t swapchainImageCount)

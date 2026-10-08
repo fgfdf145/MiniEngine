@@ -120,6 +120,44 @@ void ReplacesTextures()
     Require(commandsAfter == commandsBefore - static_cast<int>(before), "only those commands go");
     Require(CountCommands(copy, 0xBEEF) == 1, "the others stay");
 }
+
+void Cut(const ImDrawList*, const ImDrawCmd*) {}
+void Reset(const ImDrawList*, const ImDrawCmd*) {}
+
+void ReplacesTexturesWithCallbacks()
+{
+    // HDR output cuts the viewport image out of the UI layer (VulkanHdrComposite).
+    ImGuiFrameSnapshot snapshot;
+    snapshot.Capture(DrawFrame(10.0f));
+    ImDrawData& copy = *snapshot.GetDrawData();
+    const size_t others = CountCommands(copy, kOtherTexture);
+    int marker = 0;
+    const std::optional<ImGuiCommandQuad> quad = snapshot.ReplaceTextureWithCallback(kViewportTextureId, &Cut, &marker, &Reset);
+    Require(quad.has_value(), "the viewport image's quad comes back");
+    Require(quad->max.x - quad->min.x == 64.0f && quad->max.y - quad->min.y == 64.0f, "at the image's size");
+    Require(quad->uvMin.x == 0.0f && quad->uvMin.y == 0.0f && quad->uvMax.x == 1.0f && quad->uvMax.y == 1.0f, "with its corners' texture coordinates");
+    Require(CountCommands(copy, kViewportTextureId) == 0, "the image is no longer drawn");
+    Require(CountCommands(copy, kOtherTexture) == others, "other images still are");
+    bool sawCut = false;
+    for (int list = 0; list < copy.CmdListsCount; ++list)
+    {
+        const ImVector<ImDrawCmd>& commands = copy.CmdLists[list]->CmdBuffer;
+        for (int index = 0; index < commands.Size; ++index)
+        {
+            if (commands[index].UserCallback != &Cut)
+            {
+                continue;
+            }
+            sawCut = true;
+            Require(commands[index].UserCallbackData == &marker, "the cut carries its data");
+            Require(index + 1 < commands.Size && commands[index + 1].UserCallback == &Reset, "and the backend's reset follows it");
+            const ImGuiCommandQuad again = CommandQuad(*copy.CmdLists[list], commands[index]);
+            Require(again.min.x == quad->min.x && again.max.y == quad->max.y, "the cut still finds the quad");
+        }
+    }
+    Require(sawCut, "the image's command became the cut");
+    Require(!snapshot.ReplaceTextureWithCallback(0xDEAD, &Cut, &marker, &Reset).has_value(), "no quad for a texture not drawn");
+}
 }
 
 int main()
@@ -134,6 +172,7 @@ int main()
     {
         CopiesTheDrawData();
         ReplacesTextures();
+        ReplacesTexturesWithCallbacks();
         std::cout << "imgui frame snapshot tests passed\n";
     }
     catch (const std::exception& error)

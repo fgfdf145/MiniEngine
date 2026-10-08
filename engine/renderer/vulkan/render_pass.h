@@ -9,6 +9,9 @@ namespace me
 // testing disabled, so this pass has a single color attachment — no depth image, no per-frame
 // depth clear, and no cross-frame write-after-write on a shared depth buffer. The 3D scene has
 // its own depth buffer in SceneRenderTargets.
+// With HDR output the same pass draws ImGui into the SDR UI layer instead (finalLayout
+// SHADER_READ_ONLY_OPTIMAL, for the composite to sample; see VulkanHdrComposite), and a second one
+// on the swapchain takes the composite.
 class VulkanRenderPass
 {
   public:
@@ -16,7 +19,8 @@ class VulkanRenderPass
         VkDevice device,
         VkFormat swapchainImageFormat,
         VkExtent2D extent,
-        const std::vector<VkImageView>& imageViews);
+        const std::vector<VkImageView>& imageViews,
+        VkImageLayout finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     ~VulkanRenderPass();
 
     VulkanRenderPass(const VulkanRenderPass&) = delete;

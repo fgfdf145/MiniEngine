@@ -175,6 +175,54 @@ void HdrAtSdrPaperWhiteIsTheSdrCurveUnscaled()
     }
 }
 
+void HdrAtPaperWhiteKeepsTheSdrFrameBelowTheShoulder()
+{
+    // Peak = paper white: no headroom, the SDR curve itself, whatever the paper white.
+    for (const float paperWhite : {250.0f, 480.0f})
+    {
+        for (float value = 0.01f; value < 40.0f; value *= 1.7f)
+        {
+            const glm::vec3 input(value, value * 0.6f, value * 0.3f);
+            Require(
+                MaxAbsDifference(
+                    shader::TonemapFrameBufferRec709HdrAtPaperWhite(input, paperWhite, paperWhite),
+                    shader::TonemapFrameBufferRec709(input)) <= 1e-4f,
+                "with no headroom HDR output is the SDR frame");
+        }
+    }
+    // A 600-nit display with SDR white at 480: the toe and the midtones are SDR's exactly, and
+    // highlights go above SDR white, up to the headroom.
+    for (float value = 0.01f; value < 0.8f; value *= 1.3f)
+    {
+        const glm::vec3 input(value);
+        const glm::vec3 hdr = shader::TonemapFrameBufferRec709HdrAtPaperWhite(input, 600.0f, 480.0f);
+        const glm::vec3 sdr = shader::TonemapFrameBufferRec709(input);
+        Require(MaxAbsDifference(hdr, sdr) <= 1e-4f * std::max(1.0f, sdr.x), "below SDR's shoulder HDR output is the SDR frame");
+    }
+    const glm::vec3 highlight = shader::TonemapFrameBufferRec709HdrAtPaperWhite(glm::vec3(40.0f), 600.0f, 480.0f);
+    Require(highlight.x > 1.1f && highlight.x <= 600.0f / 480.0f + 1e-4f, "highlights reach past SDR white up to the peak");
+}
+
+void CompositeIsTheSdrBlendBelowSdrWhite()
+{
+    const glm::vec3 scene(0.18f, 0.5f, 0.9f);
+    // Opaque UI: the UI's own colour, decoded.
+    const glm::vec4 opaque(0.25f, 0.5f, 0.75f, 1.0f);
+    Require(
+        MaxAbsDifference(shader::CompositeUiOverScene(opaque, scene), shader::SrgbDecodeExtended3(glm::vec3(opaque))) <= 1e-6f,
+        "an opaque UI pixel is the UI");
+    // The cut with nothing over it: the scene, above SDR white too.
+    for (const glm::vec3 value : {scene, glm::vec3(3.0f, 1.2f, 0.4f)})
+    {
+        Require(MaxAbsDifference(shader::CompositeUiOverScene(glm::vec4(0.0f), value), value) <= 1e-5f * std::max(1.0f, value.x), "the cut shows the scene");
+    }
+    // A half-covering black overlay: blended in sRGB-encoded space, as the SDR swapchain does.
+    const glm::vec4 halfBlack(0.0f, 0.0f, 0.0f, 0.5f);
+    const glm::vec3 expected = shader::SrgbDecodeExtended3(shader::SrgbEncodeExtended3(scene) * 0.5f);
+    Require(MaxAbsDifference(shader::CompositeUiOverScene(halfBlack, scene), expected) <= 1e-6f, "overlays blend as in SDR");
+    Require(std::abs(shader::SrgbDecodeExtended(shader::SrgbEncodeExtended(4.0f)) - 4.0f) < 1e-4f, "the extended sRGB curve round-trips above 1");
+}
+
 void PqEncodesAbsoluteLuminance()
 {
     Require(shader::PqEncodeNits(0.0f) < 1e-6f, "0 nits is the bottom of the PQ range");
@@ -203,6 +251,8 @@ int main()
         BackgroundConstantMatchesTheOperator();
         HdrPortMatchesReferenceAcrossPeaks();
         HdrAtSdrPaperWhiteIsTheSdrCurveUnscaled();
+        HdrAtPaperWhiteKeepsTheSdrFrameBelowTheShoulder();
+        CompositeIsTheSdrBlendBelowSdrWhite();
         PqEncodesAbsoluteLuminance();
     }
     catch (const std::exception& error)

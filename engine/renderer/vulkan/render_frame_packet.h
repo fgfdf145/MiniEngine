@@ -3,6 +3,7 @@
 #include "uniform_buffer.h"
 
 #include <engine/editor/imgui_frame_snapshot.h>
+#include <engine/platform/display/display_hdr.h>
 #include <engine/renderer/camera.h>
 #include <engine/renderer/render_transform_snapshot.h>
 #include <engine/renderer/render_types.h>
@@ -41,6 +42,8 @@ struct RenderFramePacket
     Camera camera;
     ViewportMatrices viewportMatrices;
     RenderDebugSettings renderDebug;
+    // What the OS says of the window's display (its SDR white and peak, for HDR output).
+    platform::display::DisplayHdrInfo display;
     // The size the scene renders at this frame.
     RenderExtent viewportExtent;
     // The window's display in pixels: the largest the viewport can become (fullscreen), which the GPU

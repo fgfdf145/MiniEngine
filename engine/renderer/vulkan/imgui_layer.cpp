@@ -364,24 +364,9 @@ bool VulkanImGuiLayer::WantsMouseCapture() const
     return ImGui::GetIO().WantCaptureMouse;
 }
 
-void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount, bool hdrOutput)
+void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount)
 {
     DestroyVulkanResources();
-
-    m_hdrFragmentShader.clear();
-    if (hdrOutput)
-    {
-        const std::filesystem::path path = EnginePaths::ShaderRoot() / "imgui_hdr10.frag.spv";
-        std::ifstream file(path, std::ios::binary | std::ios::ate);
-        if (!file)
-        {
-            throw std::runtime_error("Failed to open " + path.string());
-        }
-        const std::streamsize size = file.tellg();
-        m_hdrFragmentShader.resize(static_cast<size_t>(size) / sizeof(uint32_t));
-        file.seekg(0);
-        file.read(reinterpret_cast<char*>(m_hdrFragmentShader.data()), size);
-    }
 
     ImGui_ImplVulkan_InitInfo initInfo{};
     initInfo.ApiVersion = VK_API_VERSION_1_3;
@@ -396,12 +381,6 @@ void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, ui
     initInfo.MinImageCount = imageCount;
     initInfo.ImageCount = imageCount;
     initInfo.CheckVkResultFn = &VulkanImGuiLayer::CheckVkResult;
-    if (!m_hdrFragmentShader.empty())
-    {
-        initInfo.CustomShaderFragCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        initInfo.CustomShaderFragCreateInfo.codeSize = m_hdrFragmentShader.size() * sizeof(uint32_t);
-        initInfo.CustomShaderFragCreateInfo.pCode = m_hdrFragmentShader.data();
-    }
 
     // The font atlas is uploaded by the backend itself (ImGuiBackendFlags_RendererHasTextures): glyphs
     // are rasterised at the size they are drawn, so scaled text and icons stay sharp.

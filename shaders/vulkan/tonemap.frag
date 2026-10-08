@@ -41,13 +41,15 @@ const uint TONEMAP_OPERATOR_NONE = 3u;
 layout(push_constant) uniform TonemapConstants
 {
     uint gbufferView;
-    // 1 for HDR10 output: GT7's HDR curve for peakNits, written relative to kUiWhiteNits.
+    // 1 for HDR output: GT7's HDR curve for peakNits, the scene's paper white at paperWhiteNits (SDR
+    // white), written relative to that white (see hdr_composite.frag).
     uint hdrOutput;
     float peakNits;
     // One of the TONEMAP_OPERATOR_* values below.
     uint toneOperator;
     // Auto white balance, linear Rec.709 to linear Rec.709, as three columns (xyz used).
     vec4 whiteBalance[3];
+    float paperWhiteNits;
 }
 constants;
 
@@ -169,8 +171,8 @@ void main()
         if (constants.toneOperator == TONEMAP_OPERATOR_KHRONOS_REFERENCE || constants.toneOperator == TONEMAP_OPERATOR_PBR_NEUTRAL)
         {
             // The Sample Viewer's operator on the exposed value (its exposure 1.0 is the engine's
-            // exposed 1.0). Display linear; with HDR10 output it is shown relative to the UI white,
-            // as SDR content is.
+            // exposed 1.0). Display linear; with HDR output it is shown relative to SDR white, as SDR
+            // content is.
             color = KhronosPbrNeutral(max(color * kExposedPerFrameBufferUnit, vec3(0.0f)));
             // The Khronos reference view on an SDR display also takes the viewer's encoding: a 2.2
             // gamma instead of the sRGB curve.
@@ -182,10 +184,10 @@ void main()
         else if (constants.toneOperator == TONEMAP_OPERATOR_NONE)
         {
             // No curve: the exposed value as display linear, clipped where the display ends. With
-            // HDR10 output, frame-buffer units become nits relative to the UI white, up to the peak.
+            // HDR output the same value relative to SDR white, clipped at the peak instead.
             if (constants.hdrOutput != 0u)
             {
-                color = clamp(color * (Gt7FrameBufferToPhysical(1.0f) / kUiWhiteNits), vec3(0.0f), vec3(constants.peakNits / kUiWhiteNits));
+                color = clamp(color * kExposedPerFrameBufferUnit, vec3(0.0f), vec3(constants.peakNits / constants.paperWhiteNits));
             }
             else
             {
@@ -196,9 +198,7 @@ void main()
         // the LDR target's sRGB format applies the transfer function on write.
         else if (constants.hdrOutput != 0u)
         {
-            // Frame-buffer units (1.0 = 100 cd/m^2) up to the display peak, then relative to the UI
-            // white that imgui_hdr10.frag maps to kUiWhiteNits.
-            color = TonemapFrameBufferRec709Hdr(color, constants.peakNits) * (Gt7FrameBufferToPhysical(1.0f) / kUiWhiteNits);
+            color = TonemapFrameBufferRec709HdrAtPaperWhite(color, constants.peakNits, constants.paperWhiteNits);
         }
         else
         {

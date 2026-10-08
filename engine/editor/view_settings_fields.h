@@ -59,7 +59,9 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("", "taa", settings.taa);
     visit("", "specular_anti_aliasing", settings.specularAntiAliasing);
     visit("", "hdr_output", settings.hdrOutput);
+    visit("", "hdr_peak_from_display", settings.hdrPeakFromDisplay);
     visit("", "hdr_peak_nits", settings.hdrPeakNits);
+    visit("", "hdr_frame_pacing", settings.hdrFramePacing);
     visit("", "toon_exposure_ev", settings.toonExposureEv);
     visit("", "khronos_reference", settings.khronosReference);
     visit("", "render_scale", settings.renderScale);

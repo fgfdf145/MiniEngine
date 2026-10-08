@@ -287,6 +287,19 @@ vec3 TonemapFrameBufferRec709Hdr(vec3 frameBufferRec709, float peakNits)
     return max(mapped * kRec2020ToRec709, vec3(0.0f));
 }
 
+// GT7's HDR curve on a display whose SDR white is paperWhiteNits rather than the 250 cd/m^2 GT7
+// assumes (HDR output puts it at the SDR white the editor shows at). The curve is built for the
+// display's headroom over that white, peakNits * 250 / paperWhiteNits, and read relative to 250: its
+// toe and linear section are the SDR curve's (they do not depend on the peak), so everything below
+// SDR's shoulder is the SDR frame exactly, and only the highlights go on above 1.0, up to
+// peakNits / paperWhiteNits, where each channel is clipped as SDR clips it at 1.0. Display-linear
+// Rec.709 relative to paper white.
+vec3 TonemapFrameBufferRec709HdrAtPaperWhite(vec3 frameBufferRec709, float peakNits, float paperWhiteNits)
+{
+    vec3 mapped = TonemapFrameBufferRec709Hdr(frameBufferRec709, peakNits * (kGt7SdrPaperWhite / paperWhiteNits));
+    return min(mapped * (Gt7FrameBufferToPhysical(1.0f) / kGt7SdrPaperWhite), vec3(peakNits / paperWhiteNits));
+}
+
 // HDR target values (GT7 frame-buffer units, linear Rec.709; see pre_exposure.glsl) in,
 // display-referred linear Rec.709 in [0, 1] out.
 vec3 TonemapFrameBufferRec709(vec3 frameBufferRec709)

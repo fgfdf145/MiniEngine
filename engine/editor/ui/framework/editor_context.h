@@ -111,6 +111,7 @@ struct EditorSharedState
     bool dlssRayReconstructionAvailable = false;
     std::string dlssStatus;
     std::string gpuMemoryStatus;
+    std::string hdrOutputStatus;
     // The size the backend renders the scene at whatever the editor asks (--viewport-size, or a
     // recording's size while it runs); unset when the viewport's own settings decide.
     std::optional<RenderExtent> forcedViewportExtent;

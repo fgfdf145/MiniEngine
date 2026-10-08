@@ -415,10 +415,17 @@ struct RenderDebugSettings
     bool specularAntiAliasing = true;
     BloomSettings bloom;
     SsrSettings ssr;
-    // Presents to an HDR10 swapchain when the display offers one (see hdr_output.glsl), tone mapped
-    // with GT7's HDR curve for this peak luminance in cd/m^2, which Vulkan cannot query.
+    // HDR in the viewport only (docs/design/2026-10-08-viewport-only-hdr-design.md): an scRGB or
+    // HDR10 swapchain when the display is in HDR, the editor UI exactly as in SDR at Windows' SDR
+    // content brightness, the scene tone mapped with GT7's HDR curve, its paper white at that same
+    // brightness. The curve's peak is the display's reported one, or hdrPeakNits (cd/m^2) when
+    // hdrPeakFromDisplay is off or the display reports none.
     bool hdrOutput = false;
+    bool hdrPeakFromDisplay = true;
     float hdrPeakNits = 1000.0f;
+    // Starts frames evenly just above the GPU's frame time while presenting HDR, where a saturated
+    // GPU gets its swapchain images back in batches (frame_pacing.h).
+    bool hdrFramePacing = true;
     // The anime characters' brightness over the physical scene's, in EV (toon_pass.h). Their shading
     // is display-referred in AnimateApp, where the lit albedo reaches the screen as it is; at 0 their
     // lit side is as bright as a white diffuse surface facing the same light, which keeps them in step

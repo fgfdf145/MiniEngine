@@ -381,9 +381,10 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     taa.outputSized = true;
 
     // The selection outline. Its depth is the selected entity's alone, in the scene depth's format
-    // and sampled the same way; the outline is what ImGui draws over the viewport image, in the LDR
-    // target's format so that its colour reaches the screen as the viewport's does (sRGB-encoded on
-    // write for an SDR swapchain, display-linear for HDR10).
+    // and sampled the same way; the outline is what ImGui draws over the viewport image, in the SDR
+    // LDR target's format so that its colour reaches the screen as the viewport's does in SDR
+    // (sRGB-encoded on write). ImGui draws it in SDR under HDR output too (into the UI layer), so a
+    // float LDR target still gets an 8-bit sRGB outline.
     TargetDescription& selectionDepth = Describe(RenderTargetId::SelectionDepth);
     selectionDepth.format = depth.format;
     selectionDepth.usage = depth.usage;
@@ -392,7 +393,7 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     selectionDepth.outputSized = true;
 
     TargetDescription& selectionOutline = Describe(RenderTargetId::SelectionOutline);
-    selectionOutline.format = ldrFormat;
+    selectionOutline.format = ldrFormat == VK_FORMAT_R16G16B16A16_SFLOAT ? VK_FORMAT_B8G8R8A8_SRGB : ldrFormat;
     selectionOutline.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     selectionOutline.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     selectionOutline.bindToImGui = true;

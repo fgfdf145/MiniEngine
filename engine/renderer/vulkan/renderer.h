@@ -11,6 +11,7 @@
 #include "exposure_histogram_pass.h"
 #include "forward_pass.h"
 #include "gbuffer_inputs.h"
+#include "hdr_composite.h"
 #include "sampler_settings.h"
 #include "scatter_pass.h"
 #include "transmission_copy.h"
@@ -57,11 +58,14 @@
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
 #include <engine/renderer/path_tracing.h>
+#include <engine/renderer/frame_pacing.h>
+#include <engine/platform/display/display_hdr.h>
 #include <engine/renderer/local_shadows.h>
 #include <engine/renderer/render_features.h>
 
 #include <array>
 #include <deque>
+#include <fstream>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -434,7 +438,13 @@ class VulkanRenderer : public EditorRenderBackendBase
         const glm::vec3& ambientLuminance,
         const EnvironmentUniformData& environment,
         float preExposure);
-    void RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData) const;
+    // HDR output: ImGui into the SDR UI layer (VulkanHdrComposite), with the frame's work.
+    void RecordHdrUiLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData) const;
+    // The pass into the swapchain image: ImGui straight onto it, or under HDR the composite of the UI
+    // layer over the viewport's HDR image.
+    void RecordSwapchainPass(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData, const RenderFramePacket& packet) const;
+    // HDR output is on and the display can show it (Windows: its HDR is on; elsewhere: assumed).
+    bool WantsHdrSwapchain() const;
     // Meters the histogram the given frame slot last wrote and moves the frame camera's EV100
     // toward it. Must run after AcquireNextImage has waited on that slot's fence.
     void UpdateAutoExposure(VulkanSceneView& view, Camera& camera, const RenderFramePacket& frame, uint32_t frameSlot);
@@ -648,8 +658,26 @@ class VulkanRenderer : public EditorRenderBackendBase
     // the adapted white point; empty until the first balanced frame.
     WhiteBalanceReferences m_whiteBalanceReferences;
     std::optional<glm::vec2> m_adaptedWhiteXy;
-    // The HDR output setting the current swapchain was created for; a different one recreates it.
+    // Whether the current swapchain was asked to be HDR (WantsHdrSwapchain when it was made); a
+    // different answer recreates it.
     bool m_swapchainHdrRequested = false;
+    // HDR output (null when the swapchain is SDR): the SDR UI layer and its composite over the
+    // viewport's HDR image (hdr_composite.h). ImGui then draws into the layer.
+    std::unique_ptr<VulkanHdrComposite> m_hdrComposite;
+    // ImGui's platform DrawCallback_ResetRenderState, which the composite's cut is followed by.
+    ImDrawCallback m_imguiResetRenderState = nullptr;
+    // The SDR LDR format: the quad recording's cameras always render it, for the UI's preview and the
+    // video, whatever the viewport's output.
+    VkFormat m_sdrLdrFormat = VK_FORMAT_B8G8R8A8_SRGB;
+    // What Windows says of the window's display, polled off the frame path; the main thread's copy
+    // goes into each frame's packet.
+    std::unique_ptr<platform::display::DisplayHdrMonitor> m_displayMonitor;
+    platform::display::DisplayHdrInfo m_displayInfo;
+    // Even frame starts under HDR output (render thread; see frame_pacing.h).
+    FramePacer m_framePacer;
+    // MINIENGINE_FRAME_TIMES=<file>: one line per present (render thread): when it returned (us), the
+    // acquire's wait and the present call (ms), to measure frame pacing.
+    std::ofstream m_frameTimesFile;
     uint32_t m_droppedLightCount = 0;
     uint32_t m_droppedClusterLightCount = 0;
     uint32_t m_droppedLocalShadowCount = 0;

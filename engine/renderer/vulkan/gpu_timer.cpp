@@ -71,7 +71,10 @@ void VulkanGpuTimer::BeginFrame(VkCommandBuffer commandBuffer, uint32_t frameSlo
     m_slotMarks[frameSlot].clear();
     const uint32_t first = frameSlot * (kMaxMarks + 1);
     vkCmdResetQueryPool(commandBuffer, m_pool, first, kMaxMarks + 1);
-    vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_pool, first);
+    // Bottom of pipe: written once the work submitted before it has finished. At the top it was
+    // written as soon as the queue reached it, so with frames queued the first section also held the
+    // previous frame's tail, and the frame's time (HDR pacing's input) came out up to twice its work.
+    vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_pool, first);
     m_slotPending[frameSlot] = true;
 }
 
@@ -152,5 +155,19 @@ std::vector<VulkanGpuTimer::Section> VulkanGpuTimer::GetSections() const
 double VulkanGpuTimer::GetAverageFrameMs() const
 {
     return Average(m_frameSamples);
+}
+
+double VulkanGpuTimer::GetAverageFrameMsBefore(const char* name) const
+{
+    double total = 0.0;
+    for (const Accumulator& accumulator : m_sections)
+    {
+        if (accumulator.name == name)
+        {
+            return total;
+        }
+        total += Average(accumulator.samples);
+    }
+    return GetAverageFrameMs();
 }
 }

@@ -11,6 +11,7 @@
 #include <engine/renderer/render_features.h>
 #include <engine/renderer/scene_lighting.h>
 #include <engine/renderer/tyre_deformation.h>
+#include <engine/renderer/hdr_display.h>
 
 #include <engine/logic/editor_world.h>
 #include <engine/scene/scene_components.h>
@@ -48,6 +49,49 @@ namespace me
 
 namespace
 {
+// The GPU timer's section for the HDR composite, the frame's last: it waits for the swapchain image.
+constexpr const char* kHdrCompositeSection = "HdrComposite";
+
+// The Graphics Debug window's line on HDR output.
+std::string DescribeHdrOutput(
+    const RenderDebugSettings& settings,
+    const platform::display::DisplayHdrInfo& display,
+    bool presentingHdr,
+    bool scRgb)
+{
+    std::string line;
+    if (display.known)
+    {
+        line = std::format(
+            "Display: HDR {}, peak {:.0f} nits, SDR white {:.0f} nits",
+            display.hdrEnabled ? "on" : "off",
+            display.maxLuminance,
+            display.sdrWhiteNits);
+    }
+    if (!settings.hdrOutput)
+    {
+        return line;
+    }
+    line += line.empty() ? "" : "\n";
+    if (presentingHdr)
+    {
+        line += std::format(
+            "Presenting {}: scene paper white {:.0f} nits, peak {:.0f} nits",
+            scRgb ? "scRGB" : "HDR10",
+            HdrSdrWhiteNits(display),
+            HdrPeakNits(settings, display));
+    }
+    else if (display.known && !display.hdrEnabled)
+    {
+        line += "SDR: turn on Use HDR for this display in Windows";
+    }
+    else
+    {
+        line += "SDR: the display offers no HDR format";
+    }
+    return line;
+}
+
 // Per cascade. Four 2048 x 2048 32-bit layers are 64 MiB.
 constexpr uint32_t kShadowMapResolution = 2048;
 
@@ -577,6 +621,13 @@ VulkanRenderer::VulkanRenderer(
             return PrepareTexture(path, usage, compressTextures, cacheDirectory);
         },
         std::max(1u, std::thread::hardware_concurrency() / 2));
+    // Its first answer is in before the swapchain is made, so that starts in the right mode.
+    m_displayMonitor = std::make_unique<platform::display::DisplayHdrMonitor>(GetWindow().GetSDLWindow());
+    m_displayInfo = m_displayMonitor->Latest();
+    if (const char* path = std::getenv("MINIENGINE_FRAME_TIMES"); path != nullptr && path[0] != '\0')
+    {
+        m_frameTimesFile.open(path);
+    }
     CreateSwapchainResources();
     // The startup scene uploads synchronously: there is nothing on screen to keep responsive yet,
     // and it has no texture files.
@@ -685,8 +736,9 @@ void VulkanRenderer::DrawFrame()
         return;
     }
     const VkExtent2D currentExtent = m_swapchain->GetExtent();
+    m_displayInfo = m_displayMonitor->Latest();
     if (m_swapchainOutOfDate.exchange(false) || wantedExtent.width != currentExtent.width ||
-        wantedExtent.height != currentExtent.height || State().renderDebug.hdrOutput != m_swapchainHdrRequested)
+        wantedExtent.height != currentExtent.height || WantsHdrSwapchain() != m_swapchainHdrRequested)
     {
         m_renderThread->RunExclusive([this]()
                                      {
@@ -708,6 +760,7 @@ void VulkanRenderer::DrawFrame()
     State().editorUi.SetDlssStatus(m_dlss->IsAvailable(), m_dlss->IsRayReconstructionAvailable(), m_dlss->Status());
     State().editorUi.SetPathTracingStatus(m_rayScene->HasHardwareRayTracing(), m_pathTracingStatusShown);
     State().editorUi.SetGpuMemoryStatus(FormatGpuMemoryStatus(State().gpuMemory, State().worldStreaming));
+    State().editorUi.SetHdrOutputStatus(DescribeHdrOutput(State().renderDebug, m_displayInfo, m_swapchain->IsHdr(), m_swapchain->IsScRgb()));
     const EditorUiFrameResult uiFrame = DrawEditorUi(kViewportTextureId, viewportExtent);
     ApplyUiActions(uiFrame);
     EditorWorld().FlushDirtyTransforms();
@@ -828,6 +881,7 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
     packet.camera = State().camera;
     packet.viewportMatrices = State().viewportMatrices;
     packet.renderDebug = State().renderDebug;
+    packet.display = m_displayInfo;
     packet.viewportExtent = viewportExtent;
     packet.displayExtent = {};
     if (State().fixedViewportExtent.has_value() || State().renderDebug.viewportResolution.fixed)
@@ -891,6 +945,18 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     SyncSceneTargets(packet.viewportExtent, packet.renderDebug);
     SyncCaptureViews(packet.captureViews);
 
+    // The HDR swapchain (which NVIDIA presents through DXGI) hands its images back in batches while
+    // frames queue up, so frames start at even intervals just above the GPU's time instead (see
+    // FramePacer). That time is the work before the composite: only the composite waits for the
+    // swapchain image (RecordCommandBuffers).
+    if (m_swapchain->IsHdr() && packet.renderDebug.hdrFramePacing)
+    {
+        WaitUntil(m_framePacer.Next(std::chrono::steady_clock::now(), m_gpuTimer->GetAverageFrameMsBefore(kHdrCompositeSection)));
+    }
+    else
+    {
+        m_framePacer.Reset();
+    }
     uint32_t imageIndex = 0;
     const auto waitStart = std::chrono::steady_clock::now();
     const VkResult acquireResult = m_commandContext->AcquireNextImage(m_swapchain->GetHandle(), imageIndex);
@@ -1326,7 +1392,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     const QuadVideoRecording* const quadRecording = ActiveQuadRecording();
     const bool recordQuadFrame =
         quadRecording != nullptr && !quadTiles.empty() &&
-        VulkanVideoReadback::SupportsFormat(m_view.targets->GetFormat(RenderTargetId::SceneLdr)) &&
+        VulkanVideoReadback::SupportsFormat(m_sdrLdrFormat) &&
         quadRecording->recorder->ClaimFrameAt(videoFrameTime);
     if (recordQuadFrame && !m_quadReadback)
     {
@@ -1337,7 +1403,12 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     }
 
     // The UI named the render thread's textures by ID; with the swapchain image known, they get the
-    // descriptor sets they have now.
+    // descriptor sets they have now. Under HDR the viewport image is not ImGui's to draw: its
+    // rectangle is cut out of the SDR UI layer, and the composite shows the HDR image there.
+    if (m_hdrComposite && packet.ui.GetDrawData() != nullptr)
+    {
+        m_hdrComposite->PrepareDrawData(packet.ui, kViewportTextureId, m_imguiResetRenderState);
+    }
     packet.ui.ReplaceTexture(kViewportTextureId, m_view.targets->GetLdrTextureId(imageIndex));
     packet.ui.ReplaceTexture(kSelectionOutlineTextureId, m_view.targets->GetSelectionOutlineTextureId(imageIndex));
     packet.ui.ReplaceTexture(
@@ -1351,7 +1422,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     }
 
     m_cpuStages.Mark("FrameSetup");
-    m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
+    const auto recordWork = [&](VkCommandBuffer commandBuffer)
                                           {
                                               // A view's tracker holds one layout per target, but a target has
                                               // one image per copy, so what it learned last frame describes a
@@ -1469,7 +1540,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                       commandBuffer,
                                                       frame.frameSlot,
                                                       quadTiles,
-                                                      m_view.targets->GetFormat(RenderTargetId::SceneLdr),
+                                                      m_sdrLdrFormat,
                                                       ToVkExtent(RenderExtent{quadRecording->mosaic.width, quadRecording->mosaic.height}),
                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                                       videoFrameTime);
@@ -1488,14 +1559,18 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               RenderPassIo imguiIo{};
                                               imguiIo.reads = kImGuiReads;
                                               RecordTransitions(commandBuffer, m_view, imguiIo, frame);
-
-                                              RecordEditorLayer(commandBuffer, imageIndex, packet.ui.GetDrawData());
-                                              m_gpuTimer->Mark(commandBuffer, "ImGui");
+                                              // Under HDR the editor's SDR layer touches no swapchain image, so
+                                              // it is work too; only the composite onto the image waits for it.
+                                              if (m_hdrComposite)
+                                              {
+                                                  RecordHdrUiLayer(commandBuffer, imageIndex, packet.ui.GetDrawData());
+                                                  m_gpuTimer->Mark(commandBuffer, "ImGui");
+                                              }
 
                                               if (recordVideoFrame)
                                               {
-                                                  // SceneLdr is indexed by swapchain image; the ImGui pass left it
-                                                  // shader-read, as CaptureViewport expects to find it.
+                                                  // SceneLdr is indexed by swapchain image; the transitions above
+                                                  // left it shader-read, as CaptureViewport expects to find it.
                                                   const uint32_t ldrIndex = m_view.targets->ResolveIndex(RenderTargetId::SceneLdr, imageIndex, 0);
                                                   m_videoReadback->RecordCopy(
                                                       commandBuffer,
@@ -1506,7 +1581,14 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                                       videoFrameTime);
                                               }
-                                          });
+                                          };
+    // The pass into the swapchain image, the only one that waits for it (RecordCommandBuffers).
+    const auto recordPresent = [&](VkCommandBuffer commandBuffer)
+    {
+        RecordSwapchainPass(commandBuffer, imageIndex, packet.ui.GetDrawData(), packet);
+        m_gpuTimer->Mark(commandBuffer, m_hdrComposite ? kHdrCompositeSection : "ImGui");
+    };
+    m_commandContext->RecordCommandBuffers(imageIndex, recordWork, recordPresent);
     m_cpuStages.Mark("RecordRest");
     m_commandContext->Submit(m_device->GetGraphicsQueue(), imageIndex);
     m_cpuStages.Mark("Submit");
@@ -1544,8 +1626,15 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         }
     }
 
+    const auto presentStart = std::chrono::steady_clock::now();
     const VkResult presentResult = m_commandContext->Present(m_device->GetPresentQueue(), m_swapchain->GetHandle(), imageIndex);
     m_cpuStages.Mark("Present");
+    if (m_frameTimesFile.is_open())
+    {
+        const auto presentEnd = std::chrono::steady_clock::now();
+        m_frameTimesFile << std::chrono::duration_cast<std::chrono::microseconds>(presentEnd.time_since_epoch()).count() << ' ' << waitMs << ' '
+                         << std::chrono::duration<double, std::milli>(presentEnd - presentStart).count() << '\n';
+    }
     if (acquireResult == VK_SUBOPTIMAL_KHR || presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
     {
         // The main thread rebuilds it before its next frame.
@@ -1956,12 +2045,15 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.bloom.enabled = renderDebug.bloom.enabled && features.bloom;
 
     frame.whiteBalance = shared.whiteBalance;
-    frame.hdrOutput = m_swapchain->IsHdr();
-    frame.hdrPeakNits = std::clamp(renderDebug.hdrPeakNits, 250.0f, 10000.0f);
-    // HDR output shows more of the highlight's brightness directly, so it needs less glare.
+    // Only the viewport shows HDR; the quad recording's cameras stay SDR.
+    frame.hdrOutput = viewport && m_swapchain->IsHdr();
+    frame.hdrPaperWhiteNits = HdrSdrWhiteNits(packet.display);
+    frame.hdrPeakNits = HdrPeakNits(renderDebug, packet.display);
+    // HDR output shows more of the highlight's brightness directly, so it needs less glare: GT7's SDR
+    // peak scaled by the display's headroom over paper white.
     frame.glareFNumber = GlareFNumberFromEv100(
         camera.exposureEv100,
-        frame.hdrOutput ? frame.hdrPeakNits : kGlareSdrPeakNits);
+        frame.hdrOutput ? kGlareSdrPeakNits * frame.hdrPeakNits / frame.hdrPaperWhiteNits : kGlareSdrPeakNits);
     frame.taaHistory = view.taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, view.taaHistoryPreExposure);
     if (dlssEnabled)
@@ -2089,8 +2181,8 @@ void VulkanRenderer::CreateSwapchainResources()
         m_instance->GetSurface(),
         m_device->GetQueueFamilies(),
         supportDetails,
-        State().renderDebug.hdrOutput);
-    m_swapchainHdrRequested = State().renderDebug.hdrOutput;
+        WantsHdrSwapchain());
+    m_swapchainHdrRequested = WantsHdrSwapchain();
     m_renderPass = std::make_unique<VulkanRenderPass>(
         m_device->GetHandle(),
         m_swapchain->GetImageFormat(),
@@ -2100,10 +2192,23 @@ void VulkanRenderer::CreateSwapchainResources()
         m_device->GetHandle(),
         m_device->GetQueueFamilies(),
         m_renderPass->GetFramebuffers().size());
+    // HDR: ImGui draws the SDR UI layer, which the composite puts on the swapchain.
+    if (m_swapchain->IsHdr())
+    {
+        m_hdrComposite = std::make_unique<VulkanHdrComposite>(
+            m_device->GetPhysicalDevice(),
+            m_device->GetHandle(),
+            m_pipelineCache,
+            m_swapchain->GetExtent(),
+            static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
+            m_renderPass->GetHandle());
+        LOG_INFO("HDR output: {} swapchain, the editor UI composited in SDR", m_swapchain->IsScRgb() ? "scRGB" : "HDR10");
+    }
     m_imguiLayer->CreateOrUpdateVulkanResources(
-        m_renderPass->GetHandle(),
-        static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
-        m_swapchain->IsHdr());
+        m_hdrComposite ? m_hdrComposite->GetUiRenderPass() : m_renderPass->GetHandle(),
+        static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
+    m_imguiResetRenderState = ImGui::GetPlatformIO().DrawCallback_ResetRenderState;
+    m_sdrLdrFormat = SrgbFormatOf(m_swapchain->IsHdr() ? VulkanHdrComposite::kUiFormat : m_swapchain->GetImageFormat());
     if (!State().requestedViewportExtent.IsValid())
     {
         State().requestedViewportExtent = FromVkExtent(m_swapchain->GetExtent());
@@ -2121,11 +2226,11 @@ void VulkanRenderer::CreateSwapchainResources()
     // and it has to reach the LDR target: the tone mapping pass builds its render pass on that
     // format and ImGui samples the image, so a stale one would be a wrong-format viewport. Only
     // a fresh SceneRenderTargets re-runs the selection, so that case is reconstructed outright.
-    // With HDR output the LDR target holds display-linear values above UI white, which only a float
-    // format keeps; ImGui's HDR shader encodes them for the swapchain. Without it the target is the
+    // With HDR output the LDR target holds display-linear values above SDR white, which only a float
+    // format keeps; the HDR composite encodes them for the swapchain. Without it the target is the
     // swapchain's format made sRGB: tone mapping writes linear light and the image encodes it, and
     // ImGui, which draws in sRGB space into a UNORM swapchain, reads those bytes through a UNORM view.
-    const VkFormat ldrFormat = m_swapchain->IsHdr() ? VK_FORMAT_R16G16B16A16_SFLOAT : SrgbFormatOf(m_swapchain->GetImageFormat());
+    const VkFormat ldrFormat = m_swapchain->IsHdr() ? VK_FORMAT_R16G16B16A16_SFLOAT : m_sdrLdrFormat;
     const bool ldrFormatMatchesSwapchain =
         m_view.targets != nullptr && m_view.targets->GetFormat(RenderTargetId::SceneLdr) == ldrFormat;
     // At the viewport's size: SyncSceneTargets moves the render size to DLSS's before a frame draws.
@@ -2183,6 +2288,7 @@ void VulkanRenderer::DestroySwapchainResources()
     {
         m_imguiLayer->DestroyVulkanResources();
     }
+    m_hdrComposite.reset();
     m_commandContext.reset();
     m_renderPass.reset();
     m_swapchain.reset();
@@ -3303,13 +3409,13 @@ void VulkanRenderer::SyncCaptureViews(std::span<const SceneCaptureView> cameras)
 
 std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D extent)
 {
-    // Its targets in the viewport's LDR format, so the views' pictures can share a canvas and the
-    // material pipelines (made against the viewport's passes) draw into them.
+    // Its targets in the SDR LDR format whatever the viewport's output, so the views' pictures can
+    // share a canvas, the video takes them and the UI previews them as SDR.
     auto view = std::make_unique<VulkanSceneView>();
     view->targets = std::make_unique<SceneRenderTargets>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
-        m_view.targets->GetFormat(RenderTargetId::SceneLdr),
+        m_sdrLdrFormat,
         extent,
         extent,
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
@@ -4861,17 +4967,25 @@ void VulkanRenderer::UpdateAutoExposure(VulkanSceneView& view, Camera& camera, c
     view.hasMeteredExposure = true;
 }
 
-void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData) const
+namespace
 {
-    // Single color attachment: the ImGui pass has no depth buffer (see VulkanRenderPass).
+// The editor pass's clear: under HDR the same, into the SDR UI layer, so the layer is the SDR frame.
+VkClearValue EditorClearValue()
+{
     VkClearValue clearValue{};
     clearValue.color = {{0.04f, 0.05f, 0.08f, 1.0f}};
+    return clearValue;
+}
+}
 
+void VulkanRenderer::RecordHdrUiLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData) const
+{
+    // Single color attachment: the ImGui pass has no depth buffer (see VulkanRenderPass).
+    const VkClearValue clearValue = EditorClearValue();
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_renderPass->GetHandle();
-    renderPassInfo.framebuffer = m_renderPass->GetFramebuffers()[imageIndex];
-    renderPassInfo.renderArea.offset = {0, 0};
+    renderPassInfo.renderPass = m_hdrComposite->GetUiRenderPass();
+    renderPassInfo.framebuffer = m_hdrComposite->GetUiFramebuffer(imageIndex);
     renderPassInfo.renderArea.extent = m_swapchain->GetExtent();
     renderPassInfo.clearValueCount = 1;
     renderPassInfo.pClearValues = &clearValue;
@@ -4879,8 +4993,46 @@ void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t i
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     if (drawData != nullptr)
     {
+        m_hdrComposite->BeginUiRecording(commandBuffer, *drawData);
         ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer);
     }
     vkCmdEndRenderPass(commandBuffer);
+}
+
+void VulkanRenderer::RecordSwapchainPass(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData, const RenderFramePacket& packet) const
+{
+    const VkClearValue clearValue = EditorClearValue();
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = m_renderPass->GetHandle();
+    renderPassInfo.framebuffer = m_renderPass->GetFramebuffers()[imageIndex];
+    renderPassInfo.renderArea.extent = m_swapchain->GetExtent();
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearValue;
+
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    if (m_hdrComposite)
+    {
+        // The SDR layer (RecordHdrUiLayer) over the viewport's HDR image. The scene's LDR image is
+        // shader-read already (the editor layer's reads).
+        const uint32_t ldrIndex = m_view.targets->ResolveIndex(RenderTargetId::SceneLdr, imageIndex, 0);
+        m_hdrComposite->RecordComposite(
+            commandBuffer,
+            imageIndex,
+            m_view.targets->GetView(RenderTargetId::SceneLdr, ldrIndex),
+            m_swapchain->IsScRgb(),
+            HdrSdrWhiteNits(packet.display));
+    }
+    else if (drawData != nullptr)
+    {
+        ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer);
+    }
+    vkCmdEndRenderPass(commandBuffer);
+}
+
+bool VulkanRenderer::WantsHdrSwapchain() const
+{
+    // Where Windows shows the display in SDR, an HDR swapchain would only be mapped back down.
+    return State().renderDebug.hdrOutput && (!m_displayInfo.known || m_displayInfo.hdrEnabled);
 }
 }
