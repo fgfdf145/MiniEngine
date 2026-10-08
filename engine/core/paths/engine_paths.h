@@ -41,9 +41,11 @@ std::filesystem::path ResolveProjectPath(const std::filesystem::path& path);
 // Environment: MINIENGINE_ASSETS_DIR. Defaults to ProjectRoot() / "assets".
 const std::filesystem::path& AssetsRoot();
 
-// Derived data (decoded glTF textures). Safe to delete at any time, and
-// deliberately defaults into the build directory rather than the source tree.
-// Environment: MINIENGINE_CACHE_DIR.
+// Derived data (compressed material textures). Safe to delete at any time.
+// Defaults to one per-user directory shared by every checkout and build
+// directory (%LOCALAPPDATA%/MiniEngine/cache on Windows, else
+// $XDG_CACHE_HOME/miniengine or ~/.cache/miniengine), falling back to the
+// build directory when none of those is set. Environment: MINIENGINE_CACHE_DIR.
 const std::filesystem::path& CacheRoot();
 
 // Compiled SPIR-V produced by the build. Environment: MINIENGINE_SHADER_DIR.

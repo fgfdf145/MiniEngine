@@ -327,6 +327,61 @@ void DamagedFilesMiss()
     Require(ReadCompressedTexture(file, key).has_value(), "a rewritten file must read back");
     Require(!ReadCompressedTexture(scratch.Path() / "missing.metex", key).has_value(), "a missing file must be a miss");
 }
+
+void HitRefreshesLastUse()
+{
+    ScratchDirectory scratch;
+    const std::filesystem::path image = WritePng(scratch.Path(), "gradient.png");
+    const std::filesystem::path cache = scratch.Path() / "cache";
+    LoadOrCompressTexture(image, TextureUsage::Color, cache);
+    const std::filesystem::path file = CompressedTextureCacheFile(cache, BuildCompressedTextureKey(image, TextureUsage::Color));
+
+    const auto now = std::filesystem::file_time_type::clock::now();
+    std::filesystem::last_write_time(file, now - std::chrono::hours(24 * 10));
+    Require(LoadOrCompressTexture(image, TextureUsage::Color, cache).cacheHit, "the old cache file must still be a hit");
+    Require(now - std::filesystem::last_write_time(file) < std::chrono::hours(1), "a hit must mark the file as used now");
+}
+
+// A cache file of the given size whose last use was the given number of days ago.
+std::filesystem::path WriteCacheFile(const std::filesystem::path& directory, const std::string& name, size_t bytes, int daysAgo)
+{
+    const std::filesystem::path path = directory / name;
+    std::ofstream(path, std::ios::binary) << std::string(bytes, 'x');
+    std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now() - std::chrono::hours(24 * daysAgo));
+    return path;
+}
+
+void TrimKeepsACacheUnderBudget()
+{
+    ScratchDirectory scratch;
+    const std::filesystem::path oldest = WriteCacheFile(scratch.Path(), "a.metex", 1000, 30);
+    const std::filesystem::path older = WriteCacheFile(scratch.Path(), "b.metex", 1000, 20);
+    const std::filesystem::path recent = WriteCacheFile(scratch.Path(), "c.metex", 1000, 2);
+    const std::filesystem::path newest = WriteCacheFile(scratch.Path(), "d.metex", 1000, 0);
+    const std::filesystem::path other = WriteCacheFile(scratch.Path(), "notes.txt", 1000, 40);
+
+    TextureCacheTrim trim = TrimCompressedTextureCache(scratch.Path(), 4000);
+    Require(trim.bytesBefore == 4000 && trim.filesDeleted == 0, "a cache within its budget must be left alone");
+
+    // 4000 bytes against a 3000 byte budget: trimmed to three quarters of it, oldest first.
+    trim = TrimCompressedTextureCache(scratch.Path(), 3000);
+    Require(trim.filesDeleted == 2 && trim.bytesDeleted == 2000, "the trim must stop at three quarters of the budget");
+    Require(!std::filesystem::exists(oldest) && !std::filesystem::exists(older), "the least recently used files go first");
+    Require(std::filesystem::exists(recent) && std::filesystem::exists(newest), "recently used files must stay");
+    Require(std::filesystem::exists(other), "files that are not cache files must stay");
+}
+
+void TrimDeletesStaleTemporaryFiles()
+{
+    ScratchDirectory scratch;
+    const std::filesystem::path stale = WriteCacheFile(scratch.Path(), "a.metex.tmp-1-0", 100, 3);
+    const std::filesystem::path fresh = WriteCacheFile(scratch.Path(), "b.metex.tmp-1-1", 100, 0);
+
+    const TextureCacheTrim trim = TrimCompressedTextureCache(scratch.Path(), 1u << 20);
+    Require(trim.filesDeleted == 1 && !std::filesystem::exists(stale), "a temporary file left days ago must go");
+    Require(std::filesystem::exists(fresh), "a temporary file another process may still be writing must stay");
+    Require(TrimCompressedTextureCache(scratch.Path() / "missing", 0).filesDeleted == 0, "a missing cache is no error");
+}
 }
 
 int main()
@@ -343,6 +398,9 @@ int main()
         ChangedFileMisses();
         UsageIsPartOfTheKey();
         DamagedFilesMiss();
+        HitRefreshesLastUse();
+        TrimKeepsACacheUnderBudget();
+        TrimDeletesStaleTemporaryFiles();
     }
     catch (const std::exception& error)
     {

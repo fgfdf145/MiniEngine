@@ -212,12 +212,6 @@ VulkanTextureFormat ToVulkanTextureFormat(TextureUsage usage)
     return usage == TextureUsage::Color ? VulkanTextureFormat::SrgbColor : VulkanTextureFormat::LinearData;
 }
 
-// Where compressed material textures are cached between runs.
-std::filesystem::path TextureCacheDirectory()
-{
-    return EnginePaths::CacheRoot() / "textures";
-}
-
 // Every material texture file a textured submesh samples, with the usage its slot gives it.
 // UploadSceneResources assigns the same slots with the same usages.
 template <typename Visit>
@@ -578,7 +572,7 @@ VulkanRenderer::VulkanRenderer(
     // encoding inside each texture.
     const bool compressTextures = m_device->SupportsBlockCompression();
     m_texturePreparation = std::make_unique<TexturePreparationQueue>(
-        [compressTextures, cacheDirectory = TextureCacheDirectory()](const std::string& path, TextureUsage usage)
+        [compressTextures, cacheDirectory = DefaultTextureCacheDirectory()](const std::string& path, TextureUsage usage)
         {
             return PrepareTexture(path, usage, compressTextures, cacheDirectory);
         },
@@ -3418,7 +3412,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
         try
         {
             std::unique_ptr<VulkanTexture> texture = UploadPreparedTexture(
-                PrepareTexture(texturePath, usage, compressTextures, TextureCacheDirectory()),
+                PrepareTexture(texturePath, usage, compressTextures, DefaultTextureCacheDirectory()),
                 usage,
                 *uploadBatch);
             flushUploadBatchIfNeeded();

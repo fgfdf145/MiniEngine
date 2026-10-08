@@ -1,7 +1,9 @@
 #include "editor_application.h"
 
+#include <engine/asset/compressed_texture_cache.h>
 #include <engine/audio/audio_engine.h>
 #include <engine/core/log/log.h>
+#include <engine/core/threading/task_future.h>
 #include <engine/core/threading/task_system.h>
 #include <engine/core/version/engine_version.h>
 #include <engine/editor/engine_settings.h>
@@ -537,6 +539,23 @@ int EditorApplication::Run()
         EnginePaths::AssetsRoot().string(),
         EnginePaths::CacheRoot().string(),
         EnginePaths::ShaderRoot().string());
+
+    // The texture cache is shared by every checkout on the machine and only grows; trim it in the
+    // background. Declared after the task system's guard, so it finishes before the workers stop.
+    TaskFuture<void> textureCacheTrim = RunAsync(TaskPriority::Low, []()
+    {
+        const std::filesystem::path directory = DefaultTextureCacheDirectory();
+        const TextureCacheTrim trim = TrimCompressedTextureCache(directory, kTextureCacheBudgetBytes);
+        if (trim.filesDeleted > 0)
+        {
+            LOG_INFO(
+                "Texture cache '{}': {:.1f} GB, deleted {} least recently used files ({:.1f} GB)",
+                directory.string(),
+                static_cast<double>(trim.bytesBefore) / 1e9,
+                trim.filesDeleted,
+                static_cast<double>(trim.bytesDeleted) / 1e9);
+        }
+    });
 
     // The assets folder is not version controlled, so a fresh checkout has none. Every asset browser
     // action works inside it; create it up front instead of leaving the browser empty and inert.

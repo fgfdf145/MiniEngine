@@ -1,13 +1,16 @@
 #include "compressed_texture_cache.h"
 
 #include <engine/core/log/log.h>
+#include <engine/core/paths/engine_paths.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
 #include <fstream>
 #include <random>
 #include <system_error>
+#include <vector>
 
 namespace me
 {
@@ -57,6 +60,8 @@ bool IsKnownFormat(uint32_t format)
 }
 
 // A name no other writer in this or another process will pick for the same target.
+constexpr std::chrono::hours kLastUseResolution{24};
+
 std::filesystem::path TemporaryPathFor(const std::filesystem::path& file)
 {
     static std::atomic<uint64_t> counter{0};
@@ -65,6 +70,29 @@ std::filesystem::path TemporaryPathFor(const std::filesystem::path& file)
     temporary += ".tmp-" + std::to_string(processSalt) + "-" + std::to_string(counter.fetch_add(1));
     return temporary;
 }
+
+bool IsTemporaryCacheFile(const std::filesystem::path& file)
+{
+    return file.filename().string().find(".metex.tmp-") != std::string::npos;
+}
+
+// Marks a cache file as used now, for the trim. Once a day is enough to order files by use, and
+// spares a metadata write on every hit.
+void RefreshLastUse(const std::filesystem::path& file)
+{
+    std::error_code error;
+    const std::filesystem::file_time_type now = std::filesystem::file_time_type::clock::now();
+    const std::filesystem::file_time_type lastUse = std::filesystem::last_write_time(file, error);
+    if (!error && now - lastUse > kLastUseResolution)
+    {
+        std::filesystem::last_write_time(file, now, error);
+    }
+}
+}
+
+std::filesystem::path DefaultTextureCacheDirectory()
+{
+    return EnginePaths::CacheRoot() / "textures";
 }
 
 std::string BuildCompressedTextureKey(const std::filesystem::path& imagePath, TextureUsage usage)
@@ -195,6 +223,7 @@ CompressedTextureLoad LoadOrCompressTexture(
     const std::filesystem::path file = CompressedTextureCacheFile(cacheDirectory, key);
     if (std::optional<CompressedTexture> cached = ReadCompressedTexture(file, key))
     {
+        RefreshLastUse(file);
         return CompressedTextureLoad{std::move(*cached), true};
     }
 
@@ -205,5 +234,75 @@ CompressedTextureLoad LoadOrCompressTexture(
         LOG_WARN("Could not cache the compressed form of '{}' at '{}'", imagePath.string(), file.string());
     }
     return load;
+}
+
+TextureCacheTrim TrimCompressedTextureCache(const std::filesystem::path& cacheDirectory, uint64_t budgetBytes)
+{
+    struct CacheFile
+    {
+        std::filesystem::path path;
+        uint64_t size = 0;
+        std::filesystem::file_time_type lastUse;
+    };
+
+    TextureCacheTrim trim{};
+    std::vector<CacheFile> files;
+    const std::filesystem::file_time_type now = std::filesystem::file_time_type::clock::now();
+    std::error_code error;
+    for (std::filesystem::directory_iterator it(cacheDirectory, error), end; !error && it != end; it.increment(error))
+    {
+        std::error_code entryError;
+        if (!it->is_regular_file(entryError) || entryError)
+        {
+            continue;
+        }
+        const uint64_t size = it->file_size(entryError);
+        if (entryError)
+        {
+            continue;
+        }
+        const std::filesystem::file_time_type lastUse = it->last_write_time(entryError);
+        if (entryError)
+        {
+            continue;
+        }
+        if (IsTemporaryCacheFile(it->path()))
+        {
+            if (now - lastUse > kLastUseResolution && std::filesystem::remove(it->path(), entryError))
+            {
+                trim.bytesDeleted += size;
+                ++trim.filesDeleted;
+            }
+            continue;
+        }
+        if (it->path().extension() == ".metex")
+        {
+            files.push_back(CacheFile{it->path(), size, lastUse});
+            trim.bytesBefore += size;
+        }
+    }
+
+    if (trim.bytesBefore <= budgetBytes)
+    {
+        return trim;
+    }
+    std::sort(files.begin(), files.end(), [](const CacheFile& a, const CacheFile& b) { return a.lastUse < b.lastUse; });
+    const uint64_t target = budgetBytes / 4 * 3;
+    uint64_t remaining = trim.bytesBefore;
+    for (const CacheFile& file : files)
+    {
+        if (remaining <= target)
+        {
+            break;
+        }
+        std::error_code removeError;
+        if (std::filesystem::remove(file.path, removeError))
+        {
+            remaining -= file.size;
+            trim.bytesDeleted += file.size;
+            ++trim.filesDeleted;
+        }
+    }
+    return trim;
 }
 }

@@ -74,4 +74,5 @@ endfunction()
 # last-resort fallbacks for EnginePaths; every other target resolves its paths
 # through EnginePaths at runtime instead of hardcoding a build-machine path.
 set(MINIENGINE_SHADER_OUTPUT_DIR "${PROJECT_BINARY_DIR}/shaders")
+# Only used when no per-user cache directory can be found (see EnginePaths::CacheRoot).
 set(MINIENGINE_DEFAULT_CACHE_DIR "${PROJECT_BINARY_DIR}/cache")
