@@ -1923,6 +1923,8 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.scatterDrawItems = prepared->scatterDrawItems;
     frame.scatterPipelines = m_scatterPipelines.get();
     frame.frameDescriptorSet = view.uniformBuffer->GetFrameDescriptorSet(imageIndex);
+    frame.frameBindingSet = view.uniformBuffer->GetFrameBindingSet(imageIndex);
+    frame.commandList = m_commandContext->GetCommandList();
     frame.gbufferDescriptorSet = view.gbufferDescriptors->GetSet(*view.targets, imageIndex, frame.frameSlot);
     // The order and the forward filter both derive from this one switch, here, so they cannot
     // disagree. The forward-only order never runs the geometry pass and leaves the G-buffer
@@ -3170,13 +3172,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle()));
-    view.passes.push_back(std::make_unique<VulkanBloomPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle()));
+    view.passes.push_back(std::make_unique<VulkanBloomPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::move(exposurePass));
     view.passes.push_back(std::make_unique<VulkanTonemapPass>(
         m_device->GetHandle(),

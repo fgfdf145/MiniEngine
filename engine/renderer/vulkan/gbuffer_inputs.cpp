@@ -1,5 +1,6 @@
 #include "gbuffer_inputs.h"
 
+#include "nvrhi_pass.h"
 #include "sampler_settings.h"
 
 #include <stdexcept>
@@ -56,12 +57,9 @@ void VulkanGBufferDescriptors::CreateSetLayouts()
 {
     nvrhi::BindingLayoutDesc desc;
     desc.visibility = nvrhi::ShaderType::Pixel;
-    // A slot is its binding.
-    desc.bindingOffsets = nvrhi::VulkanBindingOffsets()
-                              .setShaderResourceOffset(0)
-                              .setSamplerOffset(0)
-                              .setConstantBufferOffset(0)
-                              .setUnorderedAccessViewOffset(0);
+    desc.registerSpace = 2;
+    desc.registerSpaceIsDescriptorSet = true;
+    desc.bindingOffsets = ShaderBindingOffsets();
     for (uint32_t binding = 0; binding < static_cast<uint32_t>(kInputs.size()); ++binding)
     {
         desc.bindings.push_back(nvrhi::BindingLayoutItem::Texture_SRV(binding));

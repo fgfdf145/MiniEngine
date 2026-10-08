@@ -13,7 +13,12 @@ env: AB_PRESET (default vs2026-x64; a single-config preset such as linux-debug h
      AB_EXE (default AB_BUILD's Debug app), AB_FRAMES (default 90), AB_SIZE (default 1280x720),
      AB_ASSETS (default the main checkout's assets), AB_OUT (default out/render_ab),
      AB_REUSE_A (an earlier run's AB_OUT: its A captures stand in for this run's, so only B runs; for
-     AB_MODE=exe against the same baseline, AB_SIZE and AB_FRAMES)
+     AB_MODE=exe against the same baseline, AB_SIZE and AB_FRAMES), AB_B_RUNS (default 2: B's runs)
+How many frames a run draws before --wait-for-scene starts counting depends on when the render thread
+finishes loading, one or two either way, and the temporal passes (TAA's jitter and history, DDGI)
+carry that into the capture: two runs of one exe differ now and then. So A runs twice and B
+AB_B_RUNS times, and "same" reports a pair of an A and a B capture that agree to the pixel, which
+proves the change keeps the image; without one, compare B's best pair against the floor (A against A).
 The fixture_* cases need only the repository's render scenes (tests/fixtures/render_scenes, installed
 into AB_ASSETS by scripts/install-render-scenes.sh), so they run where the R34 and Yuki do not exist,
 for example on lavapipe at a small AB_SIZE.
@@ -196,19 +201,29 @@ def diff(a, b):
     }, d
 
 
+B_RUNS = int(os.environ.get("AB_B_RUNS", "2"))
+
+
 def main():
     cases = sys.argv[1:] or list(CASES)
     results = {}
     for case in cases:
-        a = run_a(case, A)
-        a2 = run_a(case, A + "2")
-        b = run(case, B, B)
-        floor, _ = diff(a, a2)
-        delta, d = diff(a, b)
+        a_runs = [run_a(case, A), run_a(case, A + "2")]
+        b_runs = [run(case, B, B if index == 0 else f"{B}{index + 1}") for index in range(B_RUNS)]
+        floor, _ = diff(a_runs[0], a_runs[1])
+        # The closest A and B captures: identical ones say the change keeps the image.
+        best = None
+        for a in a_runs:
+            for b in b_runs:
+                delta, d = diff(a, b)
+                if best is None or delta["mean"] < best[0]["mean"]:
+                    best = (delta, d)
+        delta, d = best
         heat = np.clip(d.max(axis=2) * 8, 0, 255).astype(np.uint8)
         Image.fromarray(heat).save(os.path.join(OUT, f"{case}_diff.png"))
-        results[case] = {"floor": floor, "slang": delta}
-        print(f"{case:18s} floor mean {floor['mean']:.3f} max {floor['max']:3d} >2 {floor['over2']:.2f}%   "
+        same = delta["max"] == 0
+        results[case] = {"floor": floor, B: delta, "same": same}
+        print(f"{case:20s} {'same' if same else 'DIFF'}  floor mean {floor['mean']:.3f} max {floor['max']:3d} >2 {floor['over2']:.2f}%   "
               f"{B} mean {delta['mean']:.3f} max {delta['max']:3d} >2 {delta['over2']:.2f}% >8 {delta['over8']:.2f}%",
               flush=True)
     json.dump(results, open(os.path.join(OUT, "results.json"), "w"), indent=1)

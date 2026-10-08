@@ -371,6 +371,8 @@ class VulkanUniformBuffer
 
     // The native set of the NVRHI binding set for this image.
     VkDescriptorSet GetFrameDescriptorSet(uint32_t imageIndex) const;
+    // The NVRHI binding set itself, for the passes that record through NVRHI.
+    nvrhi::IBindingSet* GetFrameBindingSet(uint32_t imageIndex) const;
     // Rebuilds every frame set (NVRHI's binding sets cannot be rewritten) with set 0 binding 6 at
     // another environment map. The caller has waited for every frame in flight: the old sets must
     // not be in use as they go.

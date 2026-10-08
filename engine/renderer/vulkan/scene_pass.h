@@ -71,6 +71,10 @@ struct ScenePassFrameContext
     std::span<const VulkanDrawItem> decalDrawItems;
     const VulkanPipelineSet* decalPipelines = nullptr;
     VkDescriptorSet frameDescriptorSet = VK_NULL_HANDLE;
+    // The same set as NVRHI's binding set, and the frame's NVRHI command list, whose native command
+    // buffer the passes' Record gets: the passes that record through NVRHI (NvrhiPassScope) use both.
+    nvrhi::IBindingSet* frameBindingSet = nullptr;
+    nvrhi::ICommandList* commandList = nullptr;
     // Records large draw lists in parallel (RecordMaterialPass); null records everything inline.
     VulkanParallelRecorder* recorder = nullptr;
     // Physical radiance to HDR target units, the same value as the camera block's exposure.x (see

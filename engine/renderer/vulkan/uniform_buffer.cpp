@@ -1,5 +1,6 @@
 #include "uniform_buffer.h"
 
+#include "nvrhi_pass.h"
 #include "nvrhi_resources.h"
 
 #include <algorithm>
@@ -121,6 +122,16 @@ VkDescriptorSet VulkanUniformBuffer::GetFrameDescriptorSet(uint32_t imageIndex) 
     return m_frameDescriptorSets[imageIndex];
 }
 
+nvrhi::IBindingSet* VulkanUniformBuffer::GetFrameBindingSet(uint32_t imageIndex) const
+{
+    if (imageIndex >= m_imageCount)
+    {
+        throw std::runtime_error("Frame binding set image index is out of range");
+    }
+
+    return m_frameBindingSets[imageIndex];
+}
+
 void VulkanUniformBuffer::Update(
     uint32_t imageIndex,
     const ViewportMatrices& matrices,
@@ -232,12 +243,10 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(nvrhi::IDevice* d
     // Every stage that reads set 0: the vertex shaders (the camera block, the previous model
     // matrices), the fragment shaders and the compute passes.
     desc.visibility = nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel | nvrhi::ShaderType::Compute;
+    desc.registerSpace = 0;
+    desc.registerSpaceIsDescriptorSet = true;
     // A slot is its binding: the shaders number set 0 themselves.
-    desc.bindingOffsets = nvrhi::VulkanBindingOffsets()
-                              .setShaderResourceOffset(0)
-                              .setSamplerOffset(0)
-                              .setConstantBufferOffset(0)
-                              .setUnorderedAccessViewOffset(0);
+    desc.bindingOffsets = ShaderBindingOffsets();
     const auto texture = [&desc](uint32_t binding)
     {
         desc.bindings.push_back(nvrhi::BindingLayoutItem::Texture_SRV(binding));
