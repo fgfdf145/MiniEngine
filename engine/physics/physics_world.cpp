@@ -702,6 +702,16 @@ tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settin
     {
         parameters.loadExponent[1] = tyres.lateralLoadExponent;
     }
+    // A tyre with the game's own data: its ROLLING_RESISTANCE_0 (per mille) as the rolling resistance, and its
+    // camber thrust from CAMBER_GAIN alone (ComputeTyreStepTerms), not also from the tread's turn slip.
+    if (tyres.rollingResistance0 > 0.0f)
+    {
+        parameters.rollingResistance = 0.001 * tyres.rollingResistance0;
+    }
+    if (tyres.camberGain != 0.0f)
+    {
+        parameters.camberSpinShare = 0.0;
+    }
     if (settings.brushTyreRibs > 0)
     {
         parameters.ribs = std::clamp(settings.brushTyreRibs, 1, tyre::kBrushMaxRibs);
@@ -2248,6 +2258,20 @@ struct PhysicsWorld::Impl
                     in.extraRollingResistance = grip.rollingResistance;
                 }
             }
+            // What the tyre's own data adds: camber thrust, grip by camber, sliding speed and braking, rolling
+            // resistance by speed and slip, and the tyre's growth with spin.
+            VehicleTyreMotion motion;
+            motion.forwardVelocity = static_cast<float>(in.forwardVelocity);
+            motion.lateralVelocity = static_cast<float>(in.lateralVelocity);
+            motion.wheelSpeed = static_cast<float>(in.wheelSpeed);
+            motion.radius = wheel.GetSettings()->mRadius;
+            motion.camber = static_cast<float>(in.camber);
+            motion.load = static_cast<float>(in.load);
+            const VehicleTyreStepTerms terms = ComputeTyreStepTerms(vehicle.settings.tyres[index], motion);
+            in.lateralVelocity = terms.lateralVelocity;
+            in.axisFrictionScale = {terms.axisFrictionScale[0], terms.axisFrictionScale[1]};
+            in.extraRollingResistance += terms.extraRollingResistance;
+            in.radiusGrowth = terms.radiusGrowth;
         }
         std::array<tyre::BrushTyreOutput, kVehicleWheelCount> outputs{};
         const auto step = [&](uint32_t begin, uint32_t end)

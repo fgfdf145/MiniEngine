@@ -7,6 +7,9 @@
 #include <engine/asset/model_loader.h>
 #include <engine/asset/tyre_library.h>
 #include <engine/core/paths/engine_paths.h>
+#include <engine/physics/physics_world.h>
+
+#include <glm/gtc/quaternion.hpp>
 
 #include <stb_image.h>
 
@@ -1823,6 +1826,148 @@ void ImportPutsTheCarsTyresInTheLibrary()
     AssetRegistry::RescanAssetTree();
 }
 
+// MINIENGINE_TYRE_PROBE=<car.gltf>: the car on flat ground on the brush tyre, with and without what its
+// tyres' own data adds step by step (ComputeTyreStepTerms), through a coast-down, a stop from 100 km/h,
+// 0-100 km/h and a steady turn. Prints the figures; checks nothing.
+void ProbeCarTyreTerms()
+{
+    const char* gltf = std::getenv("MINIENGINE_TYRE_PROBE");
+    if (gltf == nullptr)
+    {
+        return;
+    }
+    const std::optional<VehicleCarSpec> spec = ModelLoader::LoadModel(gltf).carSpec;
+    Require(spec.has_value() && spec->wheelbase.has_value() && spec->frontSuspension.has_value(), "the probe's car has its data");
+    const float radius = spec->frontSuspension->tyreRadius;
+    const float wheelbase = *spec->wheelbase;
+    const float track = spec->frontSuspension->track;
+    VehicleWheelLayout layout{};
+    for (size_t wheel = 0; wheel < kVehicleWheelCount; ++wheel)
+    {
+        const float side = wheel % 2 == 0 ? 0.5f * track : -0.5f * track;
+        const float along = wheel < 2 ? 0.5f * wheelbase : -0.5f * wheelbase;
+        layout[wheel] = VehicleWheelGeometry{glm::vec3(side, radius, along), radius, 0.24f};
+    }
+    const glm::vec3 boundsMin(-0.5f * track - 0.15f, 0.0f, -0.5f * wheelbase - 0.9f);
+    const glm::vec3 boundsMax(0.5f * track + 0.15f, 1.25f, 0.5f * wheelbase + 0.9f);
+    VehicleSettings tuning;
+    tuning.tyreModel = VehicleTyreModel::Brush;
+    const VehicleSettings withTerms = FitVehicleSettingsToBounds(boundsMin, boundsMax, ApplyCarSpec(tuning, *spec), &layout);
+    VehicleSettings withoutTerms = withTerms;
+    for (VehicleTyreSettings& tyre : withoutTerms.tyres)
+    {
+        const VehicleTyreSettings kept = tyre;
+        tyre = VehicleTyreSettings{};
+        tyre.longitudinalGrip = kept.longitudinalGrip;
+        tyre.lateralGrip = kept.lateralGrip;
+        tyre.peakSlipRatio = kept.peakSlipRatio;
+        tyre.peakSlipAngleDegrees = kept.peakSlipAngleDegrees;
+        tyre.postPeakShare = kept.postPeakShare;
+        tyre.inertia = kept.inertia;
+        tyre.longitudinalLoadExponent = kept.longitudinalLoadExponent;
+        tyre.lateralLoadExponent = kept.lateralLoadExponent;
+        tyre.rimRadius = kept.rimRadius;
+        tyre.inflationPressure = kept.inflationPressure;
+        tyre.relaxationLength = kept.relaxationLength;
+        tyre.longitudinalStiffnessRatio = kept.longitudinalStiffnessRatio;
+        tyre.verticalRate = kept.verticalRate;
+        tyre.verticalDamping = kept.verticalDamping;
+    }
+    constexpr float kFrame = 1.0f / 144.0f;
+    const auto run = [&](const VehicleSettings& settings, const char* name)
+    {
+        const auto start = [&](PhysicsWorld& world)
+        {
+            const std::vector<glm::vec3> vertices = {{-3000.0f, 0.0f, -3000.0f}, {-3000.0f, 0.0f, 3000.0f}, {3000.0f, 0.0f, 3000.0f}, {3000.0f, 0.0f, -3000.0f}};
+            const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+            Require(world.AddStaticMesh(vertices, indices, PhysicsWorld::kDefaultSurfaceFriction), "the ground");
+            const VehicleId car = world.AddVehicle(settings, {glm::dvec3(0.0, 0.05, -2500.0), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+            for (float t = 0.0f; t < 1.0f; t += kFrame)
+            {
+                world.Update(kFrame);
+            }
+            return car;
+        };
+        const auto speedOf = [](const PhysicsWorld& world, VehicleId car) { return world.GetVehicleTelemetry(car).forwardSpeed * 3.6f; };
+        // 0-100 km/h, then on to 120 and a coast in neutral (clutch down) for 10 s, then a stop from 100.
+        PhysicsWorld world;
+        const VehicleId car = start(world);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        float t = 0.0f;
+        float to100 = -1.0f;
+        while (t < 30.0f && speedOf(world, car) < 120.0f)
+        {
+            world.Update(kFrame);
+            t += kFrame;
+            if (to100 < 0.0f && speedOf(world, car) >= 100.0f)
+            {
+                to100 = t;
+            }
+        }
+        controls.throttle = 0.0f;
+        controls.clutchPedal = true;
+        world.SetVehicleControls(car, controls);
+        const float coastFrom = speedOf(world, car);
+        for (float c = 0.0f; c < 10.0f; c += kFrame)
+        {
+            world.Update(kFrame);
+        }
+        const float coastTo = speedOf(world, car);
+        // Back up to 100 and stop.
+        controls.clutchPedal = false;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        for (float c = 0.0f; c < 30.0f && speedOf(world, car) < 100.0f; c += kFrame)
+        {
+            world.Update(kFrame);
+        }
+        controls.throttle = 0.0f;
+        controls.brake = 1.0f;
+        world.SetVehicleControls(car, controls);
+        const glm::dvec3 brakeStart = world.GetVehiclePose(car).position;
+        const float brakeFrom = speedOf(world, car);
+        for (float c = 0.0f; c < 10.0f && speedOf(world, car) > 0.5f; c += kFrame)
+        {
+            world.Update(kFrame);
+        }
+        const double stop = glm::length(world.GetVehiclePose(car).position - brakeStart);
+
+        // A steady turn: 70 km/h held by the throttle, a quarter of the steering, the lateral acceleration.
+        PhysicsWorld turnWorld;
+        const VehicleId turning = start(turnWorld);
+        VehicleControls drive;
+        drive.throttle = 1.0f;
+        turnWorld.SetVehicleControls(turning, drive);
+        for (float c = 0.0f; c < 20.0f && speedOf(turnWorld, turning) < 70.0f; c += kFrame)
+        {
+            turnWorld.Update(kFrame);
+        }
+        drive.steering = 0.25f;
+        float lateral = 0.0f;
+        float speed = 0.0f;
+        for (float c = 0.0f; c < 6.0f; c += kFrame)
+        {
+            drive.throttle = speedOf(turnWorld, turning) < 70.0f ? 0.6f : 0.0f;
+            turnWorld.SetVehicleControls(turning, drive);
+            turnWorld.Update(kFrame);
+            const VehicleTelemetry telemetry = turnWorld.GetVehicleTelemetry(turning);
+            speed = telemetry.forwardSpeed;
+            lateral = telemetry.rightSpeed;
+        }
+        const PhysicsPose a = turnWorld.GetVehiclePose(turning);
+        turnWorld.Update(kFrame);
+        const PhysicsPose b = turnWorld.GetVehiclePose(turning);
+        const float yawRate = glm::angle(glm::normalize(b.rotation * glm::conjugate(a.rotation))) / kFrame;
+        std::cout << name << ": 0-100 " << to100 << " s; coast in neutral " << coastFrom << " -> " << coastTo << " km/h in 10 s; stop from " << brakeFrom
+                  << " km/h in " << stop << " m; turn at " << speed * 3.6f << " km/h: " << speed * yawRate / 9.81f << " g (side slip " << lateral << " m/s)\n";
+    };
+    std::cout << "tyre probe: " << gltf << '\n';
+    run(withoutTerms, "  without the tyre data's terms");
+    run(withTerms, "  with them                     ");
+}
+
 void ImportWritesFourWheelDriveRearSteerAndBody()
 {
     ScopedDirectory scope;
@@ -2290,6 +2435,7 @@ int main()
         TyreSpecHoldsEveryKeyAndRoundTrips();
         TyreLibraryStoresAndFindsTyres();
         ImportPutsTheCarsTyresInTheLibrary();
+        ProbeCarTyreTerms();
         FourWheelDriveRearSteerAndBodyBecomeASpec();
         ImportWritesFourWheelDriveRearSteerAndBody();
         LiveAxleDataBecomesASolidAxle();

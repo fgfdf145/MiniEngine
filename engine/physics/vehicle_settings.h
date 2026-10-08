@@ -106,6 +106,27 @@ struct VehicleTyreSettings
     // VehicleSuspensionAxle::tyreRate and tyreDamping (a car imported before the tyre library).
     float verticalRate = 0.0f;
     float verticalDamping = 0.0f;
+    // What Assetto Corsa's tyre model V10 does with the tyre's own data, step by step on top of the brush
+    // tyre (ComputeTyreStepTerms; each 0 for none). In the game's units:
+    // rolling resistance ROLLING_RESISTANCE_0, _1 (on the tread's speed squared) and _SLIP (on the slip),
+    float rollingResistance0 = 0.0f;
+    float rollingResistance1 = 0.0f;
+    float rollingResistanceSlip = 0.0f;
+    // RADIUS_ANGULAR_K in metres of radius per rad/s of spin,
+    float radiusGrowth = 0.0f;
+    // CAMBER_GAIN (camber's thrust as a slip angle: alpha + sin(camber) times it), DCAMBER_0 and _1 (the
+    // lateral grip by camber), SPEED_SENSITIVITY (grip over 1 + it times the sliding speed), BRAKE_DX_MOD
+    // (the longitudinal grip braking, times 1 + it),
+    float camberGain = 0.0f;
+    float dcamber0 = 0.0f;
+    float dcamber1 = 0.0f;
+    float speedSensitivity = 0.0f;
+    float brakeLongitudinalMod = 0.0f;
+    // and how the peak slip moves with load for the slip measure the rolling resistance uses: FZ0, FLEX_GAIN
+    // and COMBINED_FACTOR (the exponent the two slips are combined with, 2 when 0).
+    float referenceLoad = 0.0f;
+    float flexGain = 0.0f;
+    float combinedFactor = 0.0f;
 
     bool operator==(const VehicleTyreSettings&) const = default;
 };
@@ -733,6 +754,32 @@ VehicleTyreSettings TyreSettingsFromSpec(const tyre::TyreSpec& spec, float stati
 
 // Both wheels of an axle on the same tyre.
 void SetAxleTyres(VehicleSettings& settings, bool front, const VehicleTyreSettings& tyres);
+
+// One wheel's motion over the road for ComputeTyreStepTerms: the contact's velocity along the wheel and to
+// its left (m/s), the wheel's spin (rad/s, rolling forward positive), its unloaded radius (m), its camber to
+// the road (rad, top leaning right positive) and its load (N).
+struct VehicleTyreMotion
+{
+    float forwardVelocity = 0.0f;
+    float lateralVelocity = 0.0f;
+    float wheelSpeed = 0.0f;
+    float radius = 0.0f;
+    float camber = 0.0f;
+    float load = 0.0f;
+};
+
+// What a tyre's own data changes in one step of the brush tyre, as Assetto Corsa's tyre model V10 does it
+// (docs/design/2026-10-08-tyre-data-terms-design.md): the contact's lateral velocity with camber's thrust in
+// it as a slip angle, the scales on the friction along and across the wheel (sliding speed, camber, braking),
+// the rolling resistance coefficient on top of ROLLING_RESISTANCE_0's, and how far the tyre has grown.
+struct VehicleTyreStepTerms
+{
+    float lateralVelocity = 0.0f;
+    std::array<float, 2> axisFrictionScale{1.0f, 1.0f};
+    float extraRollingResistance = 0.0f;
+    float radiusGrowth = 0.0f;
+};
+VehicleTyreStepTerms ComputeTyreStepTerms(const VehicleTyreSettings& tyre, const VehicleTyreMotion& motion);
 
 // Whether the settings carry a multibody suspension for both axles.
 bool HasSuspensionGeometry(const VehicleSettings& settings);

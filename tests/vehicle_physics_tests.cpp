@@ -12,9 +12,11 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <numbers>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -901,6 +903,101 @@ void TestTurboSpoolsWithItsLag()
 
 // The car's data for its differential's lock on the overrun and preload, and its tyres' load sensitivity
 // (the starting compound's LS_EXPX and LS_EXPY, their mean, or the one given).
+// What the tyre's own data does per step, as Assetto Corsa's tyre model V10 does it, with the RX-7 Tuned's
+// semislicks (front): CAMBER_GAIN 0.146, DCAMBER 1.2 and -13, SPEED_SENSITIVITY 0.003447, BRAKE_DX_MOD 0.05,
+// ROLLING_RESISTANCE 12, 0.001052 and 5065, RADIUS_ANGULAR_K 0.01 mm, FRICTION_LIMIT_ANGLE 7.62, FZ0 2860.
+void TestTyreDataTermsFollowTheGame()
+{
+    VehicleTyreSettings tyre;
+    tyre.peakSlipAngleDegrees = 7.62f;
+    tyre.camberGain = 0.146f;
+    tyre.dcamber0 = 1.2f;
+    tyre.dcamber1 = -13.0f;
+    tyre.speedSensitivity = 0.003447f;
+    tyre.brakeLongitudinalMod = 0.05f;
+    tyre.rollingResistance0 = 12.0f;
+    tyre.rollingResistance1 = 0.001052f;
+    tyre.rollingResistanceSlip = 5065.0f;
+    tyre.radiusGrowth = 0.01f * 0.001f;
+    tyre.referenceLoad = 2860.0f;
+    tyre.flexGain = 0.0295f;
+    const float radius = 0.312f;
+    const auto motion = [&](float vx, float vy, float treadSpeed, float camber)
+    {
+        VehicleTyreMotion m;
+        m.forwardVelocity = vx;
+        m.lateralVelocity = vy;
+        m.wheelSpeed = treadSpeed / radius;
+        m.radius = radius;
+        m.camber = camber;
+        m.load = 2860.0f;
+        return m;
+    };
+
+    // Nothing in the data, nothing changes.
+    {
+        const VehicleTyreStepTerms none = ComputeTyreStepTerms(VehicleTyreSettings{}, motion(20.0f, 1.0f, 18.0f, 0.05f));
+        Require(none.lateralVelocity == 1.0f && none.axisFrictionScale == std::array<float, 2>{1.0f, 1.0f} && none.extraRollingResistance == 0.0f &&
+                    none.radiusGrowth == 0.0f,
+                "a tyre without the game's data is left alone");
+    }
+    // Camber's thrust as a slip angle: 0.05 rad to the right on a straight line is 0.146 sin(0.05) of slip angle.
+    {
+        const VehicleTyreStepTerms terms = ComputeTyreStepTerms(tyre, motion(20.0f, 0.0f, 20.0f, 0.05f));
+        RequireNear(terms.lateralVelocity, 20.0f * std::tan(0.146f * std::sin(0.05f)), 1e-5f, "camber thrust as a slip angle of 0.146 sin(camber)");
+    }
+    // The lateral grip by camber: best leaning with the force by DCAMBER_0 / (2 DCAMBER_1) = 0.04615 rad.
+    {
+        const float best = 1.2f / (2.0f * 13.0f);
+        const float into = 1.0f / (1.0f + 1.2f * -best + 13.0f * best * best);
+        const float away = 1.0f / (1.0f + 1.2f * best + 13.0f * best * best);
+        // Sliding to the left (the road pushes right) and leaning right: with the force. (Without the sliding
+        // speed's share, checked below.)
+        VehicleTyreSettings camberOnly = tyre;
+        camberOnly.speedSensitivity = 0.0f;
+        const VehicleTyreStepTerms with = ComputeTyreStepTerms(camberOnly, motion(20.0f, 2.0f, 20.0f, best));
+        const VehicleTyreStepTerms against = ComputeTyreStepTerms(camberOnly, motion(20.0f, 2.0f, 20.0f, -best));
+        RequireNear(with.axisFrictionScale[1], into, 1e-5f, "leaning with the force gains 2.8 %: " + std::to_string(with.axisFrictionScale[1]));
+        RequireNear(against.axisFrictionScale[1], away, 1e-5f, "leaning against it loses 7.7 %: " + std::to_string(against.axisFrictionScale[1]));
+        Require(with.axisFrictionScale[0] == 1.0f, "camber leaves the longitudinal grip alone");
+        RequireNear(into, 1.0285f, 1e-4f, "the peak's gain");
+    }
+    // Sliding speed: 3 m/s sideways and 4 m/s of tread spinning ahead of the ground take both grips over 1 + 5 SS.
+    {
+        tyre.camberGain = 0.0f;
+        tyre.dcamber0 = tyre.dcamber1 = 0.0f;
+        const VehicleTyreStepTerms terms = ComputeTyreStepTerms(tyre, motion(20.0f, 3.0f, 24.0f, 0.0f));
+        const float scale = 1.0f / (1.0f + 0.003447f * 5.0f);
+        RequireNear(terms.axisFrictionScale[0], scale, 1e-6f, "the longitudinal grip over 1 + SS v");
+        RequireNear(terms.axisFrictionScale[1], scale, 1e-6f, "and the lateral");
+        // Braking: the tread slower than the ground, BRAKE_DX_MOD on the longitudinal grip.
+        const VehicleTyreStepTerms braking = ComputeTyreStepTerms(tyre, motion(20.0f, 0.0f, 16.0f, 0.0f));
+        RequireNear(braking.axisFrictionScale[0], 1.05f / (1.0f + 0.003447f * 4.0f), 1e-6f, "braking takes BRAKE_DX_MOD");
+        RequireNear(braking.axisFrictionScale[1], 1.0f / (1.0f + 0.003447f * 4.0f), 1e-6f, "on the longitudinal grip alone");
+    }
+    // Rolling resistance: 0.012 (the brush tyre's own) plus 0.001052 per mille of the tread's speed squared; and
+    // sliding at the peak slip and beyond, all of it 6.065 times.
+    {
+        tyre.speedSensitivity = 0.0f;
+        const float speed = 30.0f;
+        const VehicleTyreStepTerms rolling = ComputeTyreStepTerms(tyre, motion(speed, 0.0f, speed, 0.0f));
+        const float grown = radius + 0.00001f * speed / radius;
+        const float treadSpeed = grown * speed / radius;
+        RequireNear(rolling.radiusGrowth, 0.00001f * speed / radius, 1e-9f, "the tyre grows 0.01 mm per rad/s");
+        RequireNear(rolling.extraRollingResistance, 0.001f * 0.001052f * treadSpeed * treadSpeed, 1e-7f, "the speed's share of the rolling resistance");
+        const float peak = std::tan(7.62f * std::numbers::pi_v<float> / 180.0f);
+        const VehicleTyreStepTerms sliding = ComputeTyreStepTerms(tyre, motion(speed, speed * peak * 2.0f, speed, 0.0f));
+        const float base = 0.001f * (12.0f + 0.001052f * treadSpeed * treadSpeed);
+        RequireNear(sliding.extraRollingResistance, base * (1.0f + 5.065f) - 0.012f, 1e-5f, "past the peak slip, 6 times the rolling resistance");
+        const VehicleTyreStepTerms half = ComputeTyreStepTerms(tyre, motion(speed, speed * peak * 0.5f, speed, 0.0f));
+        RequireNear(half.extraRollingResistance, base * (1.0f + 5.065f * 0.5f) - 0.012f, 1e-5f, "at half the peak slip, by half");
+        // Below 20 rad/s the slip adds nothing, below 1 rad/s nothing at all.
+        const VehicleTyreStepTerms slow = ComputeTyreStepTerms(tyre, motion(5.0f, 5.0f * peak * 2.0f, 5.0f, 0.0f));
+        RequireNear(slow.extraRollingResistance, 0.001f * 0.001052f * 25.0f, 1e-6f, "slow, only the speed's share");
+        Require(ComputeTyreStepTerms(tyre, motion(0.2f, 0.0f, 0.2f, 0.0f)).extraRollingResistance == 0.0f, "nearly stopped, ROLLING_RESISTANCE_0 alone");
+    }
+}
+
 void TestCarDataGivesDifferentialAndTyreSensitivity()
 {
     VehicleCarSpec spec;
@@ -3294,6 +3391,7 @@ int main()
         TestEngineBrakingFromTheData();
         TestTurboSpoolsWithItsLag();
         TestCarDataGivesDifferentialAndTyreSensitivity();
+        TestTyreDataTermsFollowTheGame();
         TestGameTractionControlCutsTheThrottle();
         TestDrivenWheelsKeepNearTheGround();
         TestMultibodyCarRestsAtItsDesignPosition(false);
