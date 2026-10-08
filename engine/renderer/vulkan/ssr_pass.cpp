@@ -59,8 +59,7 @@ void DestroyCommon(
     VkPipeline& pipeline,
     VkPipelineLayout& pipelineLayout,
     VkDescriptorPool& descriptorPool,
-    VkDescriptorSetLayout& setLayout,
-    std::initializer_list<VkSampler*> samplers)
+    VkDescriptorSetLayout& setLayout)
 {
     if (pipeline != VK_NULL_HANDLE)
     {
@@ -82,14 +81,6 @@ void DestroyCommon(
         vkDestroyDescriptorSetLayout(device, setLayout, nullptr);
         setLayout = VK_NULL_HANDLE;
     }
-    for (VkSampler* sampler : samplers)
-    {
-        if (*sampler != VK_NULL_HANDLE)
-        {
-            vkDestroySampler(device, *sampler, nullptr);
-            *sampler = VK_NULL_HANDLE;
-        }
-    }
 }
 }
 
@@ -104,6 +95,7 @@ bool SsrTraces(const ScenePassFrameContext& frame)
 
 VulkanSsrTracePass::VulkanSsrTracePass(
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout,
@@ -114,8 +106,8 @@ VulkanSsrTracePass::VulkanSsrTracePass(
 {
     try
     {
-        m_nearestSampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
-        m_linearSampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
+        m_nearestSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
+        m_linearSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
         static constexpr std::array<VkDescriptorType, 7> kTypes = {
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -254,13 +246,13 @@ void VulkanSsrTracePass::CreateDescriptorSets(const SceneRenderTargets& targets)
         for (uint32_t historyIndex = 0; historyIndex < 2; ++historyIndex)
         {
             const VkDescriptorSet set = m_descriptorSets[slot * 2 + historyIndex];
-            const VkDescriptorImageInfo depthInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-            const VkDescriptorImageInfo normalInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-            const VkDescriptorImageInfo surfaceInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferSurface, slot), kReadLayout};
-            const VkDescriptorImageInfo historyInfo{m_linearSampler, m_taa.GetHistoryView(historyIndex), VK_IMAGE_LAYOUT_GENERAL};
+            const VkDescriptorImageInfo depthInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
+            const VkDescriptorImageInfo normalInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
+            const VkDescriptorImageInfo surfaceInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferSurface, slot), kReadLayout};
+            const VkDescriptorImageInfo historyInfo{NativeSampler(m_linearSampler), m_taa.GetHistoryView(historyIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo rawInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SsrRaw, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo coatInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferCoat, slot), kReadLayout};
-            const VkDescriptorImageInfo velocityInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
+            const VkDescriptorImageInfo coatInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferCoat, slot), kReadLayout};
+            const VkDescriptorImageInfo velocityInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
             const std::array<VkWriteDescriptorSet, 7> writes = {
                 ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
                 ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
@@ -287,7 +279,9 @@ void VulkanSsrTracePass::DestroyHandles()
         vkDestroyPipelineLayout(m_device, m_tracedPipelineLayout, nullptr);
         m_tracedPipelineLayout = VK_NULL_HANDLE;
     }
-    DestroyCommon(m_device, m_pipeline, m_pipelineLayout, m_descriptorPool, m_setLayout, {&m_nearestSampler, &m_linearSampler});
+    DestroyCommon(m_device, m_pipeline, m_pipelineLayout, m_descriptorPool, m_setLayout);
+    m_nearestSampler = nullptr;
+    m_linearSampler = nullptr;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -297,6 +291,7 @@ void VulkanSsrTracePass::DestroyHandles()
 VulkanSsrResolvePass::VulkanSsrResolvePass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout)
@@ -305,8 +300,8 @@ VulkanSsrResolvePass::VulkanSsrResolvePass(
 {
     try
     {
-        m_nearestSampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
-        m_linearSampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
+        m_nearestSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
+        m_linearSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
         static constexpr std::array<VkDescriptorType, 9> kTypes = {
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -402,15 +397,15 @@ void VulkanSsrResolvePass::CreateDescriptorSets(const SceneRenderTargets& target
         for (uint32_t readIndex = 0; readIndex < 2; ++readIndex)
         {
             const VkDescriptorSet set = m_descriptorSets[slot * 2 + readIndex];
-            const VkDescriptorImageInfo rawInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::SsrRaw, slot), kReadLayout};
-            const VkDescriptorImageInfo depthInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-            const VkDescriptorImageInfo normalInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-            const VkDescriptorImageInfo surfaceInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferSurface, slot), kReadLayout};
-            const VkDescriptorImageInfo velocityInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
-            const VkDescriptorImageInfo historyReadInfo{m_linearSampler, m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
+            const VkDescriptorImageInfo rawInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::SsrRaw, slot), kReadLayout};
+            const VkDescriptorImageInfo depthInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
+            const VkDescriptorImageInfo normalInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
+            const VkDescriptorImageInfo surfaceInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferSurface, slot), kReadLayout};
+            const VkDescriptorImageInfo velocityInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
+            const VkDescriptorImageInfo historyReadInfo{NativeSampler(m_linearSampler), m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo historyWriteInfo{VK_NULL_HANDLE, m_history.GetView(1u - readIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo reflectionsInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneReflections, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo coatInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::GBufferCoat, slot), kReadLayout};
+            const VkDescriptorImageInfo coatInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferCoat, slot), kReadLayout};
             const std::array<VkWriteDescriptorSet, 9> writes = {
                 ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &rawInfo),
                 ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
@@ -430,6 +425,8 @@ void VulkanSsrResolvePass::DestroyHandles()
 {
     m_descriptorSets.clear();
     m_history.Destroy();
-    DestroyCommon(m_device, m_pipeline, m_pipelineLayout, m_descriptorPool, m_setLayout, {&m_nearestSampler, &m_linearSampler});
+    DestroyCommon(m_device, m_pipeline, m_pipelineLayout, m_descriptorPool, m_setLayout);
+    m_nearestSampler = nullptr;
+    m_linearSampler = nullptr;
 }
 }

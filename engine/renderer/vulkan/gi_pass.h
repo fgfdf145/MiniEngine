@@ -21,6 +21,7 @@ class VulkanGiTracePass : public IScenePass
   public:
     VulkanGiTracePass(
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout);
@@ -42,7 +43,7 @@ class VulkanGiTracePass : public IScenePass
     void DestroyHandles();
 
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
@@ -59,6 +60,7 @@ class VulkanGiResolvePass : public IScenePass
     VulkanGiResolvePass(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout);
@@ -81,7 +83,7 @@ class VulkanGiResolvePass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;

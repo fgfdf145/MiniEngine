@@ -142,6 +142,7 @@ add_library(engine_renderer
     vulkan/device.h
     vulkan/nvrhi_device.cpp
     vulkan/nvrhi_device.h
+    vulkan/nvrhi_native.h
     vulkan/dlss.cpp
     vulkan/dlss.h
     vulkan/environment_probe.cpp

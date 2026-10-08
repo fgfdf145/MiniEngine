@@ -25,6 +25,7 @@ class VulkanSsrTracePass : public IScenePass
     // (rt_reflection_trace.comp), which replaces the march where RayTracingSettings::reflections says.
     VulkanSsrTracePass(
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
@@ -49,8 +50,8 @@ class VulkanSsrTracePass : public IScenePass
 
     VkDevice m_device = VK_NULL_HANDLE;
     const VulkanTaaPass& m_taa;
-    VkSampler m_nearestSampler = VK_NULL_HANDLE;
-    VkSampler m_linearSampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_nearestSampler;
+    nvrhi::SamplerHandle m_linearSampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
@@ -71,6 +72,7 @@ class VulkanSsrResolvePass : public IScenePass
     VulkanSsrResolvePass(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout);
@@ -93,8 +95,8 @@ class VulkanSsrResolvePass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_nearestSampler = VK_NULL_HANDLE;
-    VkSampler m_linearSampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_nearestSampler;
+    nvrhi::SamplerHandle m_linearSampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;

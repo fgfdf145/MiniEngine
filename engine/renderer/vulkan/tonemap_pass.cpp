@@ -2,6 +2,7 @@
 
 #include "gbuffer_inputs.h"
 #include "pipeline.h"
+#include "sampler_settings.h"
 
 #include <engine/core/paths/engine_paths.h>
 
@@ -56,6 +57,7 @@ uint32_t ToneOperator(const ScenePassFrameContext& frame)
 
 VulkanTonemapPass::VulkanTonemapPass(
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout gbufferSetLayout,
@@ -68,7 +70,7 @@ VulkanTonemapPass::VulkanTonemapPass(
     try
     {
         CreateDescriptorSetLayout();
-        CreateSampler();
+        CreateSampler(nvrhiDevice);
         CreateRenderPass(targets);
         CreatePipeline(pipelineCache, gbufferSetLayout, emptySetLayout);
         CreateDescriptorSets(targets);
@@ -217,29 +219,11 @@ void VulkanTonemapPass::CreateDescriptorSetLayout()
     CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_setLayout), "Failed to create tone mapping descriptor set layout");
 }
 
-void VulkanTonemapPass::CreateSampler()
+void VulkanTonemapPass::CreateSampler(nvrhi::IDevice* nvrhiDevice)
 {
     // The pass samples one texel per pixel at matching resolution, so linear filtering would only
     // blur, and with one mip level there is nothing for a mip mode or a LOD range to select.
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_NEAREST;
-    samplerInfo.minFilter = VK_FILTER_NEAREST;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
-    samplerInfo.mipLodBias = 0.0f;
-
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create tone mapping sampler");
+    m_sampler = CreateNvrhiSampler(nvrhiDevice, BuildClampSamplerDesc(false), "Failed to create tone mapping sampler");
 }
 
 void VulkanTonemapPass::CreateRenderPass(const SceneRenderTargets& targets)
@@ -321,7 +305,7 @@ void VulkanTonemapPass::CreateDescriptorSets(const SceneRenderTargets& targets)
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
         VkDescriptorImageInfo imageInfo{};
-        imageInfo.sampler = m_sampler;
+        imageInfo.sampler = NativeSampler(m_sampler);
         imageInfo.imageView = targets.GetSampledView(RenderTargetId::SceneTaa, slot);
         imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
@@ -402,11 +386,7 @@ void VulkanTonemapPass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     DestroyFramebuffers();
     if (m_renderPass != VK_NULL_HANDLE)
     {

@@ -42,6 +42,7 @@ class VulkanPathTracePass : public IScenePass
     VulkanPathTracePass(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
@@ -101,7 +102,7 @@ class VulkanPathTracePass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_nearestSampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_nearestSampler;
     // The atmosphere's multiple-scattering LUT (binding 18), for the air along the paths.
     TextureDescriptorBinding m_multiScattering;
     // The emissive triangles as lights (the trace's set 4), built at the start of each path traced

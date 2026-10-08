@@ -46,7 +46,7 @@ VkAttachmentDescription RedrawnColor(VkFormat format)
 }
 }
 
-VulkanPathTraceLayerPass::VulkanPathTraceLayerPass(VkPhysicalDevice physicalDevice, VkDevice device, const SceneRenderTargets& targets)
+VulkanPathTraceLayerPass::VulkanPathTraceLayerPass(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets)
     : m_physicalDevice(physicalDevice),
       m_device(device)
 {
@@ -61,7 +61,7 @@ VulkanPathTraceLayerPass::VulkanPathTraceLayerPass(VkPhysicalDevice physicalDevi
         targets.GetFormat(RenderTargetId::GBufferVelocity)};
     try
     {
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
+        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         CreateRenderPasses(targets);
     }
     catch (...)
@@ -249,7 +249,7 @@ void VulkanPathTraceLayerPass::RecordInitialTransition(VkCommandBuffer commandBu
 
 TextureDescriptorBinding VulkanPathTraceLayerPass::GetDepthBinding() const
 {
-    return TextureDescriptorBinding{m_depth.view, m_sampler};
+    return TextureDescriptorBinding{m_depth.view, NativeSampler(m_sampler)};
 }
 
 VkImageView VulkanPathTraceLayerPass::GetDepthView() const
@@ -414,10 +414,6 @@ void VulkanPathTraceLayerPass::DestroyHandles()
             *renderPass = VK_NULL_HANDLE;
         }
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
 }
 }

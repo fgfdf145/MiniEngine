@@ -2245,19 +2245,22 @@ void VulkanRenderer::CreateDeviceResources()
     m_view.shadowPass = std::make_unique<VulkanShadowPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         m_materialSetLayout->GetHandle(),
         kShadowMapResolution);
     m_localShadowPass = std::make_unique<VulkanLocalShadowPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         m_materialSetLayout->GetHandle());
-    m_transmissionImage = std::make_unique<VulkanTransmissionImage>(m_device->GetPhysicalDevice(), m_device->GetHandle());
+    m_transmissionImage = std::make_unique<VulkanTransmissionImage>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get());
 
     m_atmosphere = std::make_unique<VulkanAtmosphere>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         m_frameSetLayout->GetHandle());
     m_view.atmosphere = m_atmosphere->CreateView();
@@ -2295,6 +2298,7 @@ void VulkanRenderer::CreateDeviceResources()
     m_ddgi = std::make_unique<VulkanDdgi>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         m_frameSetLayout->GetHandle(),
         m_rayScene->GetSetLayout(),
@@ -2303,6 +2307,7 @@ void VulkanRenderer::CreateDeviceResources()
     m_environmentProbe = std::make_unique<VulkanEnvironmentProbe>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         m_frameSetLayout->GetHandle());
 
@@ -2872,7 +2877,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_pathTraceLayerDepthPipelines.reset();
         m_pathTraceLayerSurfacePipelines.reset();
     }
-    view.gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), *view.targets);
+    view.gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets);
 
     auto geometryPass = std::make_unique<VulkanGeometryPass>(
         m_device->GetHandle(), m_pipelineCache, *view.targets, m_frameSetLayout->GetHandle());
@@ -2926,7 +2931,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     }
     // The scatter pre-pass: the forward shader's inputs, its own output (light and draw slot, alpha
     // included), its own depth, no blending.
-    auto scatterPass = std::make_unique<VulkanScatterPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), *view.targets);
+    auto scatterPass = std::make_unique<VulkanScatterPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), *view.targets);
     if (viewport)
     {
         MaterialPipelineSetConfig scatterConfig{};
@@ -2949,6 +2954,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     auto exposurePass = std::make_unique<VulkanExposureHistogramPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets);
     view.exposurePass = exposurePass.get();
@@ -2958,6 +2964,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanRtShadowPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -2965,6 +2972,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     auto pathTracePass = std::make_unique<VulkanPathTracePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -2972,7 +2980,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_atmosphere->GetMultiScatteringBinding());
     view.pathTracePass = pathTracePass.get();
     // The forward-shaded surfaces' layer it traces too: gbuffer.frag twice, against its two passes.
-    auto pathTraceLayerPass = std::make_unique<VulkanPathTraceLayerPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), *view.targets);
+    auto pathTraceLayerPass = std::make_unique<VulkanPathTraceLayerPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), *view.targets);
     if (viewport && pathTraceLayerPass->IsSupported() && pathTracePass->IsSupported())
     {
         MaterialPipelineSetConfig layerConfig{};
@@ -3005,6 +3013,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     auto restirPtPass = std::make_unique<VulkanRestirPtPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3013,6 +3022,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::move(restirPtPass));
     view.passes.push_back(std::make_unique<VulkanAoTracePass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3020,6 +3030,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanAoResolvePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle()));
@@ -3033,12 +3044,14 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         *m_rayScene));
     view.passes.push_back(std::make_unique<VulkanGiTracePass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle()));
     view.passes.push_back(std::make_unique<VulkanGiResolvePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle()));
@@ -3051,6 +3064,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         view.gbufferDescriptors->GetSetLayout()));
     view.passes.push_back(std::make_unique<VulkanDdgiDebugPass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3071,6 +3085,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         *view.toonMaterials));
     view.passes.push_back(std::make_unique<VulkanToonPass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3078,6 +3093,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         *view.toonMaterials));
     view.passes.push_back(std::make_unique<VulkanTransmissionCopyPass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3092,6 +3108,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     auto taaPass = std::make_unique<VulkanTaaPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle());
@@ -3101,6 +3118,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     // images, which TAA recreates first.
     view.passes.push_back(std::make_unique<VulkanSsrTracePass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3109,18 +3127,21 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanSsrResolvePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle()));
     view.passes.push_back(std::make_unique<VulkanBloomPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle()));
     view.passes.push_back(std::move(exposurePass));
     view.passes.push_back(std::make_unique<VulkanTonemapPass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         view.gbufferDescriptors->GetSetLayout(),
@@ -3132,6 +3153,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_materialSetLayout->GetHandle()));
     view.passes.push_back(std::make_unique<VulkanSelectionOutlinePass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets));
 }
@@ -3359,6 +3381,7 @@ std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D ex
     view->shadowPass = std::make_unique<VulkanShadowPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         m_materialSetLayout->GetHandle(),
         kShadowMapResolution);

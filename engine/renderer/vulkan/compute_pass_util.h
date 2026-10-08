@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "nvrhi_native.h"
 
 #include <array>
 #include <cstdint>
@@ -16,7 +17,8 @@ namespace me
 // Must match local_size_x / local_size_y in every shader dispatched through DispatchCompute.
 inline constexpr uint32_t kComputeWorkgroupSize = 8;
 
-VkSampler CreateClampSampler(VkDevice device, VkFilter filter);
+// BuildClampSamplerDesc's sampler: clamped, base level only, nearest or linear by filter.
+nvrhi::SamplerHandle CreateClampSampler(nvrhi::IDevice* device, VkFilter filter);
 
 // A memory type in typeFilter with every one of properties; throws when there is none.
 uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties);

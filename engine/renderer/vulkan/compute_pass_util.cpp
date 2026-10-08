@@ -1,6 +1,7 @@
 #include "compute_pass_util.h"
 
 #include "pipeline.h"
+#include "sampler_settings.h"
 
 #include <engine/core/paths/engine_paths.h>
 
@@ -23,23 +24,9 @@ uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, Vk
     throw std::runtime_error("Failed to find a memory type for a compute pass image");
 }
 
-VkSampler CreateClampSampler(VkDevice device, VkFilter filter)
+nvrhi::SamplerHandle CreateClampSampler(nvrhi::IDevice* device, VkFilter filter)
 {
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = filter;
-    samplerInfo.minFilter = filter;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-
-    VkSampler sampler = VK_NULL_HANDLE;
-    CheckVulkan(vkCreateSampler(device, &samplerInfo, nullptr, &sampler), "Failed to create a compute pass sampler");
-    return sampler;
+    return CreateNvrhiSampler(device, BuildClampSamplerDesc(filter == VK_FILTER_LINEAR), "Failed to create a compute pass sampler");
 }
 
 VkDescriptorSetLayout CreateComputeSetLayout(VkDevice device, std::span<const VkDescriptorType> types, VkShaderStageFlags stages)

@@ -96,15 +96,36 @@ pass 迁移（pass 自己的集在迁它时拆采样器）。这样每个 pass �
 阶段 A 分四步：A1 采样器，A2 网格缓冲 + 材质纹理 + 内存池放到 NVRHI 堆上，A3 渲染目标和各 pass 的图像，
 A4 其余缓冲（uniform、大气、DDGI、光追、回读……）。
 
-**A1 进行中**：
+**A1 完成（2026-10-09）**：
 - NVRHI 打了第二个补丁 `sampler-lod-and-comparison.patch`：`SamplerDesc` 加 `comparisonFunc`、`minLod`、`maxLod`
   （上游比较固定为 LESS、LOD 不能限，阴影要 LESS_OR_EQUAL，glTF 不带 mip 的过滤要 maxLod 0.25）；
-- 材质采样器缓存（`VulkanSamplerCache`）已改成 NVRHI 采样器，`BuildTextureSamplerDesc` 代替
-  `BuildTextureSamplerInfo`，测试跟着改；原生描述符写入用 `GetNative`。验证：texture_sampler 测试通过，
-  materials_rt 截图在噪声内。
-- 还没做：各 pass 自己的采样器（`CreateClampSampler` 和 atmosphere、environment_probe、exposure、gbuffer_inputs、
-  local_shadow、selection_outline、shadow、tonemap、toon、transmission 里的 `vkCreateSampler`），要把
-  `nvrhi::IDevice*` 传进这些 pass 的构造函数。
+- 材质采样器缓存（`VulkanSamplerCache`）改成 NVRHI 采样器，`BuildTextureSamplerDesc` 代替
+  `BuildTextureSamplerInfo`；原生描述符写入用 `GetNative`；
+- 各 pass 自己的采样器全部由 NVRHI 创建：`CreateClampSampler(nvrhi::IDevice*, VkFilter)` 用
+  `BuildClampSamplerDesc`（clamp、只读基础层 maxLod 0——原来 `VkSamplerCreateInfo{}` 清零的 maxLod 就是 0），
+  atmosphere（云噪声 repeat）、environment_probe（三线性、maxLod 9）、shadow / local_shadow（比较
+  LESS_OR_EQUAL，级联阴影 clamp-to-border 白边）、transmission（三线性、maxLod 11）逐项照原来的参数写成
+  `nvrhi::SamplerDesc`；pass 构造函数多一个 `nvrhi::IDevice*`，成员是 `nvrhi::SamplerHandle`，原生描述符写入用
+  `NativeSampler()`（`nvrhi_native.h`，`ToNative<VkHandle>` 兼顾 32 位目标上非 dispatchable 句柄是整数）。
+  引擎里不再有 `vkCreateSampler`。`texture_sampler` 测试加了 `BuildClampSamplerDesc` 的用例。
+
+验证（Linux，见下一节）：A/B 对比改动前的提交，9 个场景逐像素相同。
+
+### Linux 上的验证（2026-10-09）
+
+云端会话是 Linux、没有 GPU，所以 `linux-debug` 修到能编能跑（`fix(build)` 提交：GCC 的几处兼容、静态 NVRHI 的
+vulkan.hpp 调度器、vcpkg 的 SDL3/Vulkan loader 特性），用 Mesa 的 lavapipe（CPU 上的 Vulkan 1.4，有 ray query
+和加速结构）在 Xvfb 里跑。lavapipe 的结果是确定的（同一 exe 跑两次逐像素相同），所以 A/B 的噪声底是 0，
+任何差异都是真的。很慢（320x180 一帧几秒到二十秒），所以用 `AB_SIZE=320x180 AB_FRAMES=6`，场景是不依赖仓库外资产的
+`fixture_*`（`tests/fixtures/render_scenes`，`scripts/install-render-scenes.sh` 装到 `AB_ASSETS`）和 materials：
+
+```bash
+AB_PRESET=linux-debug AB_MODE=exe AB_SIZE=320x180 AB_FRAMES=6 AB_ASSETS=<装了 fixtures 的目录> \
+  DISPLAY=:99 python3 tools/render_ab/ab.py fixture_spheres_sun fixture_track_rt ...
+```
+
+基线在 `out/baseline_src`（改动前提交的 worktree，同样打上 Linux 构建修复，`-DVCPKG_MANIFEST_INSTALL=OFF` 指向主
+checkout 的 vcpkg_installed）。这不能代替 Windows + NVIDIA 上的 A/B（DLSS、真实 GPU 的格式/内存类型），那一部分留给本机验收。
 
 ### 拆采样器的做法（定了，未做）
 

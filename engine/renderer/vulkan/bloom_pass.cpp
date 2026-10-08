@@ -62,6 +62,7 @@ VkExtent2D ToExtent(glm::uvec2 size)
 VulkanBloomPass::VulkanBloomPass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout)
@@ -70,7 +71,7 @@ VulkanBloomPass::VulkanBloomPass(
 {
     try
     {
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
+        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
         static constexpr std::array<VkDescriptorType, 2> kTypes = {
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
@@ -286,7 +287,7 @@ void VulkanBloomPass::CreateDescriptorSets(const SceneRenderTargets& targets)
 
     const auto write = [&](VkDescriptorSet set, VkImageView source, VkImageView destination)
     {
-        const VkDescriptorImageInfo sourceInfo{m_sampler, source, VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorImageInfo sourceInfo{NativeSampler(m_sampler), source, VK_IMAGE_LAYOUT_GENERAL};
         const VkDescriptorImageInfo destinationInfo{VK_NULL_HANDLE, destination, VK_IMAGE_LAYOUT_GENERAL};
         const std::array<VkWriteDescriptorSet, 2> writes = {
             ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &sourceInfo),
@@ -343,10 +344,6 @@ void VulkanBloomPass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
 }
 }

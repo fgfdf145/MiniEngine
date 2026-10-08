@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "nvrhi_native.h"
 #include "uniform_buffer.h"
 
 #include <engine/renderer/ddgi_volume.h>
@@ -27,6 +28,7 @@ class VulkanDdgi
     VulkanDdgi(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         VkDescriptorSetLayout frameSetLayout,
         VkDescriptorSetLayout raySetLayout,
@@ -90,7 +92,7 @@ class VulkanDdgi
     uint32_t m_frameCount = 0;
     Image m_irradiance;
     Image m_visibility;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     Buffer m_states;
     Buffer m_rays;
     std::vector<Buffer> m_schedules;

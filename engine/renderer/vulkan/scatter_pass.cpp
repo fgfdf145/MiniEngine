@@ -27,14 +27,14 @@ VkImageMemoryBarrier InitialBarrier(VkImage image, VkImageAspectFlags aspect)
 }
 }
 
-VulkanScatterPass::VulkanScatterPass(VkPhysicalDevice physicalDevice, VkDevice device, const SceneRenderTargets& targets)
+VulkanScatterPass::VulkanScatterPass(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets)
     : m_physicalDevice(physicalDevice),
       m_device(device)
 {
     try
     {
         // The viewer reads the pre-pass with NEAREST: each sample is one surface point's light.
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
+        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         CreateRenderPass();
         CreateImages(targets.GetExtent());
     }
@@ -103,12 +103,12 @@ VkRenderPass VulkanScatterPass::GetRenderPass() const
 
 TextureDescriptorBinding VulkanScatterPass::GetLightBinding() const
 {
-    return TextureDescriptorBinding{m_light.view, m_sampler};
+    return TextureDescriptorBinding{m_light.view, NativeSampler(m_sampler)};
 }
 
 TextureDescriptorBinding VulkanScatterPass::GetDepthBinding() const
 {
-    return TextureDescriptorBinding{m_depth.view, m_sampler};
+    return TextureDescriptorBinding{m_depth.view, NativeSampler(m_sampler)};
 }
 
 void VulkanScatterPass::CreateRenderPass()
@@ -275,10 +275,6 @@ void VulkanScatterPass::DestroyHandles()
         vkDestroyRenderPass(m_device, m_renderPass, nullptr);
         m_renderPass = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
 }
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nvrhi_native.h"
 #include "scene_pass.h"
 
 #include <vector>
@@ -22,6 +23,7 @@ class VulkanTonemapPass : public IScenePass
   public:
     VulkanTonemapPass(
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout gbufferSetLayout,
@@ -41,7 +43,7 @@ class VulkanTonemapPass : public IScenePass
 
   private:
     void CreateDescriptorSetLayout();
-    void CreateSampler();
+    void CreateSampler(nvrhi::IDevice* nvrhiDevice);
     void CreateRenderPass(const SceneRenderTargets& targets);
     void CreatePipeline(VkPipelineCache pipelineCache, VkDescriptorSetLayout gbufferSetLayout, VkDescriptorSetLayout emptySetLayout);
     void CreateDescriptorSets(const SceneRenderTargets& targets);
@@ -56,7 +58,7 @@ class VulkanTonemapPass : public IScenePass
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_descriptorSets;

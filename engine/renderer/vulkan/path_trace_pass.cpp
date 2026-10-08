@@ -78,6 +78,7 @@ void Dispatch(VkCommandBuffer commandBuffer, VkExtent2D extent)
 VulkanPathTracePass::VulkanPathTracePass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout,
@@ -93,7 +94,7 @@ VulkanPathTracePass::VulkanPathTracePass(
     }
     try
     {
-        m_nearestSampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
+        m_nearestSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         std::array<VkDescriptorType, kBindingCount> types{};
         for (uint32_t binding = 0; binding < kBindingCount; ++binding)
         {
@@ -280,12 +281,12 @@ void VulkanPathTracePass::RecordLayerInitialTransition(VkCommandBuffer commandBu
 
 TextureDescriptorBinding VulkanPathTracePass::GetLayerDiffuseBinding() const
 {
-    return TextureDescriptorBinding{m_layerResult.GetView(0), m_nearestSampler};
+    return TextureDescriptorBinding{m_layerResult.GetView(0), NativeSampler(m_nearestSampler)};
 }
 
 TextureDescriptorBinding VulkanPathTracePass::GetLayerSpecularBinding() const
 {
-    return TextureDescriptorBinding{m_layerResult.GetView(1), m_nearestSampler};
+    return TextureDescriptorBinding{m_layerResult.GetView(1), NativeSampler(m_nearestSampler)};
 }
 
 void VulkanPathTracePass::Record(
@@ -480,7 +481,7 @@ void VulkanPathTracePass::WriteDescriptorSets(const SceneRenderTargets& targets)
             const uint32_t writeIndex = 1u - readIndex;
             const auto sampled = [&](RenderTargetId target)
             {
-                return VkDescriptorImageInfo{m_nearestSampler, targets.GetSampledView(target, slot), kReadLayout};
+                return VkDescriptorImageInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(target, slot), kReadLayout};
             };
             const auto storage = [](VkImageView view)
             {
@@ -488,7 +489,7 @@ void VulkanPathTracePass::WriteDescriptorSets(const SceneRenderTargets& targets)
             };
             const auto history = [&](const HistoryImagePair& pair)
             {
-                return VkDescriptorImageInfo{m_nearestSampler, pair.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
+                return VkDescriptorImageInfo{NativeSampler(m_nearestSampler), pair.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
             };
             const std::array<VkDescriptorImageInfo, kBindingCount> infos = {
                 sampled(RenderTargetId::SceneDepth),
@@ -530,7 +531,7 @@ void VulkanPathTracePass::WriteLayerDescriptorSets(const VulkanPathTraceLayerPas
         const uint32_t writeIndex = 1u - readIndex;
         const auto sampled = [&](VkImageView view)
         {
-            return VkDescriptorImageInfo{m_nearestSampler, view, kReadLayout};
+            return VkDescriptorImageInfo{NativeSampler(m_nearestSampler), view, kReadLayout};
         };
         const auto storage = [](VkImageView view)
         {
@@ -538,7 +539,7 @@ void VulkanPathTracePass::WriteLayerDescriptorSets(const VulkanPathTraceLayerPas
         };
         const auto history = [&](const HistoryImagePair& pair)
         {
-            return VkDescriptorImageInfo{m_nearestSampler, pair.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
+            return VkDescriptorImageInfo{NativeSampler(m_nearestSampler), pair.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
         };
         // The layer's G-buffer has no coat, specular or sheen (gbuffer.frag clears their flags there),
         // so its surface image stands in for the three, never read.
@@ -629,10 +630,6 @@ void VulkanPathTracePass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_nearestSampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_nearestSampler, nullptr);
-        m_nearestSampler = VK_NULL_HANDLE;
-    }
+    m_nearestSampler = nullptr;
 }
 }

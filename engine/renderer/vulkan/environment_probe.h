@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "nvrhi_native.h"
 #include "uniform_buffer.h"
 
 #include <array>
@@ -25,6 +26,7 @@ class VulkanEnvironmentProbe
     VulkanEnvironmentProbe(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         VkDescriptorSetLayout frameSetLayout);
     ~VulkanEnvironmentProbe();
@@ -63,7 +65,7 @@ class VulkanEnvironmentProbe
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     CubeImage m_radiance;
     CubeImage m_prefiltered;
     VkImageView m_radianceStorageView = VK_NULL_HANDLE;

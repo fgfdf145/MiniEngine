@@ -3,6 +3,7 @@
 #include "buffer.h"
 #include "format_support.h"
 #include "pipeline.h"
+#include "sampler_settings.h"
 
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
@@ -49,6 +50,7 @@ VkFormatFeatureFlags QueryOptimalFeatures(VkPhysicalDevice physicalDevice, VkFor
 VulkanLocalShadowPass::VulkanLocalShadowPass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     VkDescriptorSetLayout materialSetLayout)
     : m_device(device)
@@ -58,7 +60,7 @@ VulkanLocalShadowPass::VulkanLocalShadowPass(
     try
     {
         CreateImage(physicalDevice);
-        CreateSampler(physicalDevice);
+        CreateSampler(physicalDevice, nvrhiDevice);
         CreateRenderPass();
         CreateFramebuffer();
         CreatePipelines(pipelineCache, materialSetLayout);
@@ -82,7 +84,7 @@ VulkanLocalShadowPass::~VulkanLocalShadowPass()
 
 TextureDescriptorBinding VulkanLocalShadowPass::GetSampledBinding() const
 {
-    return TextureDescriptorBinding{m_view, m_sampler};
+    return TextureDescriptorBinding{m_view, NativeSampler(m_sampler)};
 }
 
 void VulkanLocalShadowPass::Record(
@@ -213,7 +215,7 @@ void VulkanLocalShadowPass::CreateImage(VkPhysicalDevice physicalDevice)
     CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_view), "Failed to create local shadow atlas view");
 }
 
-void VulkanLocalShadowPass::CreateSampler(VkPhysicalDevice physicalDevice)
+void VulkanLocalShadowPass::CreateSampler(VkPhysicalDevice physicalDevice, nvrhi::IDevice* nvrhiDevice)
 {
     // As the cascades: a linear comparison sampler turns the shader's 3x3 taps into a 4x4 texel
     // filter where the format allows it. The shader keeps every tap inside its tile, so the address
@@ -221,18 +223,10 @@ void VulkanLocalShadowPass::CreateSampler(VkPhysicalDevice physicalDevice)
     const bool linear =
         (QueryOptimalFeatures(physicalDevice, m_format) & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
 
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
-    samplerInfo.minFilter = samplerInfo.magFilter;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.compareEnable = VK_TRUE;
-    samplerInfo.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    samplerInfo.maxLod = 0.0f;
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create local shadow atlas sampler");
+    nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(linear);
+    samplerDesc.reductionType = nvrhi::SamplerReductionType::Comparison;
+    samplerDesc.comparisonFunc = nvrhi::ComparisonFunc::LessOrEqual;
+    m_sampler = CreateNvrhiSampler(nvrhiDevice, samplerDesc, "Failed to create local shadow atlas sampler");
 }
 
 void VulkanLocalShadowPass::CreateRenderPass()
@@ -448,11 +442,7 @@ void VulkanLocalShadowPass::DestroyHandles()
         vkDestroyRenderPass(m_device, m_renderPass, nullptr);
         m_renderPass = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     if (m_view != VK_NULL_HANDLE)
     {
         vkDestroyImageView(m_device, m_view, nullptr);

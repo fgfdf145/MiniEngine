@@ -47,6 +47,7 @@ void GlobalBarrier(
 VulkanDdgi::VulkanDdgi(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     VkDescriptorSetLayout frameSetLayout,
     VkDescriptorSetLayout raySetLayout,
@@ -60,7 +61,7 @@ VulkanDdgi::VulkanDdgi(
     {
         m_irradiance = CreateAtlas(kDdgiIrradianceTexels, kIrradianceFormat);
         m_visibility = CreateAtlas(kDdgiVisibilityTexels, kVisibilityFormat);
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
+        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
         m_states = CreateBuffer(
             static_cast<VkDeviceSize>(kDdgiProbeStateBytes) * kDdgiProbesPerLevel * kDdgiMaxLevels,
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -274,12 +275,12 @@ void VulkanDdgi::Record(
 
 TextureDescriptorBinding VulkanDdgi::GetIrradianceBinding() const
 {
-    return TextureDescriptorBinding{m_irradiance.view, m_sampler};
+    return TextureDescriptorBinding{m_irradiance.view, NativeSampler(m_sampler)};
 }
 
 TextureDescriptorBinding VulkanDdgi::GetVisibilityBinding() const
 {
-    return TextureDescriptorBinding{m_visibility.view, m_sampler};
+    return TextureDescriptorBinding{m_visibility.view, NativeSampler(m_sampler)};
 }
 
 VkBuffer VulkanDdgi::GetProbeStateBuffer() const
@@ -416,11 +417,7 @@ void VulkanDdgi::DestroyHandles()
         }
         *buffer = Buffer{};
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     for (Image* image : {&m_irradiance, &m_visibility})
     {
         if (image->view != VK_NULL_HANDLE)

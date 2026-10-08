@@ -1,15 +1,17 @@
 #include "gbuffer_inputs.h"
 
+#include "sampler_settings.h"
+
 namespace me
 {
 
-VulkanGBufferDescriptors::VulkanGBufferDescriptors(VkDevice device, const SceneRenderTargets& targets)
+VulkanGBufferDescriptors::VulkanGBufferDescriptors(VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets)
     : m_device(device)
 {
     try
     {
         CreateSetLayouts();
-        CreateSampler();
+        CreateSampler(nvrhiDevice);
         CreateDescriptorSets(targets);
     }
     catch (...)
@@ -74,29 +76,11 @@ void VulkanGBufferDescriptors::CreateSetLayouts()
         "Failed to create empty descriptor set layout");
 }
 
-void VulkanGBufferDescriptors::CreateSampler()
+void VulkanGBufferDescriptors::CreateSampler(nvrhi::IDevice* nvrhiDevice)
 {
     // Every consumer samples one texel per pixel at matching resolution. Linear filtering would
     // average a surface's normal and depth with its neighbor's across every silhouette.
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_NEAREST;
-    samplerInfo.minFilter = VK_FILTER_NEAREST;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
-    samplerInfo.mipLodBias = 0.0f;
-
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create G-buffer sampler");
+    m_sampler = CreateNvrhiSampler(nvrhiDevice, BuildClampSamplerDesc(false), "Failed to create G-buffer sampler");
 }
 
 void VulkanGBufferDescriptors::CreateDescriptorSets(const SceneRenderTargets& targets)
@@ -145,7 +129,7 @@ void VulkanGBufferDescriptors::CreateDescriptorSets(const SceneRenderTargets& ta
 
         for (uint32_t binding = 0; binding < static_cast<uint32_t>(kInputs.size()); ++binding)
         {
-            imageInfos[binding].sampler = m_sampler;
+            imageInfos[binding].sampler = NativeSampler(m_sampler);
             imageInfos[binding].imageView = targets.GetSampledView(kInputs[binding], slot);
             imageInfos[binding].imageLayout = kReadLayout;
 
@@ -171,11 +155,7 @@ void VulkanGBufferDescriptors::DestroyHandles()
         m_descriptorPool = VK_NULL_HANDLE;
     }
     m_descriptorSets.clear();
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     if (m_emptySetLayout != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorSetLayout(m_device, m_emptySetLayout, nullptr);

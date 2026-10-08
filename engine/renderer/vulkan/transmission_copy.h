@@ -20,7 +20,7 @@ class VulkanTransmissionImage
     static constexpr uint32_t kSize = 1024;
     static constexpr uint32_t kMipLevels = 11; // 1024 down to 1
 
-    VulkanTransmissionImage(VkPhysicalDevice physicalDevice, VkDevice device);
+    VulkanTransmissionImage(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice);
     ~VulkanTransmissionImage();
 
     VulkanTransmissionImage(const VulkanTransmissionImage&) = delete;
@@ -43,7 +43,7 @@ class VulkanTransmissionImage
     VkDeviceMemory m_memory = VK_NULL_HANDLE;
     VkImageView m_view = VK_NULL_HANDLE;
     VkImageView m_level0View = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     mutable bool m_initialized = false;
 };
 
@@ -55,6 +55,7 @@ class VulkanTransmissionCopyPass : public IScenePass
   public:
     VulkanTransmissionCopyPass(
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
@@ -78,7 +79,7 @@ class VulkanTransmissionCopyPass : public IScenePass
 
     VkDevice m_device = VK_NULL_HANDLE;
     const VulkanTransmissionImage& m_image;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;

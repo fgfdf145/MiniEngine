@@ -75,7 +75,7 @@ void DestroyPipelineHandles(VkDevice device, VkPipeline& pipeline, VkPipelineLay
     }
 }
 
-void DestroySetHandles(VkDevice device, VkDescriptorPool& pool, VkDescriptorSetLayout& layout, VkSampler& sampler)
+void DestroySetHandles(VkDevice device, VkDescriptorPool& pool, VkDescriptorSetLayout& layout, nvrhi::SamplerHandle& sampler)
 {
     if (pool != VK_NULL_HANDLE)
     {
@@ -87,11 +87,7 @@ void DestroySetHandles(VkDevice device, VkDescriptorPool& pool, VkDescriptorSetL
         vkDestroyDescriptorSetLayout(device, layout, nullptr);
         layout = VK_NULL_HANDLE;
     }
-    if (sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(device, sampler, nullptr);
-        sampler = VK_NULL_HANDLE;
-    }
+    sampler = nullptr;
 }
 }
 
@@ -101,6 +97,7 @@ void DestroySetHandles(VkDevice device, VkDescriptorPool& pool, VkDescriptorSetL
 
 VulkanGiTracePass::VulkanGiTracePass(
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout)
@@ -108,7 +105,7 @@ VulkanGiTracePass::VulkanGiTracePass(
 {
     try
     {
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
+        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         static constexpr std::array<VkDescriptorType, 4> kTypes = {
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -182,9 +179,9 @@ void VulkanGiTracePass::CreateDescriptorSets(const SceneRenderTargets& targets)
     m_descriptorSets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, copyCount);
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
-        const VkDescriptorImageInfo depthInfo{m_sampler, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-        const VkDescriptorImageInfo normalInfo{m_sampler, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-        const VkDescriptorImageInfo hdrInfo{m_sampler, targets.GetSampledView(RenderTargetId::SceneHdr, slot), kReadLayout};
+        const VkDescriptorImageInfo depthInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
+        const VkDescriptorImageInfo normalInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
+        const VkDescriptorImageInfo hdrInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneHdr, slot), kReadLayout};
         const VkDescriptorImageInfo giInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::GiRaw, slot), VK_IMAGE_LAYOUT_GENERAL};
         const std::array<VkWriteDescriptorSet, 4> writes = {
             ImageWrite(m_descriptorSets[slot], 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
@@ -209,6 +206,7 @@ void VulkanGiTracePass::DestroyHandles()
 VulkanGiResolvePass::VulkanGiResolvePass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout)
@@ -217,7 +215,7 @@ VulkanGiResolvePass::VulkanGiResolvePass(
 {
     try
     {
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
+        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         static constexpr std::array<VkDescriptorType, 7> kTypes = {
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -308,11 +306,11 @@ void VulkanGiResolvePass::CreateDescriptorSets(const SceneRenderTargets& targets
         for (uint32_t readIndex = 0; readIndex < 2; ++readIndex)
         {
             const VkDescriptorSet set = m_descriptorSets[slot * 2 + readIndex];
-            const VkDescriptorImageInfo rawInfo{m_sampler, targets.GetSampledView(RenderTargetId::GiRaw, slot), kReadLayout};
-            const VkDescriptorImageInfo depthInfo{m_sampler, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-            const VkDescriptorImageInfo velocityInfo{m_sampler, targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
-            const VkDescriptorImageInfo normalInfo{m_sampler, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-            const VkDescriptorImageInfo historyReadInfo{m_sampler, m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
+            const VkDescriptorImageInfo rawInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GiRaw, slot), kReadLayout};
+            const VkDescriptorImageInfo depthInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
+            const VkDescriptorImageInfo velocityInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
+            const VkDescriptorImageInfo normalInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
+            const VkDescriptorImageInfo historyReadInfo{NativeSampler(m_sampler), m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo historyWriteInfo{VK_NULL_HANDLE, m_history.GetView(1u - readIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo giInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneGi, slot), VK_IMAGE_LAYOUT_GENERAL};
             const std::array<VkWriteDescriptorSet, 7> writes = {

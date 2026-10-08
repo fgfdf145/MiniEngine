@@ -4,6 +4,7 @@
 #include "format_support.h"
 #include "parallel_recorder.h"
 #include "pipeline.h"
+#include "sampler_settings.h"
 
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
@@ -50,6 +51,7 @@ VkFormatFeatureFlags QueryOptimalFeatures(VkPhysicalDevice physicalDevice, VkFor
 VulkanShadowPass::VulkanShadowPass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     VkDescriptorSetLayout materialSetLayout,
     uint32_t resolution)
@@ -61,7 +63,7 @@ VulkanShadowPass::VulkanShadowPass(
     try
     {
         CreateImage(physicalDevice);
-        CreateSampler(physicalDevice);
+        CreateSampler(physicalDevice, nvrhiDevice);
         CreateRenderPass();
         CreateFramebuffers();
         CreatePipelines(pipelineCache, materialSetLayout);
@@ -86,7 +88,7 @@ uint32_t VulkanShadowPass::GetResolution() const
 
 TextureDescriptorBinding VulkanShadowPass::GetSampledBinding() const
 {
-    return TextureDescriptorBinding{m_arrayView, m_sampler};
+    return TextureDescriptorBinding{m_arrayView, NativeSampler(m_sampler)};
 }
 
 std::optional<ShadowCascadePlan> VulkanShadowPass::Plan(const ShadowCascades* cascades, uint64_t casterKey)
@@ -297,7 +299,7 @@ void VulkanShadowPass::CreateImage(VkPhysicalDevice physicalDevice)
     }
 }
 
-void VulkanShadowPass::CreateSampler(VkPhysicalDevice physicalDevice)
+void VulkanShadowPass::CreateSampler(VkPhysicalDevice physicalDevice, nvrhi::IDevice* nvrhiDevice)
 {
     // With linear filtering a comparison sampler returns the bilinear blend of four comparisons,
     // which is what turns the shader's 3x3 taps into a smooth 4x4 texel filter. Not every depth
@@ -305,21 +307,15 @@ void VulkanShadowPass::CreateSampler(VkPhysicalDevice physicalDevice)
     const bool linear =
         (QueryOptimalFeatures(physicalDevice, m_format) & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
 
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
-    samplerInfo.minFilter = samplerInfo.magFilter;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(linear);
     // Outside the map counts as lit: the border is the far plane, and every receiver passes a
     // LESS_OR_EQUAL comparison against it.
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-    samplerInfo.compareEnable = VK_TRUE;
-    samplerInfo.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    samplerInfo.maxLod = 0.0f;
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create shadow map sampler");
+    samplerDesc.addressU = nvrhi::SamplerAddressMode::Border;
+    samplerDesc.addressV = nvrhi::SamplerAddressMode::Border;
+    samplerDesc.borderColor = nvrhi::Color(1.0f, 1.0f, 1.0f, 1.0f);
+    samplerDesc.reductionType = nvrhi::SamplerReductionType::Comparison;
+    samplerDesc.comparisonFunc = nvrhi::ComparisonFunc::LessOrEqual;
+    m_sampler = CreateNvrhiSampler(nvrhiDevice, samplerDesc, "Failed to create shadow map sampler");
 }
 
 void VulkanShadowPass::CreateRenderPass()
@@ -552,11 +548,7 @@ void VulkanShadowPass::DestroyHandles()
         vkDestroyRenderPass(m_device, m_renderPass, nullptr);
         m_renderPass = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     for (VkImageView& view : m_layerViews)
     {
         if (view != VK_NULL_HANDLE)

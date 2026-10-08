@@ -32,6 +32,7 @@ class VulkanRestirPtPass : public IScenePass
     VulkanRestirPtPass(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
@@ -73,7 +74,7 @@ class VulkanRestirPtPass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_nearestSampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_nearestSampler;
     // Set 2 of every pipeline: 0-5 the G-buffer (depth, normal, albedo, surface, coat, velocity),
     // 6 ScenePathTrace (storage), 7-14 the buffers (restir_pt_common.glsl).
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;

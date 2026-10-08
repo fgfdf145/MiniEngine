@@ -83,6 +83,7 @@ void Dispatch(VkCommandBuffer commandBuffer, VkExtent2D extent, uint32_t groupSi
 VulkanRestirPtPass::VulkanRestirPtPass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout,
@@ -97,7 +98,7 @@ VulkanRestirPtPass::VulkanRestirPtPass(
     }
     try
     {
-        m_nearestSampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
+        m_nearestSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         std::array<VkDescriptorType, kBindingCount> types{};
         for (uint32_t binding = 0; binding < kSampledBindings; ++binding)
         {
@@ -365,7 +366,7 @@ void VulkanRestirPtPass::CreateResources(const SceneRenderTargets& targets)
                 std::array<VkWriteDescriptorSet, kBindingCount> writes{};
                 for (uint32_t binding = 0; binding < kSampledBindings; ++binding)
                 {
-                    images[binding] = VkDescriptorImageInfo{m_nearestSampler, targets.GetSampledView(kSampled[binding], slot), kReadLayout};
+                    images[binding] = VkDescriptorImageInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(kSampled[binding], slot), kReadLayout};
                     writes[binding] = ImageWrite(set, binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &images[binding]);
                 }
                 images[kSampledBindings] =
@@ -442,10 +443,6 @@ void VulkanRestirPtPass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_nearestSampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_nearestSampler, nullptr);
-        m_nearestSampler = VK_NULL_HANDLE;
-    }
+    m_nearestSampler = nullptr;
 }
 }

@@ -37,4 +37,18 @@ nvrhi::SamplerDesc BuildTextureSamplerDesc(const TextureSampler& sampler, float 
     desc.borderColor = nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f);
     return desc;
 }
+
+nvrhi::SamplerDesc BuildClampSamplerDesc(bool linear)
+{
+    nvrhi::SamplerDesc desc;
+    desc.magFilter = linear;
+    desc.minFilter = linear;
+    desc.mipFilter = false;
+    desc.setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
+    desc.minLod = 0.0f;
+    desc.maxLod = 0.0f;
+    desc.maxAnisotropy = 1.0f;
+    desc.borderColor = nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f);
+    return desc;
+}
 }

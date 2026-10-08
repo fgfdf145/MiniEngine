@@ -1,6 +1,7 @@
 #include "environment_probe.h"
 
 #include "pipeline.h"
+#include "sampler_settings.h"
 
 #include <engine/core/paths/engine_paths.h>
 
@@ -73,6 +74,7 @@ EnvironmentUniformData CaptureKey(const EnvironmentUniformData& environment)
 VulkanEnvironmentProbe::VulkanEnvironmentProbe(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     VkDescriptorSetLayout frameSetLayout)
     : m_physicalDevice(physicalDevice),
@@ -92,19 +94,10 @@ VulkanEnvironmentProbe::VulkanEnvironmentProbe(
             m_prefilteredStorageViews[mip] = CreateArrayView(m_prefiltered.image, mip);
         }
 
-        VkSamplerCreateInfo samplerInfo{};
-        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.magFilter = VK_FILTER_LINEAR;
-        samplerInfo.minFilter = VK_FILTER_LINEAR;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.maxAnisotropy = 1.0f;
-        samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-        samplerInfo.maxLod = static_cast<float>(kRadianceMipCount);
-        samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-        CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create the environment probe sampler");
+        nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(true);
+        samplerDesc.mipFilter = true;
+        samplerDesc.maxLod = static_cast<float>(kRadianceMipCount);
+        m_sampler = CreateNvrhiSampler(nvrhiDevice, samplerDesc, "Failed to create the environment probe sampler");
 
         CreateDescriptors();
         CreatePipelines(pipelineCache, frameSetLayout);
@@ -123,7 +116,7 @@ VulkanEnvironmentProbe::~VulkanEnvironmentProbe()
 
 TextureDescriptorBinding VulkanEnvironmentProbe::GetPrefilteredBinding() const
 {
-    return TextureDescriptorBinding{m_prefiltered.cubeView, m_sampler};
+    return TextureDescriptorBinding{m_prefiltered.cubeView, NativeSampler(m_sampler)};
 }
 
 void VulkanEnvironmentProbe::Invalidate()
@@ -331,7 +324,7 @@ void VulkanEnvironmentProbe::CreateDescriptors()
     CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, m_descriptorSets.data()), "Failed to allocate the environment probe descriptor sets");
 
     const VkDescriptorImageInfo captureInfo{VK_NULL_HANDLE, m_radianceStorageView, VK_IMAGE_LAYOUT_GENERAL};
-    const VkDescriptorImageInfo radianceInfo{m_sampler, m_radiance.cubeView, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo radianceInfo{NativeSampler(m_sampler), m_radiance.cubeView, VK_IMAGE_LAYOUT_GENERAL};
     for (uint32_t mip = 0; mip < kPrefilterMipCount; ++mip)
     {
         const VkDescriptorImageInfo prefilteredInfo{VK_NULL_HANDLE, m_prefilteredStorageViews[mip], VK_IMAGE_LAYOUT_GENERAL};
@@ -421,11 +414,7 @@ void VulkanEnvironmentProbe::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     for (VkImageView& view : m_prefilteredStorageViews)
     {
         if (view != VK_NULL_HANDLE)

@@ -27,6 +27,7 @@ bool IsDdgiDebugView(GBufferDebugView view)
 
 VulkanDdgiDebugPass::VulkanDdgiDebugPass(
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout,
@@ -36,7 +37,7 @@ VulkanDdgiDebugPass::VulkanDdgiDebugPass(
 {
     try
     {
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
+        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         static constexpr std::array<VkDescriptorType, 4> kTypes = {
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -120,9 +121,9 @@ void VulkanDdgiDebugPass::CreateDescriptorSets(const SceneRenderTargets& targets
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
         const VkDescriptorImageInfo outputInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneGi, slot), VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo depthInfo{m_sampler, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-        const VkDescriptorImageInfo normalInfo{m_sampler, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-        const VkDescriptorImageInfo hdrInfo{m_sampler, targets.GetSampledView(RenderTargetId::SceneHdr, slot), kReadLayout};
+        const VkDescriptorImageInfo depthInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
+        const VkDescriptorImageInfo normalInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
+        const VkDescriptorImageInfo hdrInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneHdr, slot), kReadLayout};
         const std::array<VkWriteDescriptorSet, 4> writes = {
             ImageWrite(m_descriptorSets[slot], 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outputInfo),
             ImageWrite(m_descriptorSets[slot], 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
@@ -158,10 +159,6 @@ void VulkanDdgiDebugPass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
 }
 }

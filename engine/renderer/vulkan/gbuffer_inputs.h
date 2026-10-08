@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "nvrhi_native.h"
 #include "render_target_layout.h"
 #include "scene_render_targets.h"
 
@@ -42,7 +43,7 @@ class VulkanGBufferDescriptors
         // ReSTIR PT's shading, which the lighting pass adds in place of its lights while it runs.
         RenderTargetId::ScenePathTrace};
 
-    VulkanGBufferDescriptors(VkDevice device, const SceneRenderTargets& targets);
+    VulkanGBufferDescriptors(VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets);
     ~VulkanGBufferDescriptors();
 
     VulkanGBufferDescriptors(const VulkanGBufferDescriptors&) = delete;
@@ -60,7 +61,7 @@ class VulkanGBufferDescriptors
 
   private:
     void CreateSetLayouts();
-    void CreateSampler();
+    void CreateSampler(nvrhi::IDevice* nvrhiDevice);
     void CreateDescriptorSets(const SceneRenderTargets& targets);
     // Shared by the destructor and the constructor's unwind path, as in every pass.
     void DestroyHandles();
@@ -68,7 +69,7 @@ class VulkanGBufferDescriptors
     VkDevice m_device = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_emptySetLayout = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_descriptorSets;
 };

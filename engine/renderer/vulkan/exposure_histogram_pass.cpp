@@ -1,6 +1,7 @@
 #include "exposure_histogram_pass.h"
 
 #include "pipeline.h"
+#include "sampler_settings.h"
 
 #include <engine/core/paths/engine_paths.h>
 #include <engine/renderer/exposure.h>
@@ -41,6 +42,7 @@ struct HistogramPushConstants
 VulkanExposureHistogramPass::VulkanExposureHistogramPass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets)
     : m_physicalDevice(physicalDevice),
@@ -52,7 +54,7 @@ VulkanExposureHistogramPass::VulkanExposureHistogramPass(
     try
     {
         CreateDescriptorSetLayout();
-        CreateSampler();
+        CreateSampler(nvrhiDevice);
         CreatePipeline(pipelineCache);
         CreateHistogramBuffers(targets.GetTransientCopyCount());
         CreateDescriptorSets(targets);
@@ -214,23 +216,11 @@ void VulkanExposureHistogramPass::CreateDescriptorSetLayout()
     CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_setLayout), "Failed to create exposure histogram descriptor set layout");
 }
 
-void VulkanExposureHistogramPass::CreateSampler()
+void VulkanExposureHistogramPass::CreateSampler(nvrhi::IDevice* nvrhiDevice)
 {
     // The shader only uses texelFetch, which ignores the sampler's filtering, but a combined image
     // sampler still needs one. Nearest keeps it valid for depth formats without linear filtering.
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_NEAREST;
-    samplerInfo.minFilter = VK_FILTER_NEAREST;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create exposure histogram sampler");
+    m_sampler = CreateNvrhiSampler(nvrhiDevice, BuildClampSamplerDesc(false), "Failed to create exposure histogram sampler");
 }
 
 void VulkanExposureHistogramPass::CreatePipeline(VkPipelineCache pipelineCache)
@@ -342,12 +332,12 @@ void VulkanExposureHistogramPass::CreateDescriptorSets(const SceneRenderTargets&
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
         VkDescriptorImageInfo hdrInfo{};
-        hdrInfo.sampler = m_sampler;
+        hdrInfo.sampler = NativeSampler(m_sampler);
         hdrInfo.imageView = targets.GetSampledView(RenderTargetId::SceneTaa, slot);
         hdrInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkDescriptorImageInfo depthInfo{};
-        depthInfo.sampler = m_sampler;
+        depthInfo.sampler = NativeSampler(m_sampler);
         depthInfo.imageView = targets.GetSampledView(RenderTargetId::SceneDepth, slot);
         depthInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
@@ -432,10 +422,6 @@ void VulkanExposureHistogramPass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
 }
 }

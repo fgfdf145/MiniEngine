@@ -1,6 +1,7 @@
 #include "atmosphere.h"
 
 #include "command.h"
+#include "sampler_settings.h"
 
 #include "pipeline.h"
 
@@ -89,6 +90,7 @@ void GlobalBarrier(
 VulkanAtmosphere::VulkanAtmosphere(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     VkDescriptorSetLayout frameSetLayout)
     : m_physicalDevice(physicalDevice),
@@ -96,6 +98,11 @@ VulkanAtmosphere::VulkanAtmosphere(
 {
     try
     {
+        // The cloud noise tiles; everything else clamps. Both read the base level alone.
+        nvrhi::SamplerDesc cloudSamplerDesc = BuildClampSamplerDesc(true);
+        cloudSamplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Repeat);
+        m_cloudSampler = CreateNvrhiSampler(nvrhiDevice, cloudSamplerDesc, "Failed to create the cloud noise sampler");
+        m_sampler = CreateNvrhiSampler(nvrhiDevice, BuildClampSamplerDesc(true), "Failed to create the atmosphere sampler");
         CreateImages();
         CreateDescriptors();
         // The set Record's shared passes bind, whose view images are 1 x 1 and never read.
@@ -116,47 +123,47 @@ VulkanAtmosphere::~VulkanAtmosphere()
 
 TextureDescriptorBinding VulkanAtmosphere::GetTransmittanceBinding() const
 {
-    return TextureDescriptorBinding{m_images[kTransmittance].view, m_sampler};
+    return TextureDescriptorBinding{m_images[kTransmittance].view, NativeSampler(m_sampler)};
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetSkyViewBinding() const
 {
-    return TextureDescriptorBinding{m_images[kSkyView].view, m_sampler};
+    return TextureDescriptorBinding{m_images[kSkyView].view, NativeSampler(m_sampler)};
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetMultiScatteringBinding() const
 {
-    return TextureDescriptorBinding{m_images[kMultiScattering].view, m_sampler};
+    return TextureDescriptorBinding{m_images[kMultiScattering].view, NativeSampler(m_sampler)};
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetAerialPerspectiveBinding(const View& view) const
 {
-    return TextureDescriptorBinding{view.m_aerialPerspective.view, m_sampler};
+    return TextureDescriptorBinding{view.m_aerialPerspective.view, NativeSampler(m_sampler)};
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudShapeNoiseBinding() const
 {
-    return TextureDescriptorBinding{m_cloudNoise[kCloudShape].view, m_cloudSampler};
+    return TextureDescriptorBinding{m_cloudNoise[kCloudShape].view, NativeSampler(m_cloudSampler)};
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudDetailNoiseBinding() const
 {
-    return TextureDescriptorBinding{m_cloudNoise[kCloudDetail].view, m_cloudSampler};
+    return TextureDescriptorBinding{m_cloudNoise[kCloudDetail].view, NativeSampler(m_cloudSampler)};
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudShadowBinding() const
 {
-    return TextureDescriptorBinding{m_cloudShadow.view, m_sampler};
+    return TextureDescriptorBinding{m_cloudShadow.view, NativeSampler(m_sampler)};
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudWeatherBinding() const
 {
-    return TextureDescriptorBinding{m_cloudNoise[kCloudWeather].view, m_cloudSampler};
+    return TextureDescriptorBinding{m_cloudNoise[kCloudWeather].view, NativeSampler(m_cloudSampler)};
 }
 
 TextureDescriptorBinding VulkanAtmosphere::GetCloudTargetBinding(const View& view) const
 {
-    return TextureDescriptorBinding{view.m_cloudResolved.view, m_sampler};
+    return TextureDescriptorBinding{view.m_cloudResolved.view, NativeSampler(m_sampler)};
 }
 
 VulkanAtmosphere::View::View(VkDevice device)
@@ -429,15 +436,15 @@ void VulkanAtmosphere::WriteViewDescriptors(const View& view)
         infos[lut] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_images[lut].view, VK_IMAGE_LAYOUT_GENERAL};
     }
     infos[kAerialPerspectiveBinding] = VkDescriptorImageInfo{VK_NULL_HANDLE, view.m_aerialPerspective.view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[4] = VkDescriptorImageInfo{m_sampler, m_images[kTransmittance].view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[5] = VkDescriptorImageInfo{m_sampler, m_images[kMultiScattering].view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[4] = VkDescriptorImageInfo{NativeSampler(m_sampler), m_images[kTransmittance].view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[5] = VkDescriptorImageInfo{NativeSampler(m_sampler), m_images[kMultiScattering].view, VK_IMAGE_LAYOUT_GENERAL};
     infos[7] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudShape].view, VK_IMAGE_LAYOUT_GENERAL};
     infos[8] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudDetail].view, VK_IMAGE_LAYOUT_GENERAL};
     infos[9] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudShadow.view, VK_IMAGE_LAYOUT_GENERAL};
     infos[10] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudWeather].view, VK_IMAGE_LAYOUT_GENERAL};
     infos[kCloudTargetBinding] = VkDescriptorImageInfo{VK_NULL_HANDLE, view.m_cloudTarget.view, VK_IMAGE_LAYOUT_GENERAL};
     infos[kCloudResolvedBinding] = VkDescriptorImageInfo{VK_NULL_HANDLE, view.m_cloudResolved.view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[kCloudHistoryBinding] = VkDescriptorImageInfo{m_sampler, view.m_cloudHistory.view, VK_IMAGE_LAYOUT_GENERAL};
+    infos[kCloudHistoryBinding] = VkDescriptorImageInfo{NativeSampler(m_sampler), view.m_cloudHistory.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorBufferInfo irradianceInfo{m_irradianceBuffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo plumeInfo{m_plumeBuffer, 0, VK_WHOLE_SIZE};
     std::array<VkWriteDescriptorSet, kAtmosphereBindingCount> writes{};
@@ -775,32 +782,6 @@ void VulkanAtmosphere::CreateImages()
         CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_cloudShadow.view), "Failed to create the cloud shadow map view");
     }
 
-    VkSamplerCreateInfo cloudSamplerInfo{};
-    cloudSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    cloudSamplerInfo.magFilter = VK_FILTER_LINEAR;
-    cloudSamplerInfo.minFilter = VK_FILTER_LINEAR;
-    cloudSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    cloudSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    cloudSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    cloudSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    cloudSamplerInfo.maxAnisotropy = 1.0f;
-    cloudSamplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    cloudSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    CheckVulkan(vkCreateSampler(m_device, &cloudSamplerInfo, nullptr, &m_cloudSampler), "Failed to create the cloud noise sampler");
-
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create the atmosphere sampler");
-
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = kIrradianceBytes;
@@ -980,16 +961,8 @@ void VulkanAtmosphere::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
-    if (m_cloudSampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_cloudSampler, nullptr);
-        m_cloudSampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
+    m_cloudSampler = nullptr;
     for (Readback& readback : m_readbacks)
     {
         if (readback.buffer != VK_NULL_HANDLE)

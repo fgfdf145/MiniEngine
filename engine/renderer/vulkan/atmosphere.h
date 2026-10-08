@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "gpu_timer.h"
+#include "nvrhi_native.h"
 #include "uniform_buffer.h"
 
 #include <engine/renderer/atmosphere.h>
@@ -30,6 +31,7 @@ class VulkanAtmosphere
     VulkanAtmosphere(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         VkDescriptorSetLayout frameSetLayout);
     ~VulkanAtmosphere();
@@ -178,7 +180,7 @@ class VulkanAtmosphere
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     // The view whose set the shared passes in Record bind: its aerial perspective volume and clouds
     // are 1 x 1 placeholders that nothing reads.
@@ -189,7 +191,7 @@ class VulkanAtmosphere
     std::array<LutImage, kLutCount> m_images{};
     // RGBA8 volumes, written once and then only sampled; GENERAL like the LUTs.
     std::array<LutImage, kCloudNoiseCount> m_cloudNoise{};
-    VkSampler m_cloudSampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_cloudSampler;
     // RGBA16F, r the transmittance toward the sun; GENERAL like the LUTs.
     LutImage m_cloudShadow{};
     bool m_cloudNoiseBuilt = false;

@@ -1,5 +1,7 @@
 #include "transmission_copy.h"
 
+#include "sampler_settings.h"
+
 #include <array>
 
 namespace me
@@ -43,7 +45,7 @@ void RecordBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags src, VkPi
 }
 }
 
-VulkanTransmissionImage::VulkanTransmissionImage(VkPhysicalDevice physicalDevice, VkDevice device)
+VulkanTransmissionImage::VulkanTransmissionImage(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice)
     : m_device(device)
 {
     try
@@ -93,17 +95,10 @@ VulkanTransmissionImage::VulkanTransmissionImage(VkPhysicalDevice physicalDevice
         viewInfo.subresourceRange.levelCount = 1;
         CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_level0View), "Failed to create the transmission copy's level view");
 
-        VkSamplerCreateInfo samplerInfo{};
-        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.magFilter = VK_FILTER_LINEAR;
-        samplerInfo.minFilter = VK_FILTER_LINEAR;
-        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        samplerInfo.minLod = 0.0f;
-        samplerInfo.maxLod = static_cast<float>(kMipLevels);
-        CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create the transmission copy's sampler");
+        nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(true);
+        samplerDesc.mipFilter = true;
+        samplerDesc.maxLod = static_cast<float>(kMipLevels);
+        m_sampler = CreateNvrhiSampler(nvrhiDevice, samplerDesc, "Failed to create the transmission copy's sampler");
     }
     catch (...)
     {
@@ -119,7 +114,7 @@ VulkanTransmissionImage::~VulkanTransmissionImage()
 
 TextureDescriptorBinding VulkanTransmissionImage::GetSampledBinding() const
 {
-    return TextureDescriptorBinding{m_view, m_sampler};
+    return TextureDescriptorBinding{m_view, NativeSampler(m_sampler)};
 }
 
 VkImage VulkanTransmissionImage::GetImage() const
@@ -148,11 +143,7 @@ void VulkanTransmissionImage::RecordInitialTransition(VkCommandBuffer commandBuf
 
 void VulkanTransmissionImage::Destroy()
 {
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     for (VkImageView* view : {&m_level0View, &m_view})
     {
         if (*view != VK_NULL_HANDLE)
@@ -175,6 +166,7 @@ void VulkanTransmissionImage::Destroy()
 
 VulkanTransmissionCopyPass::VulkanTransmissionCopyPass(
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout,
@@ -184,7 +176,7 @@ VulkanTransmissionCopyPass::VulkanTransmissionCopyPass(
 {
     try
     {
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
+        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
         static constexpr std::array<VkDescriptorType, 2> kTypes = {
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
@@ -316,7 +308,7 @@ void VulkanTransmissionCopyPass::CreateDescriptorSets(const SceneRenderTargets& 
     m_sets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, copyCount);
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
-        const VkDescriptorImageInfo sourceInfo{m_sampler, targets.GetView(RenderTargetId::SceneHdr, slot), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo sourceInfo{NativeSampler(m_sampler), targets.GetView(RenderTargetId::SceneHdr, slot), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         const VkDescriptorImageInfo destinationInfo{VK_NULL_HANDLE, m_image.GetLevel0View(), VK_IMAGE_LAYOUT_GENERAL};
         const std::array<VkWriteDescriptorSet, 2> writes = {
             ImageWrite(m_sets[slot], 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &sourceInfo),
@@ -347,10 +339,6 @@ void VulkanTransmissionCopyPass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
 }
 }

@@ -87,6 +87,21 @@ void MapsSettingsToSamplers()
     Require(!mips.mipFilter && mips.maxLod == VK_LOD_CLAMP_NONE, "nearest mipmaps");
     Require(mips.maxAnisotropy == 16.0f, "linear filters with mipmaps keep anisotropy");
 }
+
+void ClampSamplerReadsTheBaseLevel()
+{
+    for (const bool linear : {false, true})
+    {
+        const nvrhi::SamplerDesc desc = BuildClampSamplerDesc(linear);
+        Require(desc.magFilter == linear && desc.minFilter == linear, "nearest or linear as asked");
+        Require(!desc.mipFilter && desc.minLod == 0.0f && desc.maxLod == 0.0f, "the base level alone");
+        Require(desc.addressU == nvrhi::SamplerAddressMode::Clamp && desc.addressV == nvrhi::SamplerAddressMode::Clamp &&
+                    desc.addressW == nvrhi::SamplerAddressMode::Clamp,
+                "clamped to the edge");
+        Require(desc.maxAnisotropy == 1.0f && desc.reductionType == nvrhi::SamplerReductionType::Standard,
+                "no anisotropy, no comparison");
+    }
+}
 }
 
 int main()
@@ -97,6 +112,7 @@ int main()
         ReadsGltfFilters();
         DefaultIsTodaysSampler();
         MapsSettingsToSamplers();
+        ClampSamplerReadsTheBaseLevel();
     }
     catch (const std::exception& error)
     {

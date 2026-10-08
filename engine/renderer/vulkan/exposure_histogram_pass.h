@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nvrhi_native.h"
 #include "scene_pass.h"
 
 #include <cstdint>
@@ -23,6 +24,7 @@ class VulkanExposureHistogramPass : public IScenePass
     VulkanExposureHistogramPass(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets);
     ~VulkanExposureHistogramPass() override;
@@ -54,7 +56,7 @@ class VulkanExposureHistogramPass : public IScenePass
     };
 
     void CreateDescriptorSetLayout();
-    void CreateSampler();
+    void CreateSampler(nvrhi::IDevice* nvrhiDevice);
     void CreatePipeline(VkPipelineCache pipelineCache);
     void CreateHistogramBuffers(uint32_t count);
     void CreateDescriptorSets(const SceneRenderTargets& targets);
@@ -66,7 +68,7 @@ class VulkanExposureHistogramPass : public IScenePass
     VkDevice m_device = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_descriptorSets;
