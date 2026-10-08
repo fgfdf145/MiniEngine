@@ -481,9 +481,10 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
         if (display.hdrActive)
         {
             ImGui::TextDisabled(
-                "HDR10: peak %.0f cd/m^2, black %.3f, UI white %.0f (%s)",
+                "HDR10: peak %.0f cd/m^2, black %.3f, paper white %.0f, UI white %.0f (%s)",
                 output.maxLuminance,
                 output.minLuminance,
+                output.paperWhiteNits,
                 output.uiWhiteNits,
                 debug.display.calibrated ? "calibrated" : "display's figures");
         }

@@ -715,6 +715,7 @@ void VulkanRenderer::DrawFrame()
         display.hdrActive = m_swapchain->IsHdr();
         display.output = ResolveDisplayOutput(State().renderDebug.display, m_displayReport, display.hdrActive);
         display.output.uiWhiteNits = m_swapchainUiWhiteNits;
+        FollowUiWhite(State().renderDebug.display, display.output);
         State().editorUi.SetDisplayStatus(std::move(display));
     }
     // The render thread owns the viewport's and the minimap's textures; the UI names them by ID.
@@ -848,6 +849,7 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
     // ImGui's HDR shader was built with, so the scene and the UI agree on it.
     packet.display = ResolveDisplayOutput(State().renderDebug.display, m_displayReport, m_swapchain->IsHdr());
     packet.display.uiWhiteNits = m_swapchainUiWhiteNits;
+    FollowUiWhite(State().renderDebug.display, packet.display);
     packet.viewportExtent = viewportExtent;
     packet.displayExtent = {};
     if (State().fixedViewportExtent.has_value() || State().renderDebug.viewportResolution.fixed)
@@ -1943,10 +1945,11 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
         frame.calibrationView = renderDebug.calibrationView;
         ApplyHdrMetadata(frame.display);
     }
-    // HDR output shows more of the highlight's brightness directly, so it needs less glare.
+    // HDR output shows more of the highlight's brightness directly, so it needs less glare: the
+    // headroom is the peak over the paper white, as GT7's peak over its 250 cd/m^2.
     frame.glareFNumber = GlareFNumberFromEv100(
         camera.exposureEv100,
-        frame.display.hdr ? frame.display.maxLuminance : kGlareSdrPeakNits);
+        frame.display.hdr ? frame.display.maxLuminance * kGlareSdrPeakNits / frame.display.paperWhiteNits : kGlareSdrPeakNits);
     frame.taaHistory = view.taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, view.taaHistoryPreExposure);
     if (dlssEnabled)

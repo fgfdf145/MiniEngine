@@ -479,6 +479,24 @@ void DisplayCalibrationWindow::DrawPicture(EditorContext& context)
             m_picture = index;
         }
     }
+    if (context.state.display.hdrActive)
+    {
+        // The scene's paper white: by default where Windows shows SDR white, so the midtones are as
+        // bright as in SDR and only the highlights go further; 250 is GT7's absolute scale.
+        bool follow = m_work.paperWhiteNits <= 0.0f;
+        if (ImGui::Checkbox("Paper white follows Windows' SDR brightness", &follow))
+        {
+            m_work.paperWhiteNits = follow ? 0.0f : context.state.display.output.paperWhiteNits;
+        }
+        ImGui::BeginDisabled(follow);
+        float paperWhite = follow ? context.state.display.output.paperWhiteNits : m_work.paperWhiteNits;
+        ImGui::SetNextItemWidth(380.0f * UiScale());
+        if (ImGui::SliderFloat("Paper white", &paperWhite, kMinUiWhiteNits, kMaxUiWhiteNits, "%.0f cd/m^2") && !follow)
+        {
+            m_work.paperWhiteNits = paperWhite;
+        }
+        ImGui::EndDisabled();
+    }
     ImGui::SetNextItemWidth(380.0f * UiScale());
     ImGui::SliderFloat("Exposure", &m_work.exposureEv, -2.0f, 2.0f, "%+.1f EV");
     ImGui::SetNextItemWidth(380.0f * UiScale());
@@ -513,6 +531,7 @@ void DisplayCalibrationWindow::DrawReview(EditorContext& context)
             row("Maximum luminance (10 % window)", "%.0f cd/m^2", m_work.maxLuminance);
             row("Minimum luminance", "%.3f cd/m^2", m_work.minLuminance);
             row("UI white (SDR content brightness)", "%.0f cd/m^2", context.state.display.output.uiWhiteNits);
+            row("Paper white", "%.0f cd/m^2", m_work.paperWhiteNits > 0.0f ? m_work.paperWhiteNits : context.state.display.output.uiWhiteNits);
         }
         else
         {

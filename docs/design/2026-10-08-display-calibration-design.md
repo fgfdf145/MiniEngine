@@ -42,16 +42,22 @@ assistant (its online manual, Tips 01), and output that uses every value it sets
    white level, so the editor looks the same with HDR output on or off and beside other windows.
    The value is a specialization constant patched into the shader's SPIR-V; a change rebuilds the
    ImGui backend with the swapchain (rare: only when the Windows slider or the override moves).
-4. **HDR output path** (tonemap.frag): exposure and saturation, GT7's HDR curve for the calibrated
+4. **Paper white follows Windows too** (added after the user found HDR still darker than SDR): GT7
+   puts its SDR paper white at an absolute 250 cd/m^2, while Windows shows SDR content (and the
+   engine in SDR) at 480 here, so HDR midtones were 0.94 EV darker than the same scene in SDR. The
+   scene is now scaled by paper white / 250 before the curve, the paper white following the UI white
+   unless set (250 gives GT7's absolute scale), and glare's headroom is the peak over it. Measured:
+   HDR / SDR scene luminance 1.00-1.035 in every band from 20 to 480 cd/m^2; highlights reach 572.
+5. **HDR output path** (tonemap.frag): exposure and saturation, GT7's HDR curve for the calibrated
    max luminance, then the BT.2390 black-level lift in PQ, `E' = E + b (1 - E)^4` with
    `b = PQ(min luminance)`, so the darkest scene detail lands at the display's floor instead of in
    its crush, then divided by the UI white. The full-frame luminance and the peak go to the display
    as HDR metadata (`VK_EXT_hdr_metadata`: MaxCLL, MaxFALL, mastering min and max) where the driver
    offers it.
-5. **SDR output path**: exposure, saturation and GT7's SDR curve, then the signal remap
+6. **SDR output path**: exposure, saturation and GT7's SDR curve, then the signal remap
    `s' = black + s (white - black)` on the sRGB-encoded value: lowering white brings near-white
    detail back on a display that clips, raising black brings shadow detail out of one that crushes.
-6. **Patterns** come from the tonemap pass in place of the scene, in absolute nits for HDR (written
+7. **Patterns** come from the tonemap pass in place of the scene, in absolute nits for HDR (written
    relative to the UI white, which the ImGui shader undoes), with the editor fullscreen so the
    full-frame pattern covers the screen:
    - full frame: the whole screen at the trial level, a ring at 10 000 nits; raise until the ring
@@ -66,7 +72,7 @@ assistant (its online manual, Tips 01), and output that uses every value it sets
      64x paper white with colour patches, and a sky gradient with a sun disc), switched with Q / E
      as GT7 switches them with L1 / R1, all through the full output path.
    Trial levels step evenly in PQ (HDR) or signal (SDR), with the arrow keys or the slider.
-7. **Editor.** View > Display Calibration... and a button in Graphics Debug's Output section, which
+8. **Editor.** View > Display Calibration... and a button in Graphics Debug's Output section, which
    also shows what the display reports, what is in use, and the output mode. Cancel restores the
    previous values; Finish keeps them (saved with the engine settings).
 

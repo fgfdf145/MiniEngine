@@ -91,6 +91,7 @@ void TestDisplayCalibrationSurvivesTheSettingsFile()
     display.sdrWhite = 0.95f;
     display.sdrBlack = 0.03f;
     display.uiWhiteNits = 300.0f;
+    display.paperWhiteNits = 320.0f;
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_display_calibration_test.json";
     std::string error;
     Require(SaveEngineSettings(path, saved, error), ("the settings save: " + error).c_str());

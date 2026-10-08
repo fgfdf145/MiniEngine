@@ -62,6 +62,10 @@ struct DisplaySettings
     float sdrBlack = 0.0f;
     // Where UI white (SDR 1.0) shows in HDR, in cd/m^2; 0 follows the OS's SDR content brightness.
     float uiWhiteNits = 0.0f;
+    // Where the scene's paper white (GT7's 250 cd/m^2 SDR white) shows in HDR, in cd/m^2; 0 follows
+    // the UI white, so the scene's midtones are as bright as in SDR on this desktop and only the
+    // highlights go further. 250 is GT7's absolute scale.
+    float paperWhiteNits = 0.0f;
 };
 
 // What the calibration screen shows this frame (never saved).
@@ -93,6 +97,8 @@ struct DisplayOutput
     float maxFullFrameLuminance = 1000.0f;
     float minLuminance = 0.0f;
     float uiWhiteNits = 203.0f;
+    // The scene's paper white in HDR (see DisplaySettings::paperWhiteNits).
+    float paperWhiteNits = 250.0f;
     float exposureEv = 0.0f;
     float saturation = 1.0f;
     float sdrWhite = 1.0f;
@@ -107,17 +113,25 @@ constexpr float kMaxCalibrationPeakNits = 10000.0f;
 constexpr float kMaxCalibrationBlackNits = 5.0f;
 constexpr float kMinUiWhiteNits = 80.0f;
 constexpr float kMaxUiWhiteNits = 1000.0f;
+// GT7's SDR paper white: the scene's white at an HDR paper white of this many cd/m^2 is GT7's own.
+constexpr float kGt7PaperWhiteNits = 250.0f;
 
 // Whether to present HDR10. A scripted run (--frames, --state) on Auto stays SDR, so its captures
 // do not depend on the desktop it ran on.
 bool WantsHdrOutput(const DisplaySettings& settings, const DisplayReport& report, bool scriptedRun);
 
 // The calibrated values, or what the display reports until there are some, held to their ranges;
-// hdr is whether the swapchain is HDR10.
+// hdr is whether the swapchain is HDR10. A paper white that follows the UI white takes the resolved
+// one; a caller that overrides uiWhiteNits afterwards calls FollowUiWhite again.
 DisplayOutput ResolveDisplayOutput(const DisplaySettings& settings, const DisplayReport& report, bool hdr);
 
 // SMPTE ST 2084: cd/m^2 to the PQ signal in [0, 1] and back. The calibration's levels step evenly
 // in PQ, as the eye sees them.
 float PqFromNits(float nits);
+// Sets output.paperWhiteNits to output.uiWhiteNits when settings say it follows the UI white.
+void FollowUiWhite(const DisplaySettings& settings, DisplayOutput& output);
+// The scale HDR output applies to the scene before GT7's curve so its paper white lands at
+// output.paperWhiteNits (1 in SDR).
+float HdrPaperWhiteScale(const DisplayOutput& output);
 float NitsFromPq(float pq);
 }

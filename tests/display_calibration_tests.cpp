@@ -170,6 +170,8 @@ void ResolveUsesCalibrationThenReport()
     DisplayOutput output = ResolveDisplayOutput(settings, report, true);
     Require(output.hdr && output.maxLuminance == 600.0f && output.maxFullFrameLuminance == 400.0f && output.minLuminance == 0.005f, "the display's figures");
     Require(output.uiWhiteNits == 480.0f, "UI white is Windows' SDR content brightness");
+    Require(output.paperWhiteNits == 480.0f, "the paper white follows the UI white");
+    Require(std::abs(HdrPaperWhiteScale(output) - 480.0f / 250.0f) < 1e-6f, "the scene is lifted from GT7's 250 to it");
 
     settings.calibrated = true;
     settings.maxLuminance = 750.0f;
@@ -179,6 +181,13 @@ void ResolveUsesCalibrationThenReport()
     output = ResolveDisplayOutput(settings, report, true);
     Require(output.maxLuminance == 750.0f && output.maxFullFrameLuminance == 350.0f && output.minLuminance == 0.02f, "the calibration");
     Require(output.uiWhiteNits == 250.0f, "the override");
+    Require(output.paperWhiteNits == 250.0f, "the paper white follows the overridden UI white");
+    DisplaySettings gt7 = settings;
+    gt7.paperWhiteNits = 250.0f;
+    DisplayOutput absolute = ResolveDisplayOutput(gt7, report, true);
+    absolute.uiWhiteNits = 480.0f;
+    FollowUiWhite(gt7, absolute);
+    Require(absolute.paperWhiteNits == 250.0f && HdrPaperWhiteScale(absolute) == 1.0f, "250 is GT7's own scale, whatever the UI white");
 
     settings.maxLuminance = 50000.0f;
     settings.minLuminance = -1.0f;
@@ -187,6 +196,7 @@ void ResolveUsesCalibrationThenReport()
     output = ResolveDisplayOutput(settings, report, false);
     Require(output.maxLuminance == kMaxCalibrationPeakNits && output.minLuminance == 0.0f, "luminance ranges");
     Require(output.sdrWhite == 0.5f && output.saturation == 2.0f, "SDR and saturation ranges");
+    Require(HdrPaperWhiteScale(output) == 1.0f, "no paper white lift in SDR");
 
     const DisplayOutput unknown = ResolveDisplayOutput(DisplaySettings{}, DisplayReport{}, true);
     Require(unknown.maxLuminance == 1000.0f && unknown.uiWhiteNits == kDefaultUiWhiteNits, "nothing reported: 1000 cd/m^2 and BT.2408's white");

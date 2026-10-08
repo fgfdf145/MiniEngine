@@ -194,7 +194,8 @@ void VulkanTonemapPass::Record(
     // The Khronos reference view renders as the Sample Viewer does: no calibration in the way.
     if (!frame.khronosReference)
     {
-        constants.exposureScale = std::exp2(frame.display.exposureEv);
+        // GT7's Exposure, and in HDR the paper white's lift over GT7's 250 cd/m^2.
+        constants.exposureScale = std::exp2(frame.display.exposureEv) * HdrPaperWhiteScale(frame.display);
         constants.saturation = frame.display.saturation;
         constants.sdrWhite = frame.display.sdrWhite;
         constants.sdrBlack = frame.display.sdrBlack;

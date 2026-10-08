@@ -58,6 +58,9 @@ DisplayOutput ResolveDisplayOutput(const DisplaySettings& settings, const Displa
         output.uiWhiteNits = report.sdrWhiteNits;
     }
     output.uiWhiteNits = std::clamp(output.uiWhiteNits, kMinUiWhiteNits, kMaxUiWhiteNits);
+    output.paperWhiteNits = settings.paperWhiteNits > 0.0f ? std::clamp(settings.paperWhiteNits, kMinUiWhiteNits, kMaxUiWhiteNits)
+                                                           : kGt7PaperWhiteNits;
+    FollowUiWhite(settings, output);
 
     output.exposureEv = std::clamp(settings.exposureEv, -4.0f, 4.0f);
     output.saturation = std::clamp(settings.saturation, 0.0f, 2.0f);
@@ -65,6 +68,19 @@ DisplayOutput ResolveDisplayOutput(const DisplaySettings& settings, const Displa
     output.sdrWhite = std::clamp(settings.sdrWhite, 0.5f, 1.0f);
     output.sdrBlack = std::clamp(settings.sdrBlack, 0.0f, 0.25f);
     return output;
+}
+
+void FollowUiWhite(const DisplaySettings& settings, DisplayOutput& output)
+{
+    if (settings.paperWhiteNits <= 0.0f)
+    {
+        output.paperWhiteNits = output.uiWhiteNits;
+    }
+}
+
+float HdrPaperWhiteScale(const DisplayOutput& output)
+{
+    return output.hdr ? output.paperWhiteNits / kGt7PaperWhiteNits : 1.0f;
 }
 
 float PqFromNits(float nits)
