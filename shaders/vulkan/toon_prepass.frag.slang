@@ -25,7 +25,7 @@ FragmentOutput main(FragmentInput input)
     FragmentOutput output;
     ToonMaterial material = toonMaterials[input.fragToonIndex];
     float3 toCamera = normalize(ubo.cameraWorldPosition.xyz - input.fragWorldPosition);
-    float baseAlpha = toonBaseMap.SampleBias(input.fragTexCoord, MATERIAL_MIP_BIAS).a * material.baseColor.a;
+    float baseAlpha = toonBaseMap.SampleBias(toonBaseMapSampler, input.fragTexCoord, MATERIAL_MIP_BIAS).a * material.baseColor.a;
     ToonAlpha(material, baseAlpha, input.fragTexCoord, toCamera, 0.0, ToonHas(material, TOON_FEATURE_ALPHA_TEST));
 
     float faceMask = ToonFaceMask(material, input.fragTexCoord);

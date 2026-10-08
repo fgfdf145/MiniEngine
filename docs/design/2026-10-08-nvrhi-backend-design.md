@@ -229,6 +229,17 @@ LUT、空气透视体积、云噪声三张、云阴影、解析后的云，环�
 采样器表）照同样的路子：先让它们的图像平时都在 `SHADER_READ_ONLY_OPTIMAL`，再拆采样器，再换成 NVRHI 的
 binding set。之后才是阶段 3 的逐 pass 迁移。
 
+**B3a 完成（2026-10-09）**：材质集（几何、前向、卡通、路径追踪层 pass 的 set 1，级联和局部阴影 pass 的 set 0）
+拆了采样器，仍是原生的：32 个纹理在 b，各自的采样器在 b + 64（`kMaterialSamplerBindingOffset`、
+`MATERIAL_SAMPLER`），`VulkanMaterialSetCache` 每个 combined 写拆成两个。着色器：`gbuffer.frag`、
+`triangle.frag`、`material_layers`、`detail_layers`、`toon_common`（及 `toon.frag/vert`、`toon_prepass.frag`
+里的直接采样）、`shadow.frag`；`MaterialTexture(t, uv)` 展开成 `t.SampleBias(t##Sampler, uv, bias)`。
+材质集换成 NVRHI binding set 先不做：NVRHI 每个 binding set 自建一个描述符池，而这个缓存为大地图的流式内容
+专门做了成批的池（每池 1024 个集），照搬可能变慢；等阶段 3 看是走 NVRHI 的 descriptor table 还是别的办法。
+
+验证：A/B 9 个场景逐像素相同，validation 无报告（卡通管线在启动时按新布局创建，也无报告；但这里没有
+卡通场景的资产，卡通的画面没有对比）；ctest 与之前相同。
+
 ### 验证工具
 
 `tools/render_ab/`：`ab.py`（A/B 截图，`AB_MODE=exe` 对比 `out/baseline_src` 里编的基线 exe；基线 = 改动前的

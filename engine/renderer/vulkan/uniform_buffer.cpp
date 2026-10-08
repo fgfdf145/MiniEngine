@@ -328,14 +328,19 @@ nvrhi::IBindingLayout* VulkanFrameDescriptorSetLayout::Get() const
 VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, kMaterialTextureBindingCount> bindings{};
-    for (uint32_t bindingIndex = 0; bindingIndex < static_cast<uint32_t>(bindings.size()); ++bindingIndex)
+    // Each texture (binding b) and its sampler (b + kMaterialSamplerBindingOffset).
+    std::array<VkDescriptorSetLayoutBinding, 2 * kMaterialTextureBindingCount> bindings{};
+    for (uint32_t bindingIndex = 0; bindingIndex < kMaterialTextureBindingCount; ++bindingIndex)
     {
-        bindings[bindingIndex].binding = bindingIndex;
-        bindings[bindingIndex].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[bindingIndex].descriptorCount = 1;
-        // The vertex stage too: a toon outline reads its width and the face mask (toon.vert).
-        bindings[bindingIndex].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        for (uint32_t sampler = 0; sampler < 2; ++sampler)
+        {
+            VkDescriptorSetLayoutBinding& binding = bindings[2 * bindingIndex + sampler];
+            binding.binding = bindingIndex + sampler * kMaterialSamplerBindingOffset;
+            binding.descriptorType = sampler == 0 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLER;
+            binding.descriptorCount = 1;
+            // The vertex stage too: a toon outline reads its width and the face mask (toon.vert).
+            binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};

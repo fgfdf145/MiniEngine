@@ -120,10 +120,13 @@ struct MaterialTextureBinding
     std::array<TextureDescriptorBinding, kDetailLayerCount> detailLayers{};
 };
 
-// Set 1's combined image samplers, in binding order: the six primary maps, layer B's six, the
-// blend mask, the fourteen layer maps (material_layers.glsl), then the detail mask and the four
-// detail layers (detail_layers.glsl).
+// Set 1's textures, in binding order: the six primary maps, layer B's six, the blend mask, the
+// fourteen layer maps (material_layers.slang), then the detail mask and the four detail layers
+// (detail_layers.slang).
 inline constexpr uint32_t kMaterialTextureBindingCount = 32;
+// Each one's sampler is a binding of its own, this far on (MATERIAL_SAMPLER in
+// shaders/vulkan/scene_common.slang): NVRHI's binding sets have no combined image sampler.
+inline constexpr uint32_t kMaterialSamplerBindingOffset = 64;
 
 // Per-light GPU data, 5 x vec4 = 80 bytes, matching SceneLightData in shaders/vulkan/scene_common.glsl.
 // positionAndRange : xyz = world position, w = effective range (metres)
@@ -324,8 +327,8 @@ class VulkanFrameDescriptorSetLayout
     nvrhi::BindingLayoutHandle m_layout;
 };
 
-// The material descriptor set layout is fixed by the shader (13 combined image samplers) and
-// never varies with scene content or swapchain size. It is owned separately from
+// The material descriptor set layout is fixed by the shader (kMaterialTextureBindingCount textures
+// and their samplers) and never varies with scene content or swapchain size. It is owned separately from
 // VulkanUniformBuffer so that rebuilding descriptor sets for a new texture set — which happens on
 // every model import — does not invalidate the pipelines built against this layout.
 class VulkanMaterialDescriptorSetLayout

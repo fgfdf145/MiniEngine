@@ -14,9 +14,12 @@ struct ShadowConstants
 [[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData;
 
 // The material set, bound at set 0 here: this pass has no camera set.
-[[vk::binding(0, 0)]] Sampler2D baseColorTexture;
-[[vk::binding(6, 0)]] Sampler2D secondaryBaseColorTexture;
-[[vk::binding(12, 0)]] Sampler2D blendMaskTexture;
+[[vk::binding(0, 0)]] Texture2D baseColorTexture;
+[[vk::binding(64, 0)]] SamplerState baseColorTextureSampler;
+[[vk::binding(6, 0)]] Texture2D secondaryBaseColorTexture;
+[[vk::binding(70, 0)]] SamplerState secondaryBaseColorTextureSampler;
+[[vk::binding(12, 0)]] Texture2D blendMaskTexture;
+[[vk::binding(76, 0)]] SamplerState blendMaskTextureSampler;
 
 [shader("fragment")]
 void main([[vk::location(0)]] float2 fragTexCoord, [[vk::location(1)]] float2 fragTexCoord1)
@@ -24,13 +27,13 @@ void main([[vk::location(0)]] float2 fragTexCoord, [[vk::location(1)]] float2 fr
     // Layer B and the mask sample untransformed, as in the main passes.
     float3 uv = float3(shadowData.baseColorTransformRow0.w > 0.5 ? fragTexCoord1 : fragTexCoord, 1.0);
     float2 baseColorUv = float2(dot(shadowData.baseColorTransformRow0.xyz, uv), dot(shadowData.baseColorTransformRow1.xyz, uv));
-    float blendMask = blendMaskTexture.Sample(fragTexCoord).r;
+    float blendMask = blendMaskTexture.Sample(blendMaskTextureSampler, fragTexCoord).r;
     float blendWeight = clamp(
         lerp(0.0, shadowData.nodeGraphFactors.y, clamp(shadowData.nodeGraphFactors.x, 0.0, 1.0)) * blendMask,
         0.0, 1.0);
     float alpha = lerp(
-                      baseColorTexture.Sample(baseColorUv).a,
-                      secondaryBaseColorTexture.Sample(fragTexCoord).a,
+                      baseColorTexture.Sample(baseColorTextureSampler, baseColorUv).a,
+                      secondaryBaseColorTexture.Sample(secondaryBaseColorTextureSampler, fragTexCoord).a,
                       blendWeight) *
                   shadowData.baseColorFactor.a;
     if (alpha < shadowData.alphaCutoffAndPadding.x)
