@@ -43,6 +43,9 @@ constexpr float kMinimapSizePixels = 220.0f;
 constexpr float kMinimapMarginPixels = 16.0f;
 // How far the minimap reaches from its centre to its edges' midpoints.
 constexpr float kMinimapRadiusMetres = 250.0f;
+// A model dragged in from the assets lands at most this far from the camera: past it, or
+// with no ground under the cursor, it stays on the cursor ray at this distance.
+constexpr float kMaxModelDropDistanceMetres = 30.0f;
 
 struct ProjectedEntityCenter
 {
@@ -1179,16 +1182,16 @@ glm::vec3 UnprojectToGroundPlane(
     const glm::vec3 farWorld = glm::vec3(farClip) / farClip.w;
     const glm::vec3 rayDir = glm::normalize(farWorld - nearWorld);
 
+    float distance = kMaxModelDropDistanceMetres;
     if (std::abs(rayDir.y) > 0.0001f)
     {
         const float t = -nearWorld.y / rayDir.y;
-        if (t > 0.0f && t < 10000.0f)
+        if (t > 0.0f)
         {
-            return nearWorld + rayDir * t;
+            distance = std::min(t, kMaxModelDropDistanceMetres);
         }
     }
-
-    return camera.position + rayDir * 10.0f;
+    return nearWorld + rayDir * distance;
 }
 }
 
