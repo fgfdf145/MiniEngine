@@ -4,6 +4,7 @@
 #include "dds_decoder.h"
 #include "kn5_reader.h"
 #include "texture_loader.h"
+#include "tyre_library.h"
 
 #include <engine/core/log/log.h>
 #include <engine/core/text/ascii.h>
@@ -385,6 +386,10 @@ Json CarSpecToJson(const VehicleCarSpec& spec)
     if (spec.defaultTyreCompound.has_value())
     {
         out["defaultTyreCompound"] = *spec.defaultTyreCompound;
+    }
+    if (Json tyres = TyreLibrary::CarTyresToJson(spec); !tyres.is_null())
+    {
+        out["tyres"] = std::move(tyres);
     }
     if (!spec.turbos.empty())
     {
@@ -3001,8 +3006,10 @@ Kn5ImportReport ConvertToGltf(
     if (!layout)
     {
         std::string problem;
-        if (const std::optional<VehicleCarSpec> spec = AcCarData::ReadCarFolder(source.parent_path(), &problem))
+        if (std::optional<VehicleCarSpec> spec = AcCarData::ReadCarFolder(source.parent_path(), &problem))
         {
+            // Its tyres go into the shared library, under the game's folder name for the car.
+            TyreLibrary::AdoptCarTyres(*spec, source.parent_path().filename().string());
             builder.SetVehicle(*spec);
             report.carData = DescribeCarSpec(*spec);
         }

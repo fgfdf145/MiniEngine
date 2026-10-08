@@ -161,7 +161,11 @@ void Window::CreateNativeWindow()
     // Scripted captures (--frames) render offscreen and read the viewport back; with
     // MINIENGINE_HIDDEN_WINDOW=1 their window is never shown, so it cannot take the focus from
     // whatever the desktop is doing.
-    if (const char* hidden = std::getenv("MINIENGINE_HIDDEN_WINDOW"); hidden != nullptr && hidden[0] == '1')
+    const char* hiddenRequest = std::getenv("MINIENGINE_HIDDEN_WINDOW");
+    const bool hidden = hiddenRequest != nullptr && hiddenRequest[0] == '1';
+    // A window bound for another virtual desktop is created hidden and shown once it has moved there.
+    const bool placeOnDesktop = platform::window::HasVirtualDesktopRequest();
+    if (hidden || placeOnDesktop)
     {
         flags |= SDL_WINDOW_HIDDEN;
     }
@@ -187,6 +191,10 @@ void Window::CreateNativeWindow()
     }
 
     SDL_SetWindowPosition(m_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    if (placeOnDesktop)
+    {
+        platform::window::ShowOnRequestedVirtualDesktop(m_window, hidden);
+    }
 
     LOG_INFO(
         "SDL window created: {}x{} ({})",

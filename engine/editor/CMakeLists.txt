@@ -38,6 +38,8 @@ add_library(engine_editor
     services/vehicle_gear_shift.h
     services/vehicle_haptics.cpp
     services/vehicle_haptics.h
+    services/vehicle_tyre_fitment.cpp
+    services/vehicle_tyre_fitment.h
     services/vehicle_steering_assist.cpp
     services/vehicle_steering_assist.h
     services/world_streaming_service.cpp

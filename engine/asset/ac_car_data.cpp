@@ -544,14 +544,28 @@ std::optional<VehicleSuspensionAxle> ReadSuspensionAxle(const IniView& suspensio
     return out;
 }
 
-// The default compound's vertical tyre: RADIUS, RATE and DAMP of tyres.ini's [FRONT] or [REAR].
+// The default compound's vertical tyre: RADIUS, RATE and DAMP of tyres.ini's [FRONT] or [REAR] for
+// compound 0, [FRONT_n] or [REAR_n] for the one [COMPOUND_DEFAULT] INDEX names (the grip is read from
+// the same compound). The RX-7 Tuned's default semislicks are 4% softer than its compound 0, the R34's
+// 12% softer.
 void ReadVerticalTyre(const AcdArchive::Files& files, const std::string& axle, VehicleSuspensionAxle& out)
 {
     const AcCarData::Ini ini = ParseFile(files, "tyres.ini");
     const IniView tyres(&ini);
-    out.tyreRadius = tyres.Number(axle, "RADIUS").value_or(0.0f);
-    out.tyreRate = tyres.Number(axle, "RATE").value_or(0.0f);
-    out.tyreDamping = tyres.Number(axle, "DAMP").value_or(0.0f);
+    // An index past the last compound falls to the last, as ReadTyres clamps it.
+    int index = static_cast<int>(tyres.Number("COMPOUND_DEFAULT", "INDEX").value_or(0.0f));
+    std::string section = axle;
+    for (; index > 0; --index)
+    {
+        if (tyres.HasSection(axle + "_" + std::to_string(index)))
+        {
+            section = axle + "_" + std::to_string(index);
+            break;
+        }
+    }
+    out.tyreRadius = tyres.Number(section, "RADIUS").value_or(0.0f);
+    out.tyreRate = tyres.Number(section, "RATE").value_or(0.0f);
+    out.tyreDamping = tyres.Number(section, "DAMP").value_or(0.0f);
 }
 
 void ReadSuspension(const AcdArchive::Files& files, VehicleCarSpec& spec)
@@ -647,24 +661,6 @@ void ReadSection(
     }
 }
 
-// The friction coefficient of a tyre at a wheel load along one direction: the reference friction at the
-// reference load scaled by the load raised to the sensitivity exponent less one, or the file's plain
-// coefficients without those.
-float GripAtLoad(const VehicleTyreData& tyre, const char* reference, const char* exponent, const char* base, const char* slope, float loadNewtons)
-{
-    const auto value = [&](const char* key) -> float
-    {
-        const auto found = tyre.values.find(key);
-        return found == tyre.values.end() ? 0.0f : found->second;
-    };
-    const float referenceLoad = value("FZ0");
-    if (value(reference) > 0.0f && referenceLoad > 0.0f && value(exponent) > 0.0f && loadNewtons > 0.0f)
-    {
-        return value(reference) * std::pow(loadNewtons / referenceLoad, value(exponent) - 1.0f);
-    }
-    return value(base) + value(slope);
-}
-
 // The physics engine's tyre from a compound's axle at the load one wheel carries at rest.
 VehicleTyreSettings TyreSettingsFor(const VehicleTyreData& tyre, float staticLoadNewtons)
 {
@@ -674,8 +670,9 @@ VehicleTyreSettings TyreSettingsFor(const VehicleTyreData& tyre, float staticLoa
         return found == tyre.values.end() ? 0.0f : found->second;
     };
     VehicleTyreSettings settings;
-    settings.longitudinalGrip = GripAtLoad(tyre, "DX_REF", "LS_EXPX", "DX0", "DX1", staticLoadNewtons);
-    settings.lateralGrip = GripAtLoad(tyre, "DY_REF", "LS_EXPY", "DY0", "DY1", staticLoadNewtons);
+    const tyre::TyreSpec spec = tyre::TyreSpecFromAc(tyre.name, tyre.shortName, tyre.values, tyre.curves);
+    settings.longitudinalGrip = tyre::LongitudinalGripAtLoad(spec, staticLoadNewtons);
+    settings.lateralGrip = tyre::LateralGripAtLoad(spec, staticLoadNewtons);
     const float limitAngle = value("FRICTION_LIMIT_ANGLE");
     if (limitAngle > 0.0f)
     {
@@ -716,6 +713,10 @@ void ReadTyres(const AcdArchive::Files& files, VehicleCarSpec& spec)
             data.shortName = Trim(tyres.Text(axle + suffix, "SHORT_NAME").value_or(""));
             ReadSection(files, ini, axle + suffix, "", data);
             ReadSection(files, ini, "THERMAL_" + axle + suffix, "THERMAL_", data);
+            // [ADDITIONAL1] and [VIRTUALKM] hold for every compound (PRESSURE_TEMPERATURE_GAIN, CAMBER_TEMP_SPREAD_K,
+            // BLANKETS_TEMP; USE_LOAD).
+            ReadSection(files, ini, "ADDITIONAL1", "ADDITIONAL1_", data);
+            ReadSection(files, ini, "VIRTUALKM", "VIRTUALKM_", data);
         }
         spec.tyreCompounds.push_back(std::move(compound));
     }

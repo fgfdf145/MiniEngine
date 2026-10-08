@@ -64,6 +64,8 @@
     texture_loader.h
     texture_preparation.cpp
     texture_preparation.h
+    tyre_library.cpp
+    tyre_library.h
 )
 miniengine_group_target_sources(engine_asset)
 
@@ -101,6 +103,7 @@ target_link_libraries(engine_asset
     PUBLIC
         engine_core
         engine_scene
+        engine_tyre
         glm::glm
         imgui::imgui
         yaml-cpp::yaml-cpp

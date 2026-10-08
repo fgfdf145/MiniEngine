@@ -502,11 +502,9 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
     DragFloatInRange("Exposure (EV)##toon", &debug.toonExposureEv, -4.0f, 4.0f, "%+.2f");
 
     ImGui::SeparatorText("Output");
-    // HDR10 when the display offers it (GT7's HDR curve); the UI keeps its SDR brightness.
-    ImGui::Checkbox("HDR output", &debug.hdrOutput);
-    ImGui::BeginDisabled(!debug.hdrOutput);
-    DragFloatInRange("Display peak (nits)", &debug.hdrPeakNits, 250.0f, 10000.0f, "%.0f");
-    ImGui::EndDisabled();
+    // HDR output (hdr_output / hdr_peak_nits) is not offered here: on NVIDIA's Vulkan driver an HDR
+    // swapchain presents unevenly, so it stays off until that is solved. The settings still apply
+    // when set in the settings file.
     // Also Render > Tone Mapping. The Khronos reference view always uses PBR Neutral.
     static constexpr std::array<const char*, 3> kToneMapperNames = {"GT7", "PBR Neutral", "None (clipped)"};
     int toneMapper = static_cast<int>(debug.toneMapper);

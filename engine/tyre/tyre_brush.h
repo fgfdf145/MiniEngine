@@ -151,6 +151,13 @@ struct BrushTyreInput
     double frictionCap = 0.0;
     double slidingShare = 0.0;
     double extraRollingResistance = 0.0;
+    // Scales on the friction along and across the wheel (x, y), on top of frictionScale and before the
+    // road's cap: what the tyre's own data makes of camber, sliding speed and braking.
+    std::array<double, 2> axisFrictionScale{1.0, 1.0};
+    // How far the spinning tyre has grown past its unloaded radius (m): its rolling radius grows by it.
+    double radiusGrowth = 0.0;
+    // The tyre's vertical rate now (N/m, its pressure's), which sizes the patch; 0 keeps the parameters'.
+    double verticalRate = 0.0;
 };
 
 struct BrushTyreOutput

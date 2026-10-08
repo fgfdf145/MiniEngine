@@ -12,9 +12,11 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <numbers>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -782,8 +784,8 @@ void TestWheelStateReportsTyrePhysics()
     AddGroundMesh(world);
     VehicleSettings tuning;
     tuning.massKg = 1400.0f;
-    tuning.frontTyres = {1.4f, 1.6f, 0.1f, 6.0f, 0.0f, 0.0f};
-    tuning.rearTyres = tuning.frontTyres;
+    SetAxleTyres(tuning, true, {1.4f, 1.6f, 0.1f, 6.0f, 0.0f, 0.0f});
+    SetAxleTyres(tuning, false, tuning.tyres[0]);
     const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning);
     const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
     Simulate(world, 3.0f);
@@ -901,6 +903,181 @@ void TestTurboSpoolsWithItsLag()
 
 // The car's data for its differential's lock on the overrun and preload, and its tyres' load sensitivity
 // (the starting compound's LS_EXPX and LS_EXPY, their mean, or the one given).
+// What the tyre's own data does per step, as Assetto Corsa's tyre model V10 does it, with the RX-7 Tuned's
+// semislicks (front): CAMBER_GAIN 0.146, DCAMBER 1.2 and -13, SPEED_SENSITIVITY 0.003447, BRAKE_DX_MOD 0.05,
+// ROLLING_RESISTANCE 12, 0.001052 and 5065, RADIUS_ANGULAR_K 0.01 mm, FRICTION_LIMIT_ANGLE 7.62, FZ0 2860.
+void TestTyreDataTermsFollowTheGame()
+{
+    VehicleTyreSettings tyre;
+    tyre.peakSlipAngleDegrees = 7.62f;
+    tyre.camberGain = 0.146f;
+    tyre.dcamber0 = 1.2f;
+    tyre.dcamber1 = -13.0f;
+    tyre.speedSensitivity = 0.003447f;
+    tyre.brakeLongitudinalMod = 0.05f;
+    tyre.rollingResistance0 = 12.0f;
+    tyre.rollingResistance1 = 0.001052f;
+    tyre.rollingResistanceSlip = 5065.0f;
+    tyre.radiusGrowth = 0.01f * 0.001f;
+    tyre.referenceLoad = 2860.0f;
+    tyre.flexGain = 0.0295f;
+    const float radius = 0.312f;
+    const auto motion = [&](float vx, float vy, float treadSpeed, float camber)
+    {
+        VehicleTyreMotion m;
+        m.forwardVelocity = vx;
+        m.lateralVelocity = vy;
+        m.wheelSpeed = treadSpeed / radius;
+        m.radius = radius;
+        m.camber = camber;
+        m.load = 2860.0f;
+        return m;
+    };
+
+    // Nothing in the data, nothing changes.
+    {
+        const VehicleTyreStepTerms none = ComputeTyreStepTerms(VehicleTyreSettings{}, motion(20.0f, 1.0f, 18.0f, 0.05f));
+        Require(none.lateralVelocity == 1.0f && none.axisFrictionScale == std::array<float, 2>{1.0f, 1.0f} && none.extraRollingResistance == 0.0f &&
+                    none.radiusGrowth == 0.0f,
+                "a tyre without the game's data is left alone");
+    }
+    // Camber's thrust as a slip angle: 0.05 rad to the right on a straight line is 0.146 sin(0.05) of slip angle.
+    {
+        const VehicleTyreStepTerms terms = ComputeTyreStepTerms(tyre, motion(20.0f, 0.0f, 20.0f, 0.05f));
+        RequireNear(terms.lateralVelocity, 20.0f * std::tan(0.146f * std::sin(0.05f)), 1e-5f, "camber thrust as a slip angle of 0.146 sin(camber)");
+    }
+    // The lateral grip by camber: best leaning with the force by DCAMBER_0 / (2 DCAMBER_1) = 0.04615 rad.
+    {
+        const float best = 1.2f / (2.0f * 13.0f);
+        const float into = 1.0f / (1.0f + 1.2f * -best + 13.0f * best * best);
+        const float away = 1.0f / (1.0f + 1.2f * best + 13.0f * best * best);
+        // Sliding to the left (the road pushes right) and leaning right: with the force. (Without the sliding
+        // speed's share, checked below.)
+        VehicleTyreSettings camberOnly = tyre;
+        camberOnly.speedSensitivity = 0.0f;
+        const VehicleTyreStepTerms with = ComputeTyreStepTerms(camberOnly, motion(20.0f, 2.0f, 20.0f, best));
+        const VehicleTyreStepTerms against = ComputeTyreStepTerms(camberOnly, motion(20.0f, 2.0f, 20.0f, -best));
+        RequireNear(with.axisFrictionScale[1], into, 1e-5f, "leaning with the force gains 2.8 %: " + std::to_string(with.axisFrictionScale[1]));
+        RequireNear(against.axisFrictionScale[1], away, 1e-5f, "leaning against it loses 7.7 %: " + std::to_string(against.axisFrictionScale[1]));
+        Require(with.axisFrictionScale[0] == 1.0f, "camber leaves the longitudinal grip alone");
+        RequireNear(into, 1.0285f, 1e-4f, "the peak's gain");
+    }
+    // Sliding speed: 3 m/s sideways and 4 m/s of tread spinning ahead of the ground take both grips over 1 + 5 SS.
+    {
+        tyre.camberGain = 0.0f;
+        tyre.dcamber0 = tyre.dcamber1 = 0.0f;
+        const VehicleTyreStepTerms terms = ComputeTyreStepTerms(tyre, motion(20.0f, 3.0f, 24.0f, 0.0f));
+        const float scale = 1.0f / (1.0f + 0.003447f * 5.0f);
+        RequireNear(terms.axisFrictionScale[0], scale, 1e-6f, "the longitudinal grip over 1 + SS v");
+        RequireNear(terms.axisFrictionScale[1], scale, 1e-6f, "and the lateral");
+        // Braking: the tread slower than the ground, BRAKE_DX_MOD on the longitudinal grip.
+        const VehicleTyreStepTerms braking = ComputeTyreStepTerms(tyre, motion(20.0f, 0.0f, 16.0f, 0.0f));
+        RequireNear(braking.axisFrictionScale[0], 1.05f / (1.0f + 0.003447f * 4.0f), 1e-6f, "braking takes BRAKE_DX_MOD");
+        RequireNear(braking.axisFrictionScale[1], 1.0f / (1.0f + 0.003447f * 4.0f), 1e-6f, "on the longitudinal grip alone");
+    }
+    // Rolling resistance: 0.012 (the brush tyre's own) plus 0.001052 per mille of the tread's speed squared; and
+    // sliding at the peak slip and beyond, all of it 6.065 times.
+    {
+        tyre.speedSensitivity = 0.0f;
+        const float speed = 30.0f;
+        const VehicleTyreStepTerms rolling = ComputeTyreStepTerms(tyre, motion(speed, 0.0f, speed, 0.0f));
+        const float grown = radius + 0.00001f * speed / radius;
+        const float treadSpeed = grown * speed / radius;
+        RequireNear(rolling.radiusGrowth, 0.00001f * speed / radius, 1e-9f, "the tyre grows 0.01 mm per rad/s");
+        RequireNear(rolling.extraRollingResistance, 0.001f * 0.001052f * treadSpeed * treadSpeed, 1e-7f, "the speed's share of the rolling resistance");
+        const float peak = std::tan(7.62f * std::numbers::pi_v<float> / 180.0f);
+        const VehicleTyreStepTerms sliding = ComputeTyreStepTerms(tyre, motion(speed, speed * peak * 2.0f, speed, 0.0f));
+        const float base = 0.001f * (12.0f + 0.001052f * treadSpeed * treadSpeed);
+        RequireNear(sliding.extraRollingResistance, base * (1.0f + 5.065f) - 0.012f, 1e-5f, "past the peak slip, 6 times the rolling resistance");
+        const VehicleTyreStepTerms half = ComputeTyreStepTerms(tyre, motion(speed, speed * peak * 0.5f, speed, 0.0f));
+        RequireNear(half.extraRollingResistance, base * (1.0f + 5.065f * 0.5f) - 0.012f, 1e-5f, "at half the peak slip, by half");
+        // Below 20 rad/s the slip adds nothing, below 1 rad/s nothing at all.
+        const VehicleTyreStepTerms slow = ComputeTyreStepTerms(tyre, motion(5.0f, 5.0f * peak * 2.0f, 5.0f, 0.0f));
+        RequireNear(slow.extraRollingResistance, 0.001f * 0.001052f * 25.0f, 1e-6f, "slow, only the speed's share");
+        Require(ComputeTyreStepTerms(tyre, motion(0.2f, 0.0f, 0.2f, 0.0f)).extraRollingResistance == 0.0f, "nearly stopped, ROLLING_RESISTANCE_0 alone");
+    }
+}
+
+// Tyre temperatures in a driven car: the RX-7's semislicks start at the air's 26 C at their cold pressure with the
+// grip the curve and the pressure leave them, warm as the car drives and slides, and their pressure rises; off,
+// nothing is simulated and the tyres keep their best grip.
+void TestTyreTemperaturesFollowTheDrive()
+{
+    VehicleTyreSettings tyre{1.30f, 1.28f, 0.13f, 7.62f, 0.86f, 1.36f};
+    tyre.lateralReference = 1.28f;
+    tyre.referenceLoad = 2860.0f;
+    tyre.lateralLoadExponent = 0.8334f;
+    tyre.pressureGripGain = 0.0045f;
+    tyre.pressureSpringGain = 8111.0f;
+    tyre.thermal.surfaceTransfer = 0.0150;
+    tyre.thermal.patchTransfer = 0.00027;
+    tyre.thermal.coreTransfer = 0.00015;
+    tyre.thermal.internalCoreTransfer = 0.0029;
+    tyre.thermal.frictionK = 0.06446;
+    tyre.thermal.rollingK = 0.18;
+    tyre.thermal.surfaceRollingK = 0.96443;
+    tyre.thermal.coolFactor = 2.17;
+    tyre.thermal.performanceCurve = {{0, 0.8f}, {20, 0.92f}, {40, 0.95f}, {60, 0.98f}, {75, 1.0f}, {95, 1.0f}, {105, 0.97f}};
+    tyre.thermal.staticPressure = 28.0;
+    tyre.thermal.idealPressure = 33.0;
+    tyre.thermal.rollingResistanceGain = 0.55;
+    tyre.wear.wearCurve = {{0.0f, 100.0f}, {1.25f, 99.5f}, {10.0f, 98.0f}, {25.0f, 80.0f}};
+    tyre.wear.useLoad = true;
+    tyre.wear.referenceLoad = 2860.0;
+    tyre.wear.grainGain = 0.4;
+    tyre.wear.grainGamma = 1.0;
+    tyre.wear.blisterGain = 0.3;
+    tyre.wear.blisterGamma = 1.0;
+    tyre.wear.performanceCurve = tyre.thermal.performanceCurve;
+    const auto drive = [&](bool temperatures)
+    {
+        VehicleSettings tuning;
+        tuning.tyreModel = VehicleTyreModel::Brush;
+        tuning.brushTyreRibs = 8;
+        tuning.brushTyreSegments = 8;
+        SetAxleTyres(tuning, true, tyre);
+        SetAxleTyres(tuning, false, tyre);
+        tuning.tyreTemperatures = temperatures;
+        tuning.tyreWear = temperatures;
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        const VehicleId car = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning), {glm::vec3(0.0f, 0.0f, -150.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        const VehicleTelemetry start = world.GetVehicleTelemetry(car);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        Simulate(world, 6.0f);
+        controls.throttle = 0.0f;
+        controls.brake = 1.0f;
+        world.SetVehicleControls(car, controls);
+        Simulate(world, 4.0f);
+        return std::pair{start, world.GetVehicleTelemetry(car)};
+    };
+    const auto [cold, driven] = drive(true);
+    for (size_t wheel = 0; wheel < 4; ++wheel)
+    {
+        const VehicleTelemetry::TyreTemperatures& before = cold.tyres[wheel];
+        const VehicleTelemetry::TyreTemperatures& after = driven.tyres[wheel];
+        Require(before.simulated && after.simulated, "the tyres' temperatures are simulated");
+        RequireNear(before.core, 26.0f, 1e-4f, "they start at the air's temperature");
+        RequireNear(before.pressure, 28.0f, 1e-4f, "at their cold pressure");
+        const float curveAt26 = 0.92f + 0.03f * 6.0f / 20.0f;
+        RequireNear(before.grip, curveAt26 / (1.0f + 5.0f * 0.0045f), 1e-4f, "with the curve's grip at 26 C over the pressure's loss");
+        Require(after.tread[1] > before.tread[1] + 0.5f, "driving warms the tread: " + std::to_string(after.tread[1]) + " C");
+        Require(after.core > before.core && after.pressure > before.pressure, "and the core, and the pressure with it");
+        Require(cold.wear[wheel].simulated && cold.wear[wheel].virtualKm == 0.0f && cold.wear[wheel].grip == 1.0f, "new tyres");
+        Require(driven.wear[wheel].virtualKm > 0.0f && driven.wear[wheel].grip <= 1.0f, "the drive wears them a little");
+        // Cold (below the window), the slip grains them.
+        Require(driven.wear[wheel].grain >= 0.0f && driven.wear[wheel].blister == 0.0f, "cold tyres grain, never blister");
+    }
+    std::cout << "tyre wear after the drive: rear left " << driven.wear[2].virtualKm * 1000.0f << " m slid, grain " << driven.wear[2].grain << " %\n";
+    std::cout << "tyre temperatures after 6 s flat out and a stop: front left tread " << driven.tyres[0].tread[0] << " / " << driven.tyres[0].tread[1] << " / "
+              << driven.tyres[0].tread[2] << " C, core " << driven.tyres[0].core << " C, " << driven.tyres[0].pressure << " psi, grip " << driven.tyres[0].grip
+              << '\n';
+    const auto [off, offDriven] = drive(false);
+    Require(!off.tyres[0].simulated && !offDriven.tyres[0].simulated && offDriven.tyres[0].grip == 1.0f, "off, nothing is simulated");
+}
+
 void TestCarDataGivesDifferentialAndTyreSensitivity()
 {
     VehicleCarSpec spec;
@@ -917,16 +1094,16 @@ void TestCarDataGivesDifferentialAndTyreSensitivity()
     RequireNear(settings.limitedSlipLock, 0.5f, 1e-6f, "the lock under power");
     RequireNear(settings.limitedSlipCoast, 0.3f, 1e-6f, "on the overrun");
     RequireNear(settings.limitedSlipPreload, 10.0f, 1e-6f, "and the preload");
-    RequireNear(settings.frontTyres.longitudinalLoadExponent, 0.9f, 1e-6f, "the front tyres' load sensitivity along the wheel");
-    RequireNear(settings.frontTyres.lateralLoadExponent, 0.84f, 1e-6f, "and across it");
-    RequireNear(settings.rearTyres.longitudinalLoadExponent, 0.8f, 1e-6f, "the rear's, the one given for both");
-    RequireNear(settings.rearTyres.lateralLoadExponent, 0.8f, 1e-6f, "the rear's across");
+    RequireNear(settings.tyres[0].longitudinalLoadExponent, 0.9f, 1e-6f, "the front tyres' load sensitivity along the wheel");
+    RequireNear(settings.tyres[0].lateralLoadExponent, 0.84f, 1e-6f, "and across it");
+    RequireNear(settings.tyres[2].longitudinalLoadExponent, 0.8f, 1e-6f, "the rear's, the one given for both");
+    RequireNear(settings.tyres[2].lateralLoadExponent, 0.8f, 1e-6f, "the rear's across");
     // The brush tyre's build from the same compound: the pressure from psi.
-    RequireNear(settings.frontTyres.rimRadius, 0.254f, 1e-6f, "the rim's radius");
-    RequireNear(settings.frontTyres.inflationPressure, 28.0f * 6894.757f, 1.0f, "the inflation pressure in pascals");
-    RequireNear(settings.frontTyres.relaxationLength, 0.0757f, 1e-6f, "the relaxation length");
-    RequireNear(settings.frontTyres.longitudinalStiffnessRatio, 1.04f, 1e-6f, "the tread's fore-aft stiffness ratio");
-    Require(settings.rearTyres.relaxationLength == 0.0f && settings.rearTyres.inflationPressure == 0.0f, "none given: the brush tyre's defaults");
+    RequireNear(settings.tyres[0].rimRadius, 0.254f, 1e-6f, "the rim's radius");
+    RequireNear(settings.tyres[0].inflationPressure, 28.0f * 6894.757f, 1.0f, "the inflation pressure in pascals");
+    RequireNear(settings.tyres[0].relaxationLength, 0.0757f, 1e-6f, "the relaxation length");
+    RequireNear(settings.tyres[0].longitudinalStiffnessRatio, 1.04f, 1e-6f, "the tread's fore-aft stiffness ratio");
+    Require(settings.tyres[2].relaxationLength == 0.0f && settings.tyres[2].inflationPressure == 0.0f, "none given: the brush tyre's defaults");
     Require(ApplyCarSpec(VehicleSettings{}, VehicleCarSpec{}).limitedSlipPreload < 0.0f, "no data: the default preload");
 
     // The gearbox's and clutch's figures, and the electronics: the game's traction control replaces ours.
@@ -2367,7 +2544,7 @@ void TestCarSpecReplacesWhatItKnows()
     Require(applied.shiftUpRpm == 0.0f && applied.shiftDownRpm == 0.0f, "the shift points follow the revs");
     Require(applied.gearSwitchSeconds == 0.03f && applied.clutchReleaseSeconds == 0.1f && applied.engineInertia == 0.137f,
             "the clutch and the engine's inertia");
-    Require(applied.frontTyres.longitudinalGrip == 1.314f && applied.rearTyres.inertia == 1.97f && applied.rearTyres.postPeakShare == 0.86f,
+    Require(applied.tyres[0].longitudinalGrip == 1.314f && applied.tyres[2].inertia == 1.97f && applied.tyres[2].postPeakShare == 0.86f,
             "the tyres");
     Require(applied.maxSteerAngleDegrees == 26.7f, "the steering lock");
     Require(applied.maxBrakeTorque == 800.0f && applied.frontBrakeShare == 0.65f && applied.maxHandBrakeTorque == 1000.0f, "the brakes");
@@ -2730,8 +2907,10 @@ void TestAutomaticBrakesDoNotLockTheWheels()
     heavy.massKg = car.massKg * 2.0f;
     RequireNear(ComputeBrakeTorquePerWheel(heavy), torque * 2.0f, 1e-3f, "a car twice as heavy needs brakes twice as strong");
     VehicleSettings grippy = car;
-    grippy.frontTyres.longitudinalGrip = 2.2f;
-    grippy.rearTyres.longitudinalGrip = 2.2f;
+    for (VehicleTyreSettings& tyre : grippy.tyres)
+    {
+        tyre.longitudinalGrip = 2.2f;
+    }
     Require(ComputeBrakeTorquePerWheel(grippy) > torque * 1.8f, "and tyres twice as grippy hold twice the torque");
     VehicleSettings tuned = car;
     tuned.maxBrakeTorque = 321.0f;
@@ -3292,6 +3471,8 @@ int main()
         TestEngineBrakingFromTheData();
         TestTurboSpoolsWithItsLag();
         TestCarDataGivesDifferentialAndTyreSensitivity();
+        TestTyreDataTermsFollowTheGame();
+        TestTyreTemperaturesFollowTheDrive();
         TestGameTractionControlCutsTheThrottle();
         TestDrivenWheelsKeepNearTheGround();
         TestMultibodyCarRestsAtItsDesignPosition(false);

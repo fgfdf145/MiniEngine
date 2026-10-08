@@ -68,14 +68,14 @@ double Pressure(const std::array<double, 5>& c, double chi)
     return std::max(value, 0.0);
 }
 
-// The contact length of (6) at a radial deflection.
-double ContactLength(const BrushTyreParameters& p, double deflection)
+// The contact length of (6) at a radial deflection, for a tyre of this unloaded radius.
+double ContactLength(const BrushTyreParameters& p, double radius, double deflection)
 {
     if (deflection <= 0.0)
     {
         return 0.0;
     }
-    const double span = 2.0 * (p.unloadedRadius - p.transitionRadius) - deflection;
+    const double span = 2.0 * (radius - p.transitionRadius) - deflection;
     return span > 0.0 ? 2.0 * std::sqrt(span * deflection) : 0.0;
 }
 
@@ -85,7 +85,8 @@ Patch MakePatch(const BrushTyreParameters& p, const BrushTyreInput& in)
     patch.load = std::max(in.load, 0.0);
     patch.ribCount = std::clamp(p.ribs, 1, kMaxRibs);
     patch.pressure = PressureCoefficients(p.pressureConvexity, p.pressureShift);
-    const double deflection = patch.load / std::max(p.verticalRate, 1.0);
+    const double deflection = patch.load / std::max(in.verticalRate > 0.0 ? in.verticalRate : p.verticalRate, 1.0);
+    const double radius = p.unloadedRadius + std::max(in.radiusGrowth, 0.0);
     const double sinCamber = std::sin(in.camber);
     const double ribWidth = p.width / patch.ribCount;
     double area = 0.0;
@@ -97,13 +98,13 @@ Patch MakePatch(const BrushTyreParameters& p, const BrushTyreInput& in)
         rib.width = ribWidth;
         // Camber about the forward axis lifts the tread's left side (positive camber, top right).
         const double ribDeflection = deflection - rib.y * sinCamber;
-        rib.length = ContactLength(p, ribDeflection);
-        rib.rollSpeed = in.wheelSpeed * (p.unloadedRadius - std::max(ribDeflection, 0.0) / 3.0); // (23)
+        rib.length = ContactLength(p, radius, ribDeflection);
+        rib.rollSpeed = in.wheelSpeed * (radius - std::max(ribDeflection, 0.0) / 3.0); // (23)
         area += rib.width * rib.length;
         slipStiffness += 0.5 * rib.width * rib.length * rib.length;
         patch.contactLength = std::max(patch.contactLength, rib.length);
     }
-    patch.effectiveRadius = p.unloadedRadius - deflection / 3.0;
+    patch.effectiveRadius = radius - deflection / 3.0;
     patch.damping = p.carcassDamping;
     const double treadSpeed = std::hypot(in.wheelSpeed * patch.effectiveRadius, p.lowSpeed);
     patch.damping[0] = std::min(p.carcassDamping[0], p.rollingDampingShare * p.bristleStiffnessX * slipStiffness / treadSpeed);
@@ -111,7 +112,8 @@ Patch MakePatch(const BrushTyreParameters& p, const BrushTyreInput& in)
     const double loadRatio = std::max(patch.load, 1.0) / std::max(p.referenceLoad, 1.0);
     for (int axis = 0; axis < 2; ++axis)
     {
-        double mu = std::max(p.staticFriction[axis] * std::pow(loadRatio, p.loadExponent[axis] - 1.0) * in.frictionScale, 0.0);
+        double mu = std::max(
+            p.staticFriction[axis] * std::pow(loadRatio, p.loadExponent[axis] - 1.0) * in.frictionScale * in.axisFrictionScale[axis], 0.0);
         if (in.frictionCap > 0.0)
         {
             mu = std::min(mu, in.frictionCap);
@@ -843,7 +845,7 @@ BrushTyreParameters MakeBrushTyreParameters(const BrushTyreFigures& figures)
     std::array<double, 2> carcassLength{longitudinalRelaxation, lateralRelaxation};
     const auto setStiffness = [&](double cornering)
     {
-        const double length = ContactLength(p, deflection);
+        const double length = ContactLength(p, p.unloadedRadius, deflection);
         const double k = 2.0 * cornering / (p.width * std::max(length * length, 1e-6));
         p.bristleStiffnessY = k;
         p.bristleStiffnessX = stiffnessRatio * k;

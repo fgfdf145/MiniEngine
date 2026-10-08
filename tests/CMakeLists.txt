@@ -1315,6 +1315,8 @@ miniengine_group_target_sources(miniengine_kn5_import_tests)
 target_link_libraries(miniengine_kn5_import_tests
     PRIVATE
         engine_asset
+        # The tyre library's tests check the physics' tyres (ApplyCarSpec).
+        engine_physics
 )
 # stb_image reads back the PNGs the import writes; engine_asset compiles its implementation.
 target_include_directories(miniengine_kn5_import_tests PRIVATE "${Stb_INCLUDE_DIR}")
@@ -2562,3 +2564,30 @@ add_test(
 )
 
 set_target_properties(miniengine_task_job_system_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_vehicle_tyres_panel_tests
+    vehicle_tyres_panel_tests.cpp
+)
+miniengine_group_target_sources(miniengine_vehicle_tyres_panel_tests)
+
+target_link_libraries(miniengine_vehicle_tyres_panel_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_vehicle_tyres_panel_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_vehicle_tyres_panel_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_vehicle_tyres_panel_tests>
+            $<TARGET_FILE_DIR:miniengine_vehicle_tyres_panel_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.vehicle_tyres_panel
+    COMMAND miniengine_vehicle_tyres_panel_tests
+)
+
+set_target_properties(miniengine_vehicle_tyres_panel_tests PROPERTIES FOLDER "Tests")

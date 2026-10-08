@@ -1,5 +1,9 @@
 #pragma once
 
+#include <engine/tyre/tyre_spec.h>
+#include <engine/tyre/tyre_thermal.h>
+#include <engine/tyre/tyre_wear.h>
+
 #include <glm/glm.hpp>
 
 #include <array>
@@ -58,6 +62,19 @@ struct VehicleWheelGeometry
 inline constexpr size_t kVehicleWheelCount = 4;
 using VehicleWheelLayout = std::array<VehicleWheelGeometry, kVehicleWheelCount>;
 
+// A tyre of the shared library (assets/tyres/**.tyre.yaml) as a car refers to it: its uuid, and its path
+// under the assets root when last seen (docs/design/2026-10-08-tyre-library-design.md).
+struct VehicleTyreRef
+{
+    std::string uuid;
+    std::string path;
+    bool Empty() const
+    {
+        return uuid.empty() && path.empty();
+    }
+    bool operator==(const VehicleTyreRef&) const = default;
+};
+
 // One axle's tyres as the physics engine models them: a friction that rises with slip to a peak and
 // falls a little past it, along the wheel (slip ratio) and across it (slip angle). Each 0 keeps the
 // engine's own default.
@@ -87,6 +104,41 @@ struct VehicleTyreSettings
     float inflationPressure = 0.0f;
     float relaxationLength = 0.0f;
     float longitudinalStiffnessRatio = 0.0f;
+    // The tyre's vertical spring and damper under its hub (N/m, N s/m); 0 leaves the axle's
+    // VehicleSuspensionAxle::tyreRate and tyreDamping (a car imported before the tyre library).
+    float verticalRate = 0.0f;
+    float verticalDamping = 0.0f;
+    // What Assetto Corsa's tyre model V10 does with the tyre's own data, step by step on top of the brush
+    // tyre (ComputeTyreStepTerms; each 0 for none). In the game's units:
+    // rolling resistance ROLLING_RESISTANCE_0, _1 (on the tread's speed squared) and _SLIP (on the slip),
+    float rollingResistance0 = 0.0f;
+    float rollingResistance1 = 0.0f;
+    float rollingResistanceSlip = 0.0f;
+    // RADIUS_ANGULAR_K in metres of radius per rad/s of spin,
+    float radiusGrowth = 0.0f;
+    // CAMBER_GAIN (camber's thrust as a slip angle: alpha + sin(camber) times it), DCAMBER_0 and _1 (the
+    // lateral grip by camber), SPEED_SENSITIVITY (grip over 1 + it times the sliding speed), BRAKE_DX_MOD
+    // (the longitudinal grip braking, times 1 + it),
+    float camberGain = 0.0f;
+    float dcamber0 = 0.0f;
+    float dcamber1 = 0.0f;
+    float speedSensitivity = 0.0f;
+    float brakeLongitudinalMod = 0.0f;
+    // and how the peak slip moves with load for the slip measure the rolling resistance uses: FZ0, FLEX_GAIN
+    // and COMBINED_FACTOR (the exponent the two slips are combined with, 2 when 0).
+    float referenceLoad = 0.0f;
+    float flexGain = 0.0f;
+    float combinedFactor = 0.0f;
+    // Temperatures and pressure (VehicleSettings::tyreTemperatures): the thermal model's numbers (none without
+    // surfaceTransfer), DY_REF for the grip sliding heats with, and what the pressure changes beyond them: the
+    // vertical rate (PRESSURE_SPRING_GAIN, N/m per psi over the cold pressure) and the grip (PRESSURE_D_GAIN,
+    // over 1 + it times the psi off the ideal).
+    tyre::TyreThermalParameters thermal;
+    // Wear, graining and blistering (VehicleSettings::tyreWear; tyre::TyreWearModel).
+    tyre::TyreWearParameters wear;
+    float lateralReference = 0.0f;
+    float pressureSpringGain = 0.0f;
+    float pressureGripGain = 0.0f;
 
     bool operator==(const VehicleTyreSettings&) const = default;
 };
@@ -369,11 +421,19 @@ struct VehicleSettings
     // How hard the clutch drags the wheels along with the engine, torque per rad/s of difference (the
     // physics engine's 10 when 0).
     float clutchStrength = 0.0f;
-    // The tyres: with any grip set the vehicle's tyres multiply the surface's friction (as the game does)
-    // instead of the physics engine's square root of the two.
-    VehicleTyreSettings frontTyres;
-    VehicleTyreSettings rearTyres;
+    // The tyres, by wheel (0 front left, 1 front right, 2 rear left, 3 rear right): with any grip set the
+    // vehicle's tyres multiply the surface's friction (as the game does) instead of the physics engine's
+    // square root of the two.
+    std::array<VehicleTyreSettings, kVehicleWheelCount> tyres{};
     VehicleTyreModel tyreModel = VehicleTyreModel::PhysicsEngine;
+    // Tyres with the game's thermal data warm and cool, and their grip and pressure follow (the brush tyre only;
+    // tyre::TyreThermalModel). Off they stay at their best: the curve's grip of 1 and the ideal pressure. They
+    // start at tyreStartTemperature (C; the game's 26 for the air and road).
+    bool tyreTemperatures = false;
+    float tyreStartTemperature = 26.0f;
+    // Tyres with the game's wear data wear with sliding (WEAR_CURVE), and with temperatures on grain and blister
+    // (tyre::TyreWearModel); a new car starts on new tyres.
+    bool tyreWear = false;
     // How many ribs the brush tyre is cut into across its tread (0 keeps the brush tyre's own 50; at most
     // tyre::kBrushMaxRibs), and how many segments along each rib's contact (0 keeps its own 20; 2 to
     // tyre::kBrushMaxSegments). Its cost grows about in step with ribs times segments.
@@ -451,14 +511,16 @@ struct VehicleSettings
     float steeringRackTravel = 0.0f;
 
     // Read by whoever starts a car, not by the physics: a model that carries its own figures
-    // (VehicleCarSpec) drives on them instead of the fields above they cover.
+    // (VehicleCarSpec) drives on them instead of the fields above they cover,
     bool useCarData = true;
+    // and on these library tyres in place of its own, by wheel, where one is given.
+    std::array<VehicleTyreRef, kVehicleWheelCount> tyreFitment{};
 };
 
 // One axle of one tyre compound as the game's data keeps it, whole: every number of its sections by
 // upper-case key ("DX0", "FZ0", "FRICTION_LIMIT_ANGLE"; the thermal section's under "THERMAL_"), and
-// the curves its files hold by the key that names them ("WEAR_CURVE", "PERFORMANCE_CURVE"). The
-// physics engine's tyres use only what VehicleCarSpec::frontTyres and rearTyres pick from it.
+// the curves its files hold by the key that names them ("WEAR_CURVE", "PERFORMANCE_CURVE"). The tyre
+// library's TyreSpec is made from it (tyre::TyreSpecFromAc).
 struct VehicleTyreData
 {
     std::string name;
@@ -563,6 +625,15 @@ struct VehicleCameraMount
     float pitchDegrees = 0.0f;
 };
 
+// One of the car's own compounds in the library: its front and rear tyres.
+struct VehicleTyreCompoundRefs
+{
+    std::string name;
+    VehicleTyreRef front;
+    VehicleTyreRef rear;
+    bool operator==(const VehicleTyreCompoundRefs&) const = default;
+};
+
 // What a car's own data says, in SI units, for the fields it knows (Assetto Corsa's data.acd, read by
 // the kn5 import). Whatever it leaves out stays as the tuning has it.
 struct VehicleCarSpec
@@ -579,7 +650,8 @@ struct VehicleCarSpec
     std::optional<float> gearSwitchSeconds;
     std::optional<float> clutchReleaseSeconds;
     std::optional<float> engineInertia;
-    // The tyres the car starts on, as the physics engine takes them (see tyreCompounds).
+    // The tyres the car starts on as an import before the tyre library worked them out per axle: used
+    // only when the car has no tyreCompounds (ApplyCarSpec works them out from wheelTyres).
     std::optional<VehicleTyreSettings> frontTyres;
     std::optional<VehicleTyreSettings> rearTyres;
     // The air: the car's wings with their curves, and the controllers that move them. Drag and
@@ -592,6 +664,13 @@ struct VehicleCarSpec
     // Every tyre compound the car ships and the index of the one it starts on.
     std::vector<VehicleTyreCompound> tyreCompounds;
     std::optional<int> defaultTyreCompound;
+    // The car's tyres in the shared library: its own compounds', and those the four wheels are fitted
+    // with (by wheel, as VehicleSettings::tyres). Empty for a car imported before the library.
+    std::vector<VehicleTyreCompoundRefs> libraryCompounds;
+    std::array<VehicleTyreRef, kVehicleWheelCount> wheelTyreRefs{};
+    // The four wheels' tyres, as the model loader resolves them: from the library, else the default
+    // compound of tyreCompounds (front on wheels 0 and 1, rear on 2 and 3). Not written to the glTF.
+    std::array<std::optional<tyre::TyreSpec>, kVehicleWheelCount> wheelTyres{};
     std::vector<VehicleTurbo> turbos;
     // A hybrid's ERS; torqueCurve above is the engine's alone. ApplyCarSpec adds the motor's torque.
     std::optional<VehicleErs> ers;
@@ -663,6 +742,70 @@ inline constexpr float kFuelKgPerLitre = 0.75f;
 // `spec` with its starting fuel in the mass, the weight split and the centre of mass's height (the
 // fuel fields then cleared, so applying it twice adds nothing). Unchanged without fuel or a mass.
 VehicleCarSpec WithStartingFuel(const VehicleCarSpec& spec);
+
+// The tyres of the car's default compound as tyreCompounds keeps them: front on wheels 0 and 1, rear on 2
+// and 3; empty without compounds. Inline: the asset library uses it without linking the physics.
+inline std::array<std::optional<tyre::TyreSpec>, kVehicleWheelCount> DefaultWheelTyres(const VehicleCarSpec& spec)
+{
+    std::array<std::optional<tyre::TyreSpec>, kVehicleWheelCount> wheels{};
+    if (!spec.defaultTyreCompound.has_value() || *spec.defaultTyreCompound < 0 ||
+        static_cast<size_t>(*spec.defaultTyreCompound) >= spec.tyreCompounds.size())
+    {
+        return wheels;
+    }
+    const VehicleTyreCompound& compound = spec.tyreCompounds[static_cast<size_t>(*spec.defaultTyreCompound)];
+    for (size_t index = 0; index < kVehicleWheelCount; ++index)
+    {
+        const VehicleTyreData& data = index < 2 ? compound.front : compound.rear;
+        wheels[index] = tyre::TyreSpecFromAc(data.name, data.shortName, data.values, data.curves);
+    }
+    return wheels;
+}
+
+// The load (N) one wheel of the axle carries standing still, by the car's mass without its starting fuel
+// and the weight split of its data: what the tyres' grip is taken at. 0 without a mass.
+float StaticTyreLoad(const VehicleCarSpec& dryspec, bool front);
+
+// What the physics takes from a tyre carrying `staticLoadNewtons`: the peak grip along and across at that
+// load, the slip angle of the peak and a slip ratio from it, the share past the peak, the wheel's inertia,
+// the load exponents (at most 1), the rim, cold pressure, relaxation length, CX_MULT and the vertical
+// spring and damper.
+VehicleTyreSettings TyreSettingsFromSpec(const tyre::TyreSpec& spec, float staticLoadNewtons);
+
+// Both wheels of an axle on the same tyre.
+void SetAxleTyres(VehicleSettings& settings, bool front, const VehicleTyreSettings& tyres);
+
+// One wheel's motion over the road for ComputeTyreStepTerms: the contact's velocity along the wheel and to
+// its left (m/s), the wheel's spin (rad/s, rolling forward positive), its unloaded radius (m), its camber to
+// the road (rad, top leaning right positive) and its load (N).
+struct VehicleTyreMotion
+{
+    float forwardVelocity = 0.0f;
+    float lateralVelocity = 0.0f;
+    float wheelSpeed = 0.0f;
+    float radius = 0.0f;
+    float camber = 0.0f;
+    float load = 0.0f;
+    // What the tyre's pressure makes of its rolling resistance (tyre::TyreThermalModel::PressureFactor; 1 at the
+    // ideal pressure).
+    float pressureFactor = 1.0f;
+};
+
+// What a tyre's own data changes in one step of the brush tyre, as Assetto Corsa's tyre model V10 does it
+// (docs/design/2026-10-08-tyre-data-terms-design.md): the contact's lateral velocity with camber's thrust in
+// it as a slip angle, the scales on the friction along and across the wheel (sliding speed, camber, braking),
+// the rolling resistance coefficient on top of ROLLING_RESISTANCE_0's, and how far the tyre has grown.
+struct VehicleTyreStepTerms
+{
+    // The theoretical slip over its peak's (what the game's rolling resistance, graining and blistering go by);
+    // 0 for a tyre without FRICTION_LIMIT_ANGLE.
+    float slip = 0.0f;
+    float lateralVelocity = 0.0f;
+    std::array<float, 2> axisFrictionScale{1.0f, 1.0f};
+    float extraRollingResistance = 0.0f;
+    float radiusGrowth = 0.0f;
+};
+VehicleTyreStepTerms ComputeTyreStepTerms(const VehicleTyreSettings& tyre, const VehicleTyreMotion& motion);
 
 // Whether the settings carry a multibody suspension for both axles.
 bool HasSuspensionGeometry(const VehicleSettings& settings);

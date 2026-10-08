@@ -512,7 +512,12 @@ bool IsUnderAssetsRoot(const std::filesystem::path& path)
 bool IsRegistrableAsset(const std::filesystem::path& path)
 {
     const std::string ext = ToLowerAscii(path.extension().string());
-    // Models and textures: the asset types other files reference today.
+    // Models, textures and tyres (a car refers to its tyres in the tyre library): the asset types other
+    // files reference today.
+    if (ToLowerAscii(path.filename().string()).ends_with(".tyre.yaml"))
+    {
+        return true;
+    }
     return ext == ".gltf" || ext == ".glb" ||
            ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
            ext == ".tga" || ext == ".bmp" || ext == ".hdr" || ext == ".exr" || ext == ".dds" ||

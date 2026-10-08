@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace me
@@ -21,6 +22,9 @@ enum class VehicleCameraView : uint8_t;
 
 struct EditorApplicationOptions
 {
+    // --adopt-car-tyres <car.gltf> <game folder>: put the tyres of a car imported before the tyre library
+    // into it and refer the car to them, then exit (docs/design/2026-10-08-tyre-library-design.md).
+    std::vector<std::pair<std::string, std::string>> adoptCarTyres;
     RenderBackendType renderBackend = GetDefaultRenderBackendType();
     std::optional<std::string> startupModelPath;
     // A scene file loaded in place of the two-cube test scene, the way File > Open would load it.

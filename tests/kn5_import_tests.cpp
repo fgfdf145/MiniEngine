@@ -1,9 +1,15 @@
 #include <engine/asset/ac_car_data.h>
 #include <engine/asset/acd_archive.h>
+#include <engine/asset/asset_registry.h>
 #include <engine/asset/dds_decoder.h>
 #include <engine/asset/kn5_importer.h>
 #include <engine/asset/kn5_reader.h>
 #include <engine/asset/model_loader.h>
+#include <engine/asset/tyre_library.h>
+#include <engine/core/paths/engine_paths.h>
+#include <engine/physics/physics_world.h>
+
+#include <glm/gtc/quaternion.hpp>
 
 #include <stb_image.h>
 
@@ -1461,6 +1467,30 @@ void CarDataBecomesASpec()
     Require(spec.frontTyres->postPeakShare == 0.86f && spec.frontTyres->inertia == 1.62f && spec.rearTyres->inertia == 1.97f, "falloff and wheel inertia");
     // Grip near 1.3 is what the real tyres have; the physics engine's own peak is 1.2.
     Require(spec.frontTyres->longitudinalGrip > 1.25f && spec.frontTyres->longitudinalGrip < 1.4f, "a semislick's grip");
+    // The vertical tyre comes from the default compound too, not always from compound 0.
+    {
+        std::map<std::string, std::string> files = BoxsterDataFiles();
+        std::string& tyres = files["tyres.ini"];
+        const auto insertAfter = [&](const std::string& header, const std::string& lines)
+        {
+            const size_t at = tyres.find(header);
+            Require(at != std::string::npos, "the fixture has " + header);
+            tyres.insert(at + header.size(), lines);
+        };
+        insertAfter("[FRONT]\r\n", "RATE=325354\r\nDAMP=600\r\n");
+        insertAfter("[FRONT_1]\r\n", "RADIUS=0.330\r\nRATE=287098\r\nDAMP=500\r\n");
+        const size_t index = tyres.find("INDEX=0");
+        tyres.replace(index, 7, "INDEX=1");
+        const VehicleCarSpec second = AcCarData::BuildSpec(files);
+        Require(second.defaultTyreCompound == 1, "the second compound is the default");
+        Require(second.frontSuspension->tyreRate == 287098.0f && second.frontSuspension->tyreDamping == 500.0f &&
+                    second.frontSuspension->tyreRadius == 0.330f,
+                "the default compound's RATE, DAMP and RADIUS");
+        tyres.replace(tyres.find("INDEX=1"), 7, "INDEX=7");
+        Require(AcCarData::BuildSpec(files).frontSuspension->tyreRate == 287098.0f, "an index past the last compound takes the last");
+        tyres.replace(tyres.find("INDEX=7"), 7, "INDEX=0");
+        Require(AcCarData::BuildSpec(files).frontSuspension->tyreRate == 325354.0f, "and compound 0's own when it is the default");
+    }
 
     // The air.
     Require(spec.aeroWings.size() == 2 && spec.aeroControllers.size() == 1, "two wings and a controller");
@@ -1635,6 +1665,365 @@ void FourWheelDriveRearSteerAndBodyBecomeASpec()
 }
 
 // The R34's figures through the import and back, with its collider.kn5 (here the fixture car's own kn5).
+// A tyre: every key of tyres.ini has a field, unknown keys are kept, and its file reads back equal.
+void TyreSpecHoldsEveryKeyAndRoundTrips()
+{
+    std::map<std::string, float> values;
+    float next = 1.0f;
+    for (const tyre::TyreSpecField& field : tyre::TyreSpecFields())
+    {
+        values[std::string(field.sectionPrefix) + field.acKey] = next;
+        next += 0.125f;
+    }
+    values["SOMETHING_NEW"] = 0.1f;
+    values["THERMAL_SOMETHING_ELSE"] = 287430.0f;
+    std::map<std::string, std::vector<glm::vec2>> curves{
+        {"WEAR_CURVE", {{0.0f, 1.0f}, {5000.0f, 0.9f}}},
+        {"THERMAL_PERFORMANCE_CURVE", {{0.0f, 0.5f}, {80.0f, 1.0f}}},
+        {"ODD_CURVE", {{1.0f, 1e-7f}}}};
+    const tyre::TyreSpec spec = tyre::TyreSpecFromAc("Semislicks", "SM", values, curves);
+    Require(tyre::TyreSpecFields().size() == 55 && tyre::TyreSpecCurves().size() == 2, "a field for each of the 53 keys, [ADDITIONAL1]'s three and USE_LOAD");
+    tyre::TyreSpec copy = spec;
+    next = 1.0f;
+    for (const tyre::TyreSpecField& field : tyre::TyreSpecFields())
+    {
+        Require(field.field(copy) == next, std::string("the field of ") + field.acKey);
+        next += 0.125f;
+    }
+    Require(spec.wear.wearCurve.size() == 2 && spec.thermal.performanceCurve[1] == glm::vec2(80.0f, 1.0f), "the curves");
+    Require(spec.extraValues.size() == 2 && spec.extraValues.at("THERMAL_SOMETHING_ELSE") == 287430.0f && spec.extraCurves.count("ODD_CURVE") == 1,
+            "and what the table does not know, by its own name");
+
+    const std::string text = TyreLibrary::ToYaml(spec);
+    const std::optional<tyre::TyreSpec> back = TyreLibrary::FromYaml(text);
+    Require(back.has_value() && *back == spec, "the file reads back equal:\n" + text);
+    Require(text.find("SOMETHING_NEW: 0.1") != std::string::npos, "numbers in their shortest exact form:\n" + text);
+
+    tyre::TyreSpec sparse;
+    sparse.name = "Street";
+    sparse.grip.dx0 = 1.2f;
+    const std::string sparseText = TyreLibrary::ToYaml(sparse);
+    Require(sparseText.find("camber") == std::string::npos && sparseText.find("dx0") != std::string::npos, "empty fields are left out");
+    Require(TyreLibrary::FromYaml(sparseText) == sparse, "and stay empty");
+    std::string problem;
+    Require(!TyreLibrary::FromYaml("tyre:\n  version: 99\n", &problem).has_value() && !problem.empty(), "a newer file is refused");
+
+    // The grip at a load, as the import worked it out.
+    const tyre::TyreSpec boxster = DefaultWheelTyres(AcCarData::BuildSpec(BoxsterDataFiles()))[0].value();
+    const float load = 1460.0f * 9.81f * 0.455f * 0.5f;
+    Require(tyre::LongitudinalGripAtLoad(boxster, load) == 1.30f * std::pow(load / 3606.0f, 0.8915f - 1.0f), "grip by the load sensitivity");
+    tyre::TyreSpec linear;
+    linear.grip.dx0 = 1.2f;
+    linear.grip.dx1 = -0.05f;
+    Require(tyre::LongitudinalGripAtLoad(linear, load) == 1.2f + -0.05f, "or DX0 + DX1 without it");
+}
+
+// The library: a tyre is written once, found by uuid after a move, and a different one at the same name
+// gets a suffix.
+void TyreLibraryStoresAndFindsTyres()
+{
+    tyre::TyreSpec spec;
+    spec.name = "Semislicks";
+    spec.shortName = "SM";
+    spec.source = "one car";
+    spec.grip.dx0 = 1.3f;
+    const VehicleTyreRef first = TyreLibrary::Store(spec, "library_test", "semislicks_front");
+    tyre::TyreSpec fromAnotherCar = spec;
+    fromAnotherCar.source = "another car";
+    const VehicleTyreRef same = TyreLibrary::Store(fromAnotherCar, "library_test_other", "semislicks_front");
+    Require(same == first && !first.uuid.empty(), "an equal tyre (but for its source) is referred to, not written again");
+    tyre::TyreSpec harder = spec;
+    harder.grip.dx0 = 1.2f;
+    harder.source = "a harder one";
+    const VehicleTyreRef second = TyreLibrary::Store(harder, "library_test", "semislicks_front");
+    // The first tyre's source read again, more fully: updated in place, its uuid kept.
+    tyre::TyreSpec fuller = spec;
+    fuller.wear.useLoad = 1.0f;
+    Require(TyreLibrary::Store(fuller, "library_test", "semislicks_front") == first && TyreLibrary::Resolve(first) == fuller,
+            "a tyre from the same source is updated in place");
+    TyreLibrary::Store(spec, "library_test", "semislicks_front");
+    Require(second.path.ends_with("library_test/semislicks_front_2.tyre.yaml"), "a different tyre gets a suffix: " + second.path);
+    Require(TyreLibrary::Resolve(first) == spec && TyreLibrary::Resolve(second) == harder, "both resolve");
+
+    const std::filesystem::path moved = TyreLibrary::Root() / "moved" / "renamed.tyre.yaml";
+    std::filesystem::create_directories(moved.parent_path());
+    const std::filesystem::path old = EnginePaths::ResolveProjectPath(first.path);
+    std::filesystem::rename(old, moved);
+    std::filesystem::rename(AssetRegistry::SidecarPathFor(old), AssetRegistry::SidecarPathFor(moved));
+    AssetRegistry::RescanAssetTree();
+    std::filesystem::path found;
+    Require(TyreLibrary::Resolve(first, &found) == spec && found == moved, "found by its uuid after a move");
+    Require(!TyreLibrary::Resolve(VehicleTyreRef{"no-such-uuid", "assets/tyres/nowhere.tyre.yaml"}).has_value(), "a lost tyre is not found");
+    Require(TyreLibrary::StemFor("Slick Medium (90s)") == "slick_medium_90s", "file names from compound names");
+
+    // A compound with the same tyre on both axles: one file, named for neither.
+    VehicleCarSpec car;
+    VehicleTyreCompound compound;
+    compound.front.name = compound.rear.name = "Street";
+    compound.front.values = compound.rear.values = {{"DX_REF", 1.2f}, {"FZ0", 3000.0f}};
+    car.tyreCompounds = {compound};
+    car.defaultTyreCompound = 0;
+    TyreLibrary::AdoptCarTyres(car, "ks_same_axles");
+    Require(car.libraryCompounds[0].front == car.libraryCompounds[0].rear && car.libraryCompounds[0].front.path.ends_with("ks_same_axles/street.tyre.yaml"),
+            "one tyre for both axles: " + car.libraryCompounds[0].front.path);
+    Require(TyreLibrary::Resolve(car.wheelTyreRefs[3])->source == "Assetto Corsa ks_same_axles, compound 0 Street, front and rear", "said so in its source");
+    std::filesystem::remove_all(TyreLibrary::Root());
+    AssetRegistry::RescanAssetTree();
+}
+
+// An imported car's compounds go into the library, the car refers to them by wheel, and a loaded car
+// drives on them; another tyre on one wheel reaches that wheel alone; without the library the car falls
+// back to its own data; a car imported before the library is adopted into it.
+void ImportPutsTheCarsTyresInTheLibrary()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = WriteCarFolder(scope.Path());
+    WriteFile(kn5.parent_path() / "data.acd", BuildAcd("ks_fixture", 42, BoxsterDataFiles()));
+    const Kn5ImportReport report = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "car");
+    const VehicleCarSpec expected = AcCarData::BuildSpec(BoxsterDataFiles());
+    Require(TyreLibrary::List().size() == 4, "two compounds, front and rear: " + std::to_string(TyreLibrary::List().size()));
+    Require(std::filesystem::exists(TyreLibrary::Root() / "ks_fixture" / "semislicks_front.tyre.yaml") &&
+                std::filesystem::exists(TyreLibrary::Root() / "ks_fixture" / "street_rear.tyre.yaml"),
+            "under the game's folder name, by compound and axle");
+    const std::optional<tyre::TyreSpec> stored = TyreLibrary::Load(TyreLibrary::Root() / "ks_fixture" / "semislicks_front.tyre.yaml");
+    Require(stored.has_value() && stored->source == "Assetto Corsa ks_fixture, compound 0 Semislicks, front" && stored->grip.referenceLoad == 3606.0f,
+            "with where it came from");
+
+    const VehicleCarSpec spec = ModelLoader::LoadModel(report.gltfPath.string()).carSpec.value();
+    Require(spec.libraryCompounds.size() == 2 && spec.libraryCompounds[1].name == "Street", "the car's own compounds in the library");
+    Require(spec.wheelTyreRefs[0] == spec.libraryCompounds[0].front && spec.wheelTyreRefs[3] == spec.libraryCompounds[0].rear,
+            "the default compound on the wheels");
+    const auto defaults = DefaultWheelTyres(expected);
+    for (size_t wheel = 0; wheel < kVehicleWheelCount; ++wheel)
+    {
+        tyre::TyreSpec fitted = spec.wheelTyres[wheel].value();
+        fitted.source.clear();
+        Require(fitted == defaults[wheel].value(), "wheel " + std::to_string(wheel) + " drives on the default compound's tyre");
+    }
+
+    // The physics' tyres from the library are the import's own figures.
+    const VehicleSettings settings = ApplyCarSpec(VehicleSettings{}, spec);
+    Require(settings.tyres[0].longitudinalGrip == expected.frontTyres->longitudinalGrip && settings.tyres[2].lateralGrip == expected.rearTyres->lateralGrip &&
+                settings.tyres[1].peakSlipRatio == expected.frontTyres->peakSlipRatio && settings.tyres[3].inertia == 1.97f,
+            "the grip the import works out, to the bit");
+    Require(settings.tyres[0] == settings.tyres[1] && settings.tyres[2] == settings.tyres[3] && !(settings.tyres[0] == settings.tyres[2]),
+            "each axle's wheels alike");
+
+    // Another tyre on one wheel, written into the car.
+    VehicleCarSpec refitted = spec;
+    refitted.wheelTyreRefs[0] = spec.libraryCompounds[1].front;
+    TyreLibrary::WriteCarTyres(report.gltfPath, refitted);
+    const VehicleCarSpec reloaded = ModelLoader::LoadModel(report.gltfPath.string()).carSpec.value();
+    Require(reloaded.wheelTyres[0]->name == "Street" && reloaded.wheelTyres[1]->name == "Semislicks", "one wheel on another compound");
+    const VehicleSettings mixed = ApplyCarSpec(VehicleSettings{}, reloaded);
+    Require(!(mixed.tyres[0] == mixed.tyres[1]) && mixed.tyres[1] == settings.tyres[1], "and the physics has it on that wheel alone");
+
+    // A lost library: the car's own default compound.
+    std::filesystem::remove_all(TyreLibrary::Root());
+    AssetRegistry::RescanAssetTree();
+    const VehicleCarSpec orphan = ModelLoader::LoadModel(report.gltfPath.string()).carSpec.value();
+    Require(orphan.wheelTyres[0].has_value() && orphan.wheelTyres[0]->name == "Semislicks", "falls back to the car's own default compound");
+
+    // Adopted into the library again from the glTF alone, as for a car imported before it.
+    Require(TyreLibrary::AdoptGltfCarTyres(report.gltfPath, "ks_fixture") == 4, "four tyres adopted");
+    const VehicleCarSpec adopted = ModelLoader::LoadModel(report.gltfPath.string()).carSpec.value();
+    Require(TyreLibrary::List().size() == 4 && adopted.wheelTyreRefs[0] == adopted.libraryCompounds[0].front && !adopted.wheelTyreRefs[0].uuid.empty(),
+            "the car refers to the library again, the default compound on all wheels");
+    std::filesystem::remove_all(TyreLibrary::Root());
+    AssetRegistry::RescanAssetTree();
+}
+
+// MINIENGINE_TYRE_PROBE=<car.gltf>: the car on flat ground on the brush tyre, with and without what its
+// tyres' own data adds step by step (ComputeTyreStepTerms), through a coast-down, a stop from 100 km/h,
+// 0-100 km/h and a steady turn. Prints the figures; checks nothing.
+void ProbeCarTyreTerms()
+{
+    const char* gltf = std::getenv("MINIENGINE_TYRE_PROBE");
+    if (gltf == nullptr)
+    {
+        return;
+    }
+    const std::optional<VehicleCarSpec> spec = ModelLoader::LoadModel(gltf).carSpec;
+    Require(spec.has_value() && spec->wheelbase.has_value() && spec->frontSuspension.has_value(), "the probe's car has its data");
+    const float radius = spec->frontSuspension->tyreRadius;
+    const float wheelbase = *spec->wheelbase;
+    const float track = spec->frontSuspension->track;
+    VehicleWheelLayout layout{};
+    for (size_t wheel = 0; wheel < kVehicleWheelCount; ++wheel)
+    {
+        const float side = wheel % 2 == 0 ? 0.5f * track : -0.5f * track;
+        const float along = wheel < 2 ? 0.5f * wheelbase : -0.5f * wheelbase;
+        layout[wheel] = VehicleWheelGeometry{glm::vec3(side, radius, along), radius, 0.24f};
+    }
+    const glm::vec3 boundsMin(-0.5f * track - 0.15f, 0.0f, -0.5f * wheelbase - 0.9f);
+    const glm::vec3 boundsMax(0.5f * track + 0.15f, 1.25f, 0.5f * wheelbase + 0.9f);
+    VehicleSettings tuning;
+    tuning.tyreModel = VehicleTyreModel::Brush;
+    const VehicleSettings withTerms = FitVehicleSettingsToBounds(boundsMin, boundsMax, ApplyCarSpec(tuning, *spec), &layout);
+    VehicleSettings withoutTerms = withTerms;
+    for (VehicleTyreSettings& tyre : withoutTerms.tyres)
+    {
+        const VehicleTyreSettings kept = tyre;
+        tyre = VehicleTyreSettings{};
+        tyre.longitudinalGrip = kept.longitudinalGrip;
+        tyre.lateralGrip = kept.lateralGrip;
+        tyre.peakSlipRatio = kept.peakSlipRatio;
+        tyre.peakSlipAngleDegrees = kept.peakSlipAngleDegrees;
+        tyre.postPeakShare = kept.postPeakShare;
+        tyre.inertia = kept.inertia;
+        tyre.longitudinalLoadExponent = kept.longitudinalLoadExponent;
+        tyre.lateralLoadExponent = kept.lateralLoadExponent;
+        tyre.rimRadius = kept.rimRadius;
+        tyre.inflationPressure = kept.inflationPressure;
+        tyre.relaxationLength = kept.relaxationLength;
+        tyre.longitudinalStiffnessRatio = kept.longitudinalStiffnessRatio;
+        tyre.verticalRate = kept.verticalRate;
+        tyre.verticalDamping = kept.verticalDamping;
+    }
+    constexpr float kFrame = 1.0f / 144.0f;
+    const auto run = [&](const VehicleSettings& settings, const char* name)
+    {
+        const auto start = [&](PhysicsWorld& world)
+        {
+            const std::vector<glm::vec3> vertices = {{-3000.0f, 0.0f, -3000.0f}, {-3000.0f, 0.0f, 3000.0f}, {3000.0f, 0.0f, 3000.0f}, {3000.0f, 0.0f, -3000.0f}};
+            const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+            Require(world.AddStaticMesh(vertices, indices, PhysicsWorld::kDefaultSurfaceFriction), "the ground");
+            const VehicleId car = world.AddVehicle(settings, {glm::dvec3(0.0, 0.05, -2500.0), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+            for (float t = 0.0f; t < 1.0f; t += kFrame)
+            {
+                world.Update(kFrame);
+            }
+            return car;
+        };
+        const auto speedOf = [](const PhysicsWorld& world, VehicleId car) { return world.GetVehicleTelemetry(car).forwardSpeed * 3.6f; };
+        // 0-100 km/h, then on to 120 and a coast in neutral (clutch down) for 10 s, then a stop from 100.
+        PhysicsWorld world;
+        const VehicleId car = start(world);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        float t = 0.0f;
+        float to100 = -1.0f;
+        while (t < 30.0f && speedOf(world, car) < 120.0f)
+        {
+            world.Update(kFrame);
+            t += kFrame;
+            if (to100 < 0.0f && speedOf(world, car) >= 100.0f)
+            {
+                to100 = t;
+            }
+        }
+        controls.throttle = 0.0f;
+        controls.clutchPedal = true;
+        world.SetVehicleControls(car, controls);
+        const float coastFrom = speedOf(world, car);
+        for (float c = 0.0f; c < 10.0f; c += kFrame)
+        {
+            world.Update(kFrame);
+        }
+        const float coastTo = speedOf(world, car);
+        // Back up to 100 and stop.
+        controls.clutchPedal = false;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        for (float c = 0.0f; c < 30.0f && speedOf(world, car) < 100.0f; c += kFrame)
+        {
+            world.Update(kFrame);
+        }
+        controls.throttle = 0.0f;
+        controls.brake = 1.0f;
+        world.SetVehicleControls(car, controls);
+        const glm::dvec3 brakeStart = world.GetVehiclePose(car).position;
+        const float brakeFrom = speedOf(world, car);
+        for (float c = 0.0f; c < 10.0f && speedOf(world, car) > 0.5f; c += kFrame)
+        {
+            world.Update(kFrame);
+        }
+        const double stop = glm::length(world.GetVehiclePose(car).position - brakeStart);
+
+        // A steady turn: 70 km/h held by the throttle, a quarter of the steering, the lateral acceleration.
+        PhysicsWorld turnWorld;
+        const VehicleId turning = start(turnWorld);
+        VehicleControls drive;
+        drive.throttle = 1.0f;
+        turnWorld.SetVehicleControls(turning, drive);
+        for (float c = 0.0f; c < 20.0f && speedOf(turnWorld, turning) < 70.0f; c += kFrame)
+        {
+            turnWorld.Update(kFrame);
+        }
+        drive.steering = 0.25f;
+        float lateral = 0.0f;
+        float speed = 0.0f;
+        for (float c = 0.0f; c < 6.0f; c += kFrame)
+        {
+            drive.throttle = speedOf(turnWorld, turning) < 70.0f ? 0.6f : 0.0f;
+            turnWorld.SetVehicleControls(turning, drive);
+            turnWorld.Update(kFrame);
+            const VehicleTelemetry telemetry = turnWorld.GetVehicleTelemetry(turning);
+            speed = telemetry.forwardSpeed;
+            lateral = telemetry.rightSpeed;
+        }
+        const PhysicsPose a = turnWorld.GetVehiclePose(turning);
+        turnWorld.Update(kFrame);
+        const PhysicsPose b = turnWorld.GetVehiclePose(turning);
+        const float yawRate = glm::angle(glm::normalize(b.rotation * glm::conjugate(a.rotation))) / kFrame;
+        std::cout << name << ": 0-100 " << to100 << " s; coast in neutral " << coastFrom << " -> " << coastTo << " km/h in 10 s; stop from " << brakeFrom
+                  << " km/h in " << stop << " m; turn at " << speed * 3.6f << " km/h: " << speed * yawRate / 9.81f << " g (side slip " << lateral << " m/s)\n";
+        for (const auto& [label, telemetry] : {std::pair{"after the stop", world.GetVehicleTelemetry(car)}, std::pair{"after the turn", turnWorld.GetVehicleTelemetry(turning)}})
+        {
+            for (const size_t wheel : {size_t{0}, size_t{2}})
+            {
+                const VehicleTelemetry::TyreTemperatures& tyre = telemetry.tyres[wheel];
+                if (tyre.simulated)
+                {
+                    std::cout << "    " << label << (wheel == 0 ? ", front left: tread " : ", rear left: tread ") << tyre.tread[0] << " / " << tyre.tread[1] << " / "
+                              << tyre.tread[2] << " C, core " << tyre.core << " C, " << tyre.pressure << " psi, grip " << tyre.grip << '\n';
+                }
+            }
+        }
+    };
+    std::cout << "tyre probe: " << gltf << '\n';
+    run(withoutTerms, "  without the tyre data's terms");
+    run(withTerms, "  with them                     ");
+    VehicleSettings warming = withTerms;
+    warming.tyreTemperatures = true;
+    warming.tyreWear = true;
+    run(warming, "  with them and temperatures    ");
+
+    // Two minutes of hard driving with temperatures on: a slalom between 80 and 110 km/h, the tyres every 30 s.
+    PhysicsWorld world;
+    const std::vector<glm::vec3> vertices = {{-3000.0f, 0.0f, -3000.0f}, {-3000.0f, 0.0f, 3000.0f}, {3000.0f, 0.0f, 3000.0f}, {3000.0f, 0.0f, -3000.0f}};
+    const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+    Require(world.AddStaticMesh(vertices, indices, PhysicsWorld::kDefaultSurfaceFriction), "the ground");
+    const VehicleId car = world.AddVehicle(warming, {glm::dvec3(0.0, 0.05, 0.0), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls controls;
+    float time = 0.0f;
+    for (int report = 1; report <= 4; ++report)
+    {
+        for (float t = 0.0f; t < 30.0f; t += kFrame)
+        {
+            const float kmh = world.GetVehicleTelemetry(car).forwardSpeed * 3.6f;
+            controls.steering = 0.45f * std::sin(time * 2.0f * 3.14159265f * 0.35f);
+            controls.throttle = kmh < 80.0f ? 1.0f : kmh < 110.0f ? 0.7f : 0.0f;
+            controls.brake = kmh > 115.0f ? 0.8f : 0.0f;
+            world.SetVehicleControls(car, controls);
+            world.Update(kFrame);
+            time += kFrame;
+        }
+        const VehicleTelemetry telemetry = world.GetVehicleTelemetry(car);
+        std::cout << "  slalom " << report * 30 << " s at " << telemetry.forwardSpeed * 3.6f << " km/h:";
+        for (const size_t wheel : {size_t{0}, size_t{2}})
+        {
+            const VehicleTelemetry::TyreTemperatures& tyre = telemetry.tyres[wheel];
+            std::cout << (wheel == 0 ? " front left " : "; rear left ") << tyre.tread[0] << "/" << tyre.tread[1] << "/" << tyre.tread[2] << " C core " << tyre.core
+                      << " C " << tyre.pressure << " psi grip " << tyre.grip;
+            const VehicleTelemetry::TyreWear& wear = telemetry.wear[wheel];
+            std::cout << ", slid " << wear.virtualKm * 1000.0f << " m, grain " << wear.grain << " %, blister " << wear.blister << " %, wear grip " << wear.grip;
+        }
+        std::cout << '\n';
+    }
+}
+
 void ImportWritesFourWheelDriveRearSteerAndBody()
 {
     ScopedDirectory scope;
@@ -2068,6 +2457,12 @@ void CarMaterialsTakeAcsLightScale()
 
 int main()
 {
+    // Imports write their tyres into the tyre library under the assets root: a scratch one, not the project's.
+    const ScopedDirectory assets;
+    EnginePaths::Overrides paths;
+    paths.assetsRoot = assets.Path();
+    EnginePaths::Initialize(paths);
+    AssetRegistry::Initialize(assets.Path());
     try
     {
         DdsDecodesBc1();
@@ -2093,6 +2488,10 @@ int main()
         AcdArchiveDecryptsAndRefusesAWrongFolder();
         CarDataBecomesASpec();
         ImportWritesTheCarsOwnData();
+        TyreSpecHoldsEveryKeyAndRoundTrips();
+        TyreLibraryStoresAndFindsTyres();
+        ImportPutsTheCarsTyresInTheLibrary();
+        ProbeCarTyreTerms();
         FourWheelDriveRearSteerAndBodyBecomeASpec();
         ImportWritesFourWheelDriveRearSteerAndBody();
         LiveAxleDataBecomesASolidAxle();
