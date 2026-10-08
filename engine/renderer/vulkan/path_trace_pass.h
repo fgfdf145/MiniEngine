@@ -102,6 +102,7 @@ class VulkanPathTracePass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_nearestSampler;
     // The atmosphere's multiple-scattering LUT (binding 18), for the air along the paths.
     TextureDescriptorBinding m_multiScattering;

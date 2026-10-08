@@ -55,6 +55,7 @@ class VulkanRtShadowPass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_nearestSampler;
     nvrhi::SamplerHandle m_linearSampler;
     // One set for all three shaders: 0 depth, 1 G-buffer normal, 2 motion vectors, 3 ShadowRaw

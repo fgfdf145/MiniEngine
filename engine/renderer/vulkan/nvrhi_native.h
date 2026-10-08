@@ -2,6 +2,7 @@
 
 // Deliberately not including "common.h"; see render_target_layout.h for why.
 #include <nvrhi/nvrhi.h>
+#include <nvrhi/vulkan.h>
 #include <vulkan/vulkan.h>
 
 #include <stdexcept>
@@ -24,6 +25,21 @@ VkHandle ToNative(nvrhi::Object object)
     {
         return static_cast<VkHandle>(object.integer);
     }
+}
+
+// The NVRHI format whose Vulkan format is format, or UNKNOWN. Where two share one (D24S8 and
+// X24G8_UINT), the depth format, which comes first.
+inline nvrhi::Format ToNvrhiFormat(VkFormat format)
+{
+    for (uint32_t index = 1; index < static_cast<uint32_t>(nvrhi::Format::COUNT); ++index)
+    {
+        const nvrhi::Format candidate = static_cast<nvrhi::Format>(index);
+        if (nvrhi::vulkan::convertFormat(candidate) == format)
+        {
+            return candidate;
+        }
+    }
+    return nvrhi::Format::UNKNOWN;
 }
 
 inline VkSampler NativeSampler(nvrhi::ISampler* sampler)

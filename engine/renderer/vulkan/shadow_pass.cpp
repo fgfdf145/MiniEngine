@@ -2,6 +2,7 @@
 
 #include "buffer.h"
 #include "format_support.h"
+#include "nvrhi_resources.h"
 #include "parallel_recorder.h"
 #include "pipeline.h"
 #include "sampler_settings.h"
@@ -22,24 +23,6 @@ namespace
 constexpr float kDepthBiasConstant = 1.0f;
 constexpr float kDepthBiasSlope = 2.0f;
 
-uint32_t FindMemoryType(
-    VkPhysicalDevice physicalDevice,
-    uint32_t typeFilter,
-    VkMemoryPropertyFlags properties)
-{
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
-    for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index)
-    {
-        if ((typeFilter & (1u << index)) != 0 &&
-            (memoryProperties.memoryTypes[index].propertyFlags & properties) == properties)
-        {
-            return index;
-        }
-    }
-    throw std::runtime_error("Failed to find a memory type for the shadow map");
-}
-
 VkFormatFeatureFlags QueryOptimalFeatures(VkPhysicalDevice physicalDevice, VkFormat format)
 {
     VkFormatProperties properties{};
@@ -56,6 +39,7 @@ VulkanShadowPass::VulkanShadowPass(
     VkDescriptorSetLayout materialSetLayout,
     uint32_t resolution)
     : m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_resolution(resolution)
 {
     // A throw out of a constructor skips the destructor; DestroyHandles skips null handles, so the
@@ -268,16 +252,7 @@ void VulkanShadowPass::CreateImage(VkPhysicalDevice physicalDevice)
     imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &m_image), "Failed to create shadow map image");
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, m_image, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_memory), "Failed to allocate shadow map memory");
-    CheckVulkan(vkBindImageMemory(m_device, m_image, m_memory, 0), "Failed to bind shadow map memory");
+    m_texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, m_image, "Failed to create shadow map image");
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -562,15 +537,8 @@ void VulkanShadowPass::DestroyHandles()
         vkDestroyImageView(m_device, m_arrayView, nullptr);
         m_arrayView = VK_NULL_HANDLE;
     }
-    if (m_image != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(m_device, m_image, nullptr);
-        m_image = VK_NULL_HANDLE;
-    }
-    if (m_memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_memory, nullptr);
-        m_memory = VK_NULL_HANDLE;
-    }
+    // The image and its memory go with the texture.
+    m_texture = nullptr;
+    m_image = VK_NULL_HANDLE;
 }
 }

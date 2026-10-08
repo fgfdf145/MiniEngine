@@ -127,6 +127,19 @@ A4 其余缓冲（uniform、大气、DDGI、光追、回读……）。
 
 验证：A/B 对比 A1 之前的基线（A1 与它逐像素相同），9 个场景逐像素相同；validation 无报告，退出时池里没有残留的块。
 
+**A3 完成（2026-10-09）**：渲染目标和各 pass 的图像。
+- `nvrhi_resources.{h,cpp}` 的 `CreateNvrhiImage`：把原生代码本来就写好的 `VkImageCreateInfo` 原样说成
+  `nvrhi::TextureDesc`（格式用 `ToNvrhiFormat`：反查 `nvrhi::vulkan::convertFormat`；1D/2D/3D/立方体/数组、层数、
+  mip、usage→`isShaderResource/isUAV/isRenderTarget`、`MUTABLE_FORMAT`→`isTypeless`），NVRHI 照旧给每张图独立的
+  device-local 内存（原来也是每张一次 `vkAllocateMemory`）；NVRHI 说不出的参数（别的 tiling、sharing、create flag、
+  usage）直接抛异常而不是悄悄造一张不同的图。NVRHI 给每张图都加两个 transfer usage。
+- `SceneRenderTargets`、`HistoryImagePair`（AO/GI/SSR/TAA/光追阴影/路径追踪的历史）、大气 LUT/云噪声/云阴影/云目标、
+  bloom 链、DDGI 图集、环境探针立方体、级联阴影和局部阴影图集、路径追踪层、散射预通道、TAA 的 DLSS 引导图和运动
+  矢量、透射拷贝：成员从 `VkDeviceMemory` 换成 `nvrhi::TextureHandle`，视图和所有 barrier 仍是原生的。引擎里
+  只剩 `VulkanTexture`（A2，virtual + 池）这一处图像不是这样建的。
+
+验证：A/B 对比 A1 之前的基线，在 A4 一起跑了全部 9 个场景（见 A4）；单独的 A3 编译通过，两个场景逐像素相同。
+
 ### Linux 上的验证（2026-10-09）
 
 云端会话是 Linux、没有 GPU，所以 `linux-debug` 修到能编能跑（`fix(build)` 提交：GCC 的几处兼容、静态 NVRHI 的

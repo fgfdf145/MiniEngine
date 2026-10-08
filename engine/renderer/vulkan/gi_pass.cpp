@@ -211,7 +211,8 @@ VulkanGiResolvePass::VulkanGiResolvePass(
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
@@ -227,7 +228,7 @@ VulkanGiResolvePass::VulkanGiResolvePass(
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "gi_resolve.comp.spv", sizeof(GiPushConstants), m_pipelineLayout, m_pipeline);
         m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 5, 2);
-        m_history.Create(m_physicalDevice, m_device, targets.GetExtent(), kHistoryFormat);
+        m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
         CreateDescriptorSets(targets);
     }
     catch (...)
@@ -293,7 +294,7 @@ void VulkanGiResolvePass::Record(
 void VulkanGiResolvePass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
     // The renderer resets the GI history at the same call sites, as it does the AO's.
-    m_history.Create(m_physicalDevice, m_device, targets.GetExtent(), kHistoryFormat);
+    m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
     CreateDescriptorSets(targets);
 }
 

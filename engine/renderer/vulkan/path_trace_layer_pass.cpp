@@ -2,6 +2,7 @@
 
 #include "compute_pass_util.h"
 #include "material_draw.h"
+#include "nvrhi_resources.h"
 
 #include <array>
 
@@ -48,7 +49,8 @@ VkAttachmentDescription RedrawnColor(VkFormat format)
 
 VulkanPathTraceLayerPass::VulkanPathTraceLayerPass(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     VkFormatProperties properties{};
     vkGetPhysicalDeviceFormatProperties(m_physicalDevice, kDepthFormat, &properties);
@@ -351,16 +353,7 @@ void VulkanPathTraceLayerPass::CreateImage(VkFormat format, VkExtent2D extent, I
     imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &image.image), "Failed to create a path traced layer image");
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, image.image, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(m_physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &image.memory), "Failed to allocate a path traced layer image");
-    CheckVulkan(vkBindImageMemory(m_device, image.image, image.memory, 0), "Failed to bind a path traced layer image");
+    image.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, image.image, "Failed to create a path traced layer image");
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -391,14 +384,7 @@ void VulkanPathTraceLayerPass::DestroyImages()
         {
             vkDestroyImageView(m_device, image->view, nullptr);
         }
-        if (image->image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, image->image, nullptr);
-        }
-        if (image->memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, image->memory, nullptr);
-        }
+        // The image and its memory go with the texture, released with the rest below.
         *image = Image{};
     }
 }

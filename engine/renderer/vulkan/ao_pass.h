@@ -94,6 +94,7 @@ class VulkanAoResolvePass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_nearestSampler;
     nvrhi::SamplerHandle m_linearSampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;

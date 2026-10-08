@@ -86,6 +86,7 @@ VulkanPathTracePass::VulkanPathTracePass(
     TextureDescriptorBinding multiScattering)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_multiScattering(multiScattering)
 {
     if (!rayScene.HasHardwareRayTracing())
@@ -170,7 +171,7 @@ void VulkanPathTracePass::CreateRaw(VkExtent2D extent)
 {
     if (!m_rawReady)
     {
-        m_raw.Create(m_physicalDevice, m_device, extent, kImageFormat);
+        m_raw.Create(m_nvrhiDevice, m_device, extent, kImageFormat);
         m_rawReady = true;
     }
 }
@@ -185,9 +186,9 @@ bool VulkanPathTracePass::Prepare(const SceneRenderTargets& targets)
     {
         const VkExtent2D extent = targets.GetExtent();
         CreateRaw(extent);
-        m_diffuseHistory.Create(m_physicalDevice, m_device, extent, kImageFormat);
-        m_specularHistory.Create(m_physicalDevice, m_device, extent, kImageFormat);
-        m_surfaceHistory.Create(m_physicalDevice, m_device, extent, kImageFormat);
+        m_diffuseHistory.Create(m_nvrhiDevice, m_device, extent, kImageFormat);
+        m_specularHistory.Create(m_nvrhiDevice, m_device, extent, kImageFormat);
+        m_surfaceHistory.Create(m_nvrhiDevice, m_device, extent, kImageFormat);
     }
     catch (...)
     {
@@ -211,10 +212,10 @@ bool VulkanPathTracePass::PrepareLayer(const SceneRenderTargets& targets, const 
         CreateRaw(targets.GetExtent());
         const VkExtent2D extent{(targets.GetExtent().width + (1u << shift) - 1u) >> shift, (targets.GetExtent().height + (1u << shift) - 1u) >> shift};
         m_layerShift = shift;
-        m_layerDiffuseHistory.Create(m_physicalDevice, m_device, extent, kImageFormat);
-        m_layerSpecularHistory.Create(m_physicalDevice, m_device, extent, kImageFormat);
-        m_layerSurfaceHistory.Create(m_physicalDevice, m_device, extent, kImageFormat);
-        m_layerResult.Create(m_physicalDevice, m_device, extent, kImageFormat);
+        m_layerDiffuseHistory.Create(m_nvrhiDevice, m_device, extent, kImageFormat);
+        m_layerSpecularHistory.Create(m_nvrhiDevice, m_device, extent, kImageFormat);
+        m_layerSurfaceHistory.Create(m_nvrhiDevice, m_device, extent, kImageFormat);
+        m_layerResult.Create(m_nvrhiDevice, m_device, extent, kImageFormat);
     }
     catch (...)
     {

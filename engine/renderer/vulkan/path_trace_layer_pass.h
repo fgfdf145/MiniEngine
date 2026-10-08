@@ -68,7 +68,7 @@ class VulkanPathTraceLayerPass : public IScenePass
     struct Image
     {
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::TextureHandle texture;
         VkImageView view = VK_NULL_HANDLE;
     };
     enum SurfaceImage : uint32_t
@@ -87,6 +87,7 @@ class VulkanPathTraceLayerPass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     bool m_supported = false;
     nvrhi::SamplerHandle m_sampler;
     std::array<VkFormat, kSurfaceImageCount> m_surfaceFormats{};

@@ -1,5 +1,7 @@
 #include "bloom_pass.h"
 
+#include "nvrhi_resources.h"
+
 #include <engine/renderer/bloom_chain.h>
 
 #include <algorithm>
@@ -67,7 +69,8 @@ VulkanBloomPass::VulkanBloomPass(
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
@@ -231,16 +234,7 @@ void VulkanBloomPass::CreateChain(VkExtent2D extent)
     imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &m_chainImage), "Failed to create the bloom chain");
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, m_chainImage, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(m_physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_chainMemory), "Failed to allocate the bloom chain");
-    CheckVulkan(vkBindImageMemory(m_device, m_chainImage, m_chainMemory, 0), "Failed to bind the bloom chain");
+    m_chainTexture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, m_chainImage, "Failed to create the bloom chain");
 
     // One view per level: a storage view may name only one level, and sampling one level through
     // its own view keeps the downsample from reading a level it is writing.
@@ -265,16 +259,9 @@ void VulkanBloomPass::DestroyChain()
         vkDestroyImageView(m_device, view, nullptr);
     }
     m_levelViews.clear();
-    if (m_chainImage != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(m_device, m_chainImage, nullptr);
-        m_chainImage = VK_NULL_HANDLE;
-    }
-    if (m_chainMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_chainMemory, nullptr);
-        m_chainMemory = VK_NULL_HANDLE;
-    }
+    // The image and its memory go with the texture.
+    m_chainTexture = nullptr;
+    m_chainImage = VK_NULL_HANDLE;
     m_levelExtents.clear();
 }
 

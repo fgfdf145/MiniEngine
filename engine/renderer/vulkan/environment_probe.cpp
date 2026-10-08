@@ -1,5 +1,6 @@
 #include "environment_probe.h"
 
+#include "nvrhi_resources.h"
 #include "pipeline.h"
 #include "sampler_settings.h"
 
@@ -78,7 +79,8 @@ VulkanEnvironmentProbe::VulkanEnvironmentProbe(
     VkPipelineCache pipelineCache,
     VkDescriptorSetLayout frameSetLayout)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
@@ -252,16 +254,7 @@ VulkanEnvironmentProbe::CubeImage VulkanEnvironmentProbe::CreateCube(uint32_t mi
     imageInfo.usage = usage;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &cube.image), "Failed to create an environment cube");
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, cube.image, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &cube.memory), "Failed to allocate an environment cube");
-    CheckVulkan(vkBindImageMemory(m_device, cube.image, cube.memory, 0), "Failed to bind an environment cube");
+    cube.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, cube.image, "Failed to create an environment cube");
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -374,20 +367,6 @@ void VulkanEnvironmentProbe::CreatePipelines(VkPipelineCache pipelineCache, VkDe
     }
 }
 
-uint32_t VulkanEnvironmentProbe::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
-{
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memoryProperties);
-    for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index)
-    {
-        if ((typeFilter & (1u << index)) != 0 && (memoryProperties.memoryTypes[index].propertyFlags & properties) == properties)
-        {
-            return index;
-        }
-    }
-    throw std::runtime_error("Failed to find a memory type for the environment probe");
-}
-
 void VulkanEnvironmentProbe::DestroyHandles()
 {
     for (VkPipeline* pipeline : {&m_capturePipeline, &m_prefilterPipeline})
@@ -434,14 +413,7 @@ void VulkanEnvironmentProbe::DestroyHandles()
         {
             vkDestroyImageView(m_device, cube->cubeView, nullptr);
         }
-        if (cube->image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, cube->image, nullptr);
-        }
-        if (cube->memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, cube->memory, nullptr);
-        }
+        // The image and its memory go with the texture, released with the rest below.
         *cube = CubeImage{};
     }
 }

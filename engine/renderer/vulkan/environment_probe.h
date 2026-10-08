@@ -51,7 +51,7 @@ class VulkanEnvironmentProbe
     struct CubeImage
     {
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::TextureHandle texture;
         VkImageView cubeView = VK_NULL_HANDLE;
     };
 
@@ -60,11 +60,11 @@ class VulkanEnvironmentProbe
     void CreateDescriptors();
     void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout);
     void RecordMipChain(VkCommandBuffer commandBuffer) const;
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void DestroyHandles();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_sampler;
     CubeImage m_radiance;
     CubeImage m_prefiltered;

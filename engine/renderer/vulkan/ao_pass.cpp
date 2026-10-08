@@ -249,7 +249,8 @@ VulkanAoResolvePass::VulkanAoResolvePass(
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
@@ -265,7 +266,7 @@ VulkanAoResolvePass::VulkanAoResolvePass(
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "vbao_resolve.comp.spv", sizeof(AoPushConstants), m_pipelineLayout, m_pipeline);
         m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 2);
-        m_history.Create(m_physicalDevice, m_device, targets.GetExtent(), kHistoryFormat);
+        m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
         CreateDescriptorSets(targets);
     }
     catch (...)
@@ -323,7 +324,7 @@ void VulkanAoResolvePass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
     // The renderer resets TemporalHistory at the same call sites, so the next frame discards the new
     // images' undefined contents.
-    m_history.Create(m_physicalDevice, m_device, targets.GetExtent(), kHistoryFormat);
+    m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
     CreateDescriptorSets(targets);
 }
 

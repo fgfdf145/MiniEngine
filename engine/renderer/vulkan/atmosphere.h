@@ -75,7 +75,7 @@ class VulkanAtmosphere
     struct LutImage
     {
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::TextureHandle texture;
         VkImageView view = VK_NULL_HANDLE;
     };
 
@@ -180,6 +180,7 @@ class VulkanAtmosphere
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_sampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     // The view whose set the shared passes in Record bind: its aerial perspective volume and clouds

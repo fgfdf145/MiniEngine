@@ -45,6 +45,7 @@ class VulkanBloomPass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_sampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
@@ -53,7 +54,7 @@ class VulkanBloomPass : public IScenePass
 
     std::vector<glm::uvec2> m_levelExtents;
     VkImage m_chainImage = VK_NULL_HANDLE;
-    VkDeviceMemory m_chainMemory = VK_NULL_HANDLE;
+    nvrhi::TextureHandle m_chainTexture;
     std::vector<VkImageView> m_levelViews;
 
     // Per frame slot: SceneTaa into level 0, and level 0 back into SceneTaa.

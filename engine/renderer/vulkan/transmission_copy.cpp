@@ -1,5 +1,6 @@
 #include "transmission_copy.h"
 
+#include "nvrhi_resources.h"
 #include "sampler_settings.h"
 
 #include <array>
@@ -46,7 +47,8 @@ void RecordBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags src, VkPi
 }
 
 VulkanTransmissionImage::VulkanTransmissionImage(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice)
-    : m_device(device)
+    : m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
@@ -74,16 +76,7 @@ VulkanTransmissionImage::VulkanTransmissionImage(VkPhysicalDevice physicalDevice
                           VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &m_image), "Failed to create the transmission copy");
-
-        VkMemoryRequirements requirements{};
-        vkGetImageMemoryRequirements(m_device, m_image, &requirements);
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_memory), "Failed to allocate the transmission copy");
-        CheckVulkan(vkBindImageMemory(m_device, m_image, m_memory, 0), "Failed to bind the transmission copy");
+        m_texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, m_image, "Failed to create the transmission copy");
 
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -152,16 +145,9 @@ void VulkanTransmissionImage::Destroy()
             *view = VK_NULL_HANDLE;
         }
     }
-    if (m_image != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(m_device, m_image, nullptr);
-        m_image = VK_NULL_HANDLE;
-    }
-    if (m_memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_memory, nullptr);
-        m_memory = VK_NULL_HANDLE;
-    }
+    // The image and its memory go with the texture.
+    m_texture = nullptr;
+    m_image = VK_NULL_HANDLE;
 }
 
 VulkanTransmissionCopyPass::VulkanTransmissionCopyPass(

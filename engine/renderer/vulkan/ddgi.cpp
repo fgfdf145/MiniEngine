@@ -1,6 +1,7 @@
 #include "ddgi.h"
 
 #include "compute_pass_util.h"
+#include "nvrhi_resources.h"
 
 #include <algorithm>
 #include <array>
@@ -55,6 +56,7 @@ VulkanDdgi::VulkanDdgi(
     bool rayQuery)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_frameCount(frameCount)
 {
     try
@@ -315,19 +317,10 @@ VulkanDdgi::Image VulkanDdgi::CreateAtlas(uint32_t texelsPerProbe, VkFormat form
     imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &atlas.image), "Failed to create a DDGI atlas");
+    atlas.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, atlas.image, "Failed to create a DDGI atlas");
     // Assigned as each handle exists, so DestroyHandles releases a partial atlas.
     Image& target = texelsPerProbe == kDdgiIrradianceTexels ? m_irradiance : m_visibility;
     target = atlas;
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, atlas.image, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(m_physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &target.memory), "Failed to allocate a DDGI atlas");
-    CheckVulkan(vkBindImageMemory(m_device, target.image, target.memory, 0), "Failed to bind a DDGI atlas");
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -424,14 +417,7 @@ void VulkanDdgi::DestroyHandles()
         {
             vkDestroyImageView(m_device, image->view, nullptr);
         }
-        if (image->image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, image->image, nullptr);
-        }
-        if (image->memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, image->memory, nullptr);
-        }
+        // The image and its memory go with the texture, released with the rest below.
         *image = Image{};
     }
 }

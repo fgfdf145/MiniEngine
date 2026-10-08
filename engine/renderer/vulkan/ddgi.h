@@ -73,7 +73,7 @@ class VulkanDdgi
     struct Image
     {
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::TextureHandle texture;
         VkImageView view = VK_NULL_HANDLE;
     };
     struct Buffer
@@ -89,6 +89,7 @@ class VulkanDdgi
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     uint32_t m_frameCount = 0;
     Image m_irradiance;
     Image m_visibility;

@@ -4,6 +4,7 @@
 #include "render_target_layout.h"
 
 #include <imgui.h>
+#include <nvrhi/nvrhi.h>
 
 #include <array>
 #include <vector>
@@ -12,7 +13,8 @@ namespace me
 {
 
 // Owns every offscreen image the scene passes use, their views and their memory, plus the ImGui
-// texture bindings needed to display them. Render passes and framebuffers deliberately live in
+// texture bindings needed to display them. The images are NVRHI's (each with memory of its own, as
+// before); their views and every barrier on them are still the engine's. Render passes and framebuffers deliberately live in
 // the passes that use them, not here: a pass knows its own attachment set, and keeping them apart
 // is what lets a resize rebuild images without touching a render pass the pipelines were built
 // against.
@@ -40,6 +42,7 @@ class SceneRenderTargets
     SceneRenderTargets(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkFormat ldrFormat,
         VkExtent2D renderExtent,
         VkExtent2D outputExtent,
@@ -99,8 +102,8 @@ class SceneRenderTargets
   private:
     struct TargetImage
     {
+        nvrhi::TextureHandle texture;
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
         // Only created when the target's aspect has more than one bit; see GetSampledView.
         VkImageView sampledView = VK_NULL_HANDLE;
@@ -127,7 +130,6 @@ class SceneRenderTargets
     void SelectFormats(VkFormat ldrFormat);
     void CreateImages(uint32_t swapchainImageCount);
     void DestroyImages(std::array<TargetDescription, kRenderTargetCount>& targets) const;
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void CreateImage(VkFormat format, VkImageUsageFlags usage, VkExtent2D extent, bool mutableFormat, TargetImage& target) const;
     VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspect) const;
     TargetDescription& Describe(RenderTargetId target);
@@ -135,6 +137,7 @@ class SceneRenderTargets
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     VkExtent2D m_extent{};
     VkExtent2D m_outputExtent{};
     uint32_t m_swapchainImageCount = 0;

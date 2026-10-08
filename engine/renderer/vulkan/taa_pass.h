@@ -55,7 +55,7 @@ class VulkanTaaPass : public IScenePass
     struct GuideImage
     {
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::TextureHandle texture;
         VkImageView view = VK_NULL_HANDLE;
         VkFormat format = VK_FORMAT_UNDEFINED;
     };
@@ -69,6 +69,7 @@ class VulkanTaaPass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_nearestSampler;
     nvrhi::SamplerHandle m_linearSampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
@@ -86,7 +87,7 @@ class VulkanTaaPass : public IScenePass
     VkPipeline m_motionPipeline = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_motionDescriptorSets;
     VkImage m_motionImage = VK_NULL_HANDLE;
-    VkDeviceMemory m_motionMemory = VK_NULL_HANDLE;
+    nvrhi::TextureHandle m_motionTexture;
     VkImageView m_motionView = VK_NULL_HANDLE;
     // Diffuse albedo, specular albedo, normal and roughness, written before a ray reconstruction
     // evaluation; one set per transient copy names the G-buffer they are made from.

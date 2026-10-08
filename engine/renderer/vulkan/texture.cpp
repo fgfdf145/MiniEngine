@@ -2,54 +2,12 @@
 
 #include "nvrhi_native.h"
 
-#include <nvrhi/vulkan.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
 namespace me
 {
-
-namespace
-{
-// The formats VulkanTexture makes, as NVRHI names them.
-nvrhi::Format ToNvrhiFormat(VkFormat format)
-{
-    nvrhi::Format result = nvrhi::Format::UNKNOWN;
-    switch (format)
-    {
-    case VK_FORMAT_R8G8B8A8_SRGB:
-        result = nvrhi::Format::SRGBA8_UNORM;
-        break;
-    case VK_FORMAT_R8G8B8A8_UNORM:
-        result = nvrhi::Format::RGBA8_UNORM;
-        break;
-    case VK_FORMAT_R16G16B16A16_SFLOAT:
-        result = nvrhi::Format::RGBA16_FLOAT;
-        break;
-    case VK_FORMAT_R32G32B32A32_SFLOAT:
-        result = nvrhi::Format::RGBA32_FLOAT;
-        break;
-    case VK_FORMAT_BC7_SRGB_BLOCK:
-        result = nvrhi::Format::BC7_UNORM_SRGB;
-        break;
-    case VK_FORMAT_BC7_UNORM_BLOCK:
-        result = nvrhi::Format::BC7_UNORM;
-        break;
-    case VK_FORMAT_BC5_UNORM_BLOCK:
-        result = nvrhi::Format::BC5_UNORM;
-        break;
-    default:
-        break;
-    }
-    if (result == nvrhi::Format::UNKNOWN || nvrhi::vulkan::convertFormat(result) != format)
-    {
-        throw std::runtime_error("A texture format NVRHI has no name for");
-    }
-    return result;
-}
-}
 
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
@@ -469,6 +427,10 @@ void VulkanTexture::CreateImage(uint32_t width, uint32_t height, uint32_t mipLev
     desc.height = height;
     desc.mipLevels = mipLevels;
     desc.format = ToNvrhiFormat(format);
+    if (desc.format == nvrhi::Format::UNKNOWN)
+    {
+        throw std::runtime_error("A texture format NVRHI has no name for");
+    }
     desc.dimension = nvrhi::TextureDimension::Texture2D;
     desc.isShaderResource = true;
     desc.isVirtual = true;

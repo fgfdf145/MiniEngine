@@ -1,5 +1,6 @@
 #include "compute_pass_util.h"
 
+#include "nvrhi_resources.h"
 #include "pipeline.h"
 #include "sampler_settings.h"
 
@@ -183,7 +184,7 @@ HistoryImagePair::~HistoryImagePair()
     Destroy();
 }
 
-void HistoryImagePair::Create(VkPhysicalDevice physicalDevice, VkDevice device, VkExtent2D extent, VkFormat format, VkImageUsageFlags extraUsage)
+void HistoryImagePair::Create(nvrhi::IDevice* nvrhiDevice, VkDevice device, VkExtent2D extent, VkFormat format, VkImageUsageFlags extraUsage)
 {
     Destroy();
     m_device = device;
@@ -201,16 +202,7 @@ void HistoryImagePair::Create(VkPhysicalDevice physicalDevice, VkDevice device, 
         imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | extraUsage;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &history.image), "Failed to create a history image");
-
-        VkMemoryRequirements requirements{};
-        vkGetImageMemoryRequirements(m_device, history.image, &requirements);
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &history.memory), "Failed to allocate history image memory");
-        CheckVulkan(vkBindImageMemory(m_device, history.image, history.memory, 0), "Failed to bind history image memory");
+        history.texture = CreateNvrhiImage(nvrhiDevice, imageInfo, history.image, "Failed to create a history image");
 
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -230,14 +222,7 @@ void HistoryImagePair::Destroy()
         {
             vkDestroyImageView(m_device, history.view, nullptr);
         }
-        if (history.image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, history.image, nullptr);
-        }
-        if (history.memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, history.memory, nullptr);
-        }
+        // The image and its memory go with NVRHI's texture.
         history = Image{};
     }
 }

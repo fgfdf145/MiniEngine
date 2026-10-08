@@ -50,7 +50,7 @@ class VulkanScatterPass : public IScenePass
     struct Image
     {
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::TextureHandle texture;
         VkImageView view = VK_NULL_HANDLE;
     };
 
@@ -65,6 +65,7 @@ class VulkanScatterPass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
     nvrhi::SamplerHandle m_sampler;
     VkExtent2D m_extent{};

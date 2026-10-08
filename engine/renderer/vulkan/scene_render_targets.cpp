@@ -2,6 +2,7 @@
 
 #include "command.h"
 #include "format_support.h"
+#include "nvrhi_resources.h"
 
 #include <third_party/imgui_backends/imgui_impl_vulkan.h>
 
@@ -56,12 +57,14 @@ ImTextureID ToImTextureId(Handle handle)
 SceneRenderTargets::SceneRenderTargets(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkFormat ldrFormat,
     VkExtent2D renderExtent,
     VkExtent2D outputExtent,
     uint32_t swapchainImageCount)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_extent({std::max(renderExtent.width, 1u),
                 std::max(renderExtent.height, 1u)}),
       m_outputExtent({std::max(outputExtent.width, 1u),
@@ -486,34 +489,11 @@ void SceneRenderTargets::DestroyImages(std::array<TargetDescription, kRenderTarg
             {
                 vkDestroyImageView(m_device, image.view, nullptr);
             }
-            if (image.image != VK_NULL_HANDLE)
-            {
-                vkDestroyImage(m_device, image.image, nullptr);
-            }
-            if (image.memory != VK_NULL_HANDLE)
-            {
-                vkFreeMemory(m_device, image.memory, nullptr);
-            }
+            // The image and its memory go with NVRHI's texture.
+            image.texture = nullptr;
+            image.image = VK_NULL_HANDLE;
         }
     }
-}
-
-uint32_t SceneRenderTargets::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
-{
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memoryProperties);
-
-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
-    {
-        const bool typeMatches = (typeFilter & (1u << i)) != 0;
-        const bool propertiesMatch = (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties;
-        if (typeMatches && propertiesMatch)
-        {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("Failed to find suitable viewport image memory type");
 }
 
 void SceneRenderTargets::CreateImage(VkFormat format, VkImageUsageFlags usage, VkExtent2D extent, bool mutableFormat, TargetImage& target) const
@@ -533,20 +513,11 @@ void SceneRenderTargets::CreateImage(VkFormat format, VkImageUsageFlags usage, V
     imageInfo.usage = usage;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &target.image), "Failed to create viewport image");
+    target.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, target.image, "Failed to create viewport image");
 
     VkMemoryRequirements memoryRequirements{};
     vkGetImageMemoryRequirements(m_device, target.image, &memoryRequirements);
-
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = memoryRequirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &target.memory), "Failed to allocate viewport image memory");
     target.bytes = memoryRequirements.size;
-    CheckVulkan(vkBindImageMemory(m_device, target.image, target.memory, 0), "Failed to bind viewport image memory");
 }
 
 VkImageView SceneRenderTargets::CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspect) const

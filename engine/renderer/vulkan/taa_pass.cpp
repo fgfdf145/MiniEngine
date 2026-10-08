@@ -1,6 +1,7 @@
 #include "taa_pass.h"
 
 #include "dlss.h"
+#include "nvrhi_resources.h"
 
 #include <array>
 
@@ -97,7 +98,8 @@ VulkanTaaPass::VulkanTaaPass(
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
@@ -121,7 +123,7 @@ VulkanTaaPass::VulkanTaaPass(
             m_pipelineLayout,
             m_pipeline);
         m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 2);
-        m_history.Create(m_physicalDevice, m_device, targets.GetOutputExtent(), kHistoryFormat, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        m_history.Create(m_nvrhiDevice, m_device, targets.GetOutputExtent(), kHistoryFormat, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 
         static constexpr std::array<VkDescriptorType, 3> kMotionTypes = {
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -385,7 +387,7 @@ void VulkanTaaPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
     // The renderer resets the TAA TemporalHistory at the same call sites, so the next frame
     // discards the new images' undefined contents. The history holds the output; the motion
     // vectors are at the render size.
-    m_history.Create(m_physicalDevice, m_device, targets.GetOutputExtent(), kHistoryFormat, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    m_history.Create(m_nvrhiDevice, m_device, targets.GetOutputExtent(), kHistoryFormat, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     CreateMotionImage(targets.GetExtent());
     CreateGuideImages(targets.GetExtent());
     CreateDescriptorSets(targets);
@@ -410,15 +412,7 @@ void VulkanTaaPass::CreateGuideImages(VkExtent2D extent)
         imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &guide.image), "Failed to create a ray reconstruction guide image");
-        VkMemoryRequirements requirements{};
-        vkGetImageMemoryRequirements(m_device, guide.image, &requirements);
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(m_physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &guide.memory), "Failed to allocate a ray reconstruction guide image");
-        CheckVulkan(vkBindImageMemory(m_device, guide.image, guide.memory, 0), "Failed to bind a ray reconstruction guide image");
+        guide.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, guide.image, "Failed to create a ray reconstruction guide image");
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewInfo.image = guide.image;
@@ -437,14 +431,7 @@ void VulkanTaaPass::DestroyGuideImages()
         {
             vkDestroyImageView(m_device, guide.view, nullptr);
         }
-        if (guide.image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, guide.image, nullptr);
-        }
-        if (guide.memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, guide.memory, nullptr);
-        }
+        // The image and its memory go with the texture, released with the rest below.
         guide = GuideImage{};
     }
 }
@@ -464,16 +451,7 @@ void VulkanTaaPass::CreateMotionImage(VkExtent2D extent)
     imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &m_motionImage), "Failed to create the DLSS motion vector image");
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, m_motionImage, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(m_physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_motionMemory), "Failed to allocate the DLSS motion vector image");
-    CheckVulkan(vkBindImageMemory(m_device, m_motionImage, m_motionMemory, 0), "Failed to bind the DLSS motion vector image");
+    m_motionTexture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, m_motionImage, "Failed to create the DLSS motion vector image");
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -491,16 +469,9 @@ void VulkanTaaPass::DestroyMotionImage()
         vkDestroyImageView(m_device, m_motionView, nullptr);
         m_motionView = VK_NULL_HANDLE;
     }
-    if (m_motionImage != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(m_device, m_motionImage, nullptr);
-        m_motionImage = VK_NULL_HANDLE;
-    }
-    if (m_motionMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_motionMemory, nullptr);
-        m_motionMemory = VK_NULL_HANDLE;
-    }
+    // The image and its memory go with the texture.
+    m_motionTexture = nullptr;
+    m_motionImage = VK_NULL_HANDLE;
 }
 
 void VulkanTaaPass::CreateDescriptorSets(const SceneRenderTargets& targets)

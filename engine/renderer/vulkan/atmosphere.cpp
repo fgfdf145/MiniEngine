@@ -1,6 +1,7 @@
 #include "atmosphere.h"
 
 #include "command.h"
+#include "nvrhi_resources.h"
 #include "sampler_settings.h"
 
 #include "pipeline.h"
@@ -94,7 +95,8 @@ VulkanAtmosphere::VulkanAtmosphere(
     VkPipelineCache pipelineCache,
     VkDescriptorSetLayout frameSetLayout)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
@@ -189,14 +191,7 @@ void VulkanAtmosphere::DestroyImage(VkDevice device, LutImage& image)
     {
         vkDestroyImageView(device, image.view, nullptr);
     }
-    if (image.image != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(device, image.image, nullptr);
-    }
-    if (image.memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(device, image.memory, nullptr);
-    }
+    // The image and its memory go with the texture, released with the rest below.
     image = LutImage{};
 }
 
@@ -395,16 +390,7 @@ void VulkanAtmosphere::CreateCloudImage(LutImage& image, VkExtent2D extent, VkIm
     imageInfo.usage = usage;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &image.image), (std::string("Failed to create the ") + name).c_str());
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, image.image, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &image.memory), (std::string("Failed to allocate the ") + name).c_str());
-    CheckVulkan(vkBindImageMemory(m_device, image.image, image.memory, 0), (std::string("Failed to bind the ") + name).c_str());
+    image.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, image.image, (std::string("Failed to create the ") + name).c_str());
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -680,16 +666,7 @@ void VulkanAtmosphere::CreateLutImage(LutImage& image, VkExtent3D extent)
     imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &image.image), "Failed to create an atmosphere LUT");
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, image.image, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &image.memory), "Failed to allocate an atmosphere LUT");
-    CheckVulkan(vkBindImageMemory(m_device, image.image, image.memory, 0), "Failed to bind an atmosphere LUT");
+    image.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, image.image, "Failed to create an atmosphere LUT");
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -729,16 +706,7 @@ void VulkanAtmosphere::CreateImages()
         imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &image.image), "Failed to create a cloud noise volume");
-
-        VkMemoryRequirements requirements{};
-        vkGetImageMemoryRequirements(m_device, image.image, &requirements);
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &image.memory), "Failed to allocate a cloud noise volume");
-        CheckVulkan(vkBindImageMemory(m_device, image.image, image.memory, 0), "Failed to bind a cloud noise volume");
+        image.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, image.image, "Failed to create a cloud noise volume");
 
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -762,16 +730,7 @@ void VulkanAtmosphere::CreateImages()
         imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &m_cloudShadow.image), "Failed to create the cloud shadow map");
-
-        VkMemoryRequirements requirements{};
-        vkGetImageMemoryRequirements(m_device, m_cloudShadow.image, &requirements);
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_cloudShadow.memory), "Failed to allocate the cloud shadow map");
-        CheckVulkan(vkBindImageMemory(m_device, m_cloudShadow.image, m_cloudShadow.memory, 0), "Failed to bind the cloud shadow map");
+        m_cloudShadow.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, m_cloudShadow.image, "Failed to create the cloud shadow map");
 
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -1000,14 +959,7 @@ void VulkanAtmosphere::DestroyHandles()
     {
         vkDestroyImageView(m_device, m_cloudShadow.view, nullptr);
     }
-    if (m_cloudShadow.image != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(m_device, m_cloudShadow.image, nullptr);
-    }
-    if (m_cloudShadow.memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_cloudShadow.memory, nullptr);
-    }
+    // The image and its memory go with the texture, released with the rest below.
     m_cloudShadow = LutImage{};
     for (LutImage& image : m_cloudNoise)
     {
@@ -1015,14 +967,7 @@ void VulkanAtmosphere::DestroyHandles()
         {
             vkDestroyImageView(m_device, image.view, nullptr);
         }
-        if (image.image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, image.image, nullptr);
-        }
-        if (image.memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, image.memory, nullptr);
-        }
+        // The image and its memory go with the texture, released with the rest below.
         image = LutImage{};
     }
     for (LutImage& image : m_images)
@@ -1031,14 +976,7 @@ void VulkanAtmosphere::DestroyHandles()
         {
             vkDestroyImageView(m_device, image.view, nullptr);
         }
-        if (image.image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, image.image, nullptr);
-        }
-        if (image.memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, image.memory, nullptr);
-        }
+        // The image and its memory go with the texture, released with the rest below.
         image = LutImage{};
     }
 }

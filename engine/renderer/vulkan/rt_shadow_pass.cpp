@@ -58,7 +58,8 @@ VulkanRtShadowPass::VulkanRtShadowPass(
     VkDescriptorSetLayout frameSetLayout,
     const VulkanRayScene& rayScene)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
@@ -86,7 +87,7 @@ VulkanRtShadowPass::VulkanRtShadowPass(
                 m_device, pipelineCache, traceLayouts, "rt_shadow_trace.comp.spv", sizeof(RtShadowPushConstants), m_tracePipelineLayout, m_tracePipeline);
         }
         m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 4);
-        m_history.Create(m_physicalDevice, m_device, targets.GetExtent(), kHistoryFormat);
+        m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
         CreateDescriptorSets(targets);
     }
     catch (...)
@@ -165,7 +166,7 @@ void VulkanRtShadowPass::Record(
 void VulkanRtShadowPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
     // The renderer resets the history bookkeeping at the same call sites.
-    m_history.Create(m_physicalDevice, m_device, targets.GetExtent(), kHistoryFormat);
+    m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
     CreateDescriptorSets(targets);
 }
 

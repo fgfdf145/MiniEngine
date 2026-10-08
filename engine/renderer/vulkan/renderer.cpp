@@ -2174,6 +2174,7 @@ void VulkanRenderer::CreateSwapchainResources()
         m_view.targets = std::make_unique<SceneRenderTargets>(
             m_device->GetPhysicalDevice(),
             m_device->GetHandle(),
+            m_nvrhi->Get(),
             ldrFormat,
             viewportExtent,
             viewportExtent,
@@ -3377,6 +3378,7 @@ std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D ex
     view->targets = std::make_unique<SceneRenderTargets>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_view.targets->GetFormat(RenderTargetId::SceneLdr),
         extent,
         extent,

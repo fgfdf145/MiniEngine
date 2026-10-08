@@ -120,10 +120,11 @@ class VulkanShadowPass
     void DestroyHandles();
 
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     uint32_t m_resolution = 0;
     VkFormat m_format = VK_FORMAT_UNDEFINED;
     VkImage m_image = VK_NULL_HANDLE;
-    VkDeviceMemory m_memory = VK_NULL_HANDLE;
+    nvrhi::TextureHandle m_texture;
     VkImageView m_arrayView = VK_NULL_HANDLE;
     std::array<VkImageView, kShadowCascadeCount> m_layerViews{};
     std::array<VkFramebuffer, kShadowCascadeCount> m_framebuffers{};

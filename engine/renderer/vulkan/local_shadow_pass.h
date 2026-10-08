@@ -52,9 +52,10 @@ class VulkanLocalShadowPass
     void DestroyHandles();
 
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     VkFormat m_format = VK_FORMAT_UNDEFINED;
     VkImage m_image = VK_NULL_HANDLE;
-    VkDeviceMemory m_memory = VK_NULL_HANDLE;
+    nvrhi::TextureHandle m_texture;
     VkImageView m_view = VK_NULL_HANDLE;
     VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
     nvrhi::SamplerHandle m_sampler;

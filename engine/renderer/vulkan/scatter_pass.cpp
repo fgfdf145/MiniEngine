@@ -2,6 +2,7 @@
 
 #include "compute_pass_util.h"
 #include "material_draw.h"
+#include "nvrhi_resources.h"
 #include "reverse_depth.h"
 
 #include <array>
@@ -29,7 +30,8 @@ VkImageMemoryBarrier InitialBarrier(VkImage image, VkImageAspectFlags aspect)
 
 VulkanScatterPass::VulkanScatterPass(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
@@ -199,16 +201,7 @@ void VulkanScatterPass::CreateImage(VkFormat format, VkImageUsageFlags usage, Vk
     imageInfo.usage = usage;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &image.image), "Failed to create a scatter pre-pass image");
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, image.image, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(m_physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &image.memory), "Failed to allocate a scatter pre-pass image");
-    CheckVulkan(vkBindImageMemory(m_device, image.image, image.memory, 0), "Failed to bind a scatter pre-pass image");
+    image.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, image.image, "Failed to create a scatter pre-pass image");
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -255,14 +248,7 @@ void VulkanScatterPass::DestroyImages()
         {
             vkDestroyImageView(m_device, image->view, nullptr);
         }
-        if (image->image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, image->image, nullptr);
-        }
-        if (image->memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, image->memory, nullptr);
-        }
+        // The image and its memory go with the texture, released with the rest below.
         *image = Image{};
     }
 }

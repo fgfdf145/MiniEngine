@@ -85,8 +85,9 @@ class HistoryImagePair
     HistoryImagePair(const HistoryImagePair&) = delete;
     HistoryImagePair& operator=(const HistoryImagePair&) = delete;
 
-    // Storage and sampled, plus extraUsage (TAA's are copied into when DLSS writes the frame).
-    void Create(VkPhysicalDevice physicalDevice, VkDevice device, VkExtent2D extent, VkFormat format, VkImageUsageFlags extraUsage = 0);
+    // Storage and sampled, plus extraUsage (TAA's are copied into when DLSS writes the frame). The images
+    // are NVRHI's, each with memory of its own.
+    void Create(nvrhi::IDevice* nvrhiDevice, VkDevice device, VkExtent2D extent, VkFormat format, VkImageUsageFlags extraUsage = 0);
     void Destroy();
 
     VkImage GetImage(uint32_t index) const;
@@ -103,8 +104,8 @@ class HistoryImagePair
   private:
     struct Image
     {
+        nvrhi::TextureHandle texture;
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
     };
 
