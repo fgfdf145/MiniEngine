@@ -19,12 +19,7 @@ namespace me
 class VulkanGiTracePass : public IScenePass
 {
   public:
-    VulkanGiTracePass(
-        VkDevice device,
-        nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
-        const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout);
+    VulkanGiTracePass(nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout);
     ~VulkanGiTracePass() override;
 
     VulkanGiTracePass(const VulkanGiTracePass&) = delete;
@@ -39,31 +34,22 @@ class VulkanGiTracePass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkDevice m_device = VK_NULL_HANDLE;
-    nvrhi::SamplerHandle m_sampler;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
 };
 
 // Spatial filter plus temporal accumulation into SceneGi, with its history outside the layout
 // tracker as VulkanAoResolvePass keeps its own. The history is RGBA32F: rgb and, packed into alpha,
-// the view distance and the sample count (gi_resolve.comp).
+// the view distance and the sample count (gi_resolve.comp). The trace and the resolve record through
+// NVRHI (NvrhiPassScope); GiRaw, SceneGi and the history images come and go in GENERAL.
 class VulkanGiResolvePass : public IScenePass
 {
   public:
-    VulkanGiResolvePass(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
-        nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
-        const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout);
+    VulkanGiResolvePass(nvrhi::IDevice* nvrhiDevice, VkDevice device, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout);
     ~VulkanGiResolvePass() override;
 
     VulkanGiResolvePass(const VulkanGiResolvePass&) = delete;
@@ -78,20 +64,15 @@ class VulkanGiResolvePass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-    VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
-    nvrhi::SamplerHandle m_sampler;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
     HistoryImagePair m_history;
-    // Indexed by frameSlot * 2 + readIndex, as VulkanAoResolvePass's.
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    // Indexed by copy * 2 + readIndex, as VulkanAoResolvePass's.
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
 };
 
 // A full-screen triangle over the HDR target, blended ONE + ONE, that adds SceneGi through each

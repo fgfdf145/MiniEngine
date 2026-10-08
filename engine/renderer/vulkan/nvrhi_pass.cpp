@@ -31,7 +31,8 @@ NvrhiPassScope::~NvrhiPassScope()
     // when that state is UnorderedAccess), so its writes are visible to what follows.
     for (const NvrhiSharedTexture& texture : m_shared)
     {
-        m_commandList->setTextureState(texture.texture, nvrhi::AllSubresources, texture.state);
+        const nvrhi::ResourceStates exit = texture.exitState != nvrhi::ResourceStates::Unknown ? texture.exitState : texture.state;
+        m_commandList->setTextureState(texture.texture, nvrhi::AllSubresources, exit);
     }
     m_commandList->commitBarriers();
     m_commandList->clearState();

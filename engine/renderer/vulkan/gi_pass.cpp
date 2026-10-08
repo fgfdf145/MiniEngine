@@ -2,6 +2,7 @@
 
 #include "compute_pass_util.h"
 #include "gbuffer_inputs.h"
+#include "nvrhi_pass.h"
 #include "pipeline.h"
 
 #include <algorithm>
@@ -75,19 +76,37 @@ void DestroyPipelineHandles(VkDevice device, VkPipeline& pipeline, VkPipelineLay
     }
 }
 
-void DestroySetHandles(VkDevice device, VkDescriptorPool& pool, VkDescriptorSetLayout& layout, nvrhi::SamplerHandle& sampler)
+// Set 1 of the trace and the resolve: every input read with Load (no samplers), then the images
+// written.
+nvrhi::BindingLayoutHandle CreateSetLayout(nvrhi::IDevice* device, uint32_t textureCount, uint32_t imageCount, const char* failure)
 {
-    if (pool != VK_NULL_HANDLE)
+    nvrhi::BindingLayoutDesc desc;
+    desc.visibility = nvrhi::ShaderType::Compute;
+    desc.registerSpace = 1;
+    desc.registerSpaceIsDescriptorSet = true;
+    desc.bindingOffsets = ShaderBindingOffsets();
+    for (uint32_t binding = 0; binding < textureCount; ++binding)
     {
-        vkDestroyDescriptorPool(device, pool, nullptr);
-        pool = VK_NULL_HANDLE;
+        desc.bindings.push_back(nvrhi::BindingLayoutItem::Texture_SRV(binding));
     }
-    if (layout != VK_NULL_HANDLE)
+    for (uint32_t binding = textureCount; binding < textureCount + imageCount; ++binding)
     {
-        vkDestroyDescriptorSetLayout(device, layout, nullptr);
-        layout = VK_NULL_HANDLE;
+        desc.bindings.push_back(nvrhi::BindingLayoutItem::Texture_UAV(binding));
     }
-    sampler = nullptr;
+    desc.bindings.push_back(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(GiPushConstants)));
+    return CreateNvrhiBindingLayout(device, desc, failure);
+}
+
+void Dispatch(nvrhi::ICommandList* commandList, nvrhi::IComputePipeline* pipeline, nvrhi::IBindingSet* frameSet, nvrhi::IBindingSet* set, const GiPushConstants& constants, VkExtent2D extent)
+{
+    nvrhi::ComputeState state;
+    state.pipeline = pipeline;
+    state.bindings = {frameSet, set};
+    commandList->setComputeState(state);
+    commandList->setPushConstants(&constants, sizeof(constants));
+    commandList->dispatch(
+        (extent.width + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
+        (extent.height + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize);
 }
 }
 
@@ -95,38 +114,15 @@ void DestroySetHandles(VkDevice device, VkDescriptorPool& pool, VkDescriptorSetL
 // Trace
 // ---------------------------------------------------------------------------------------------
 
-VulkanGiTracePass::VulkanGiTracePass(
-    VkDevice device,
-    nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
-    const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout)
-    : m_device(device)
+VulkanGiTracePass::VulkanGiTracePass(nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout)
+    : m_nvrhiDevice(nvrhiDevice)
 {
-    try
-    {
-        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
-        static constexpr std::array<VkDescriptorType, 4> kTypes = {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes);
-        CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "gi_trace.comp.spv", sizeof(GiPushConstants), m_pipelineLayout, m_pipeline);
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 3, 1);
-        CreateDescriptorSets(targets);
-    }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
-    }
+    m_setLayout = CreateSetLayout(m_nvrhiDevice, 3, 1, "Failed to create the GI trace binding layout");
+    m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "gi_trace.comp.spv", {frameSetLayout, m_setLayout});
+    CreateBindingSets(targets);
 }
 
-VulkanGiTracePass::~VulkanGiTracePass()
-{
-    DestroyHandles();
-}
+VulkanGiTracePass::~VulkanGiTracePass() = default;
 
 ScenePassId VulkanGiTracePass::Id() const
 {
@@ -151,96 +147,61 @@ void VulkanGiTracePass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
+    (void)commandBuffer;
     if (!frame.gi.enabled)
     {
         return;
     }
+    // The inputs are where the native passes left them, in the read layout; GiRaw goes back to GENERAL.
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::GiRaw, frame.imageIndex, frame.frameSlot);
-    const GiPushConstants constants = BuildPushConstants(frame);
-    DispatchCompute(
-        commandBuffer,
+    const NvrhiPassScope scope(frame.commandList, {{targets.GetTexture(RenderTargetId::GiRaw, slot), nvrhi::ResourceStates::UnorderedAccess}});
+    Dispatch(
+        frame.commandList,
         m_pipeline,
-        m_pipelineLayout,
-        frame.frameDescriptorSet,
-        m_descriptorSets.at(slot),
-        &constants,
-        sizeof(constants),
+        frame.frameBindingSet,
+        m_bindingSets.at(slot),
+        BuildPushConstants(frame),
         targets.GetTargetExtent(RenderTargetId::GiRaw));
 }
 
 void VulkanGiTracePass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
-    CreateDescriptorSets(targets);
+    CreateBindingSets(targets);
 }
 
-void VulkanGiTracePass::CreateDescriptorSets(const SceneRenderTargets& targets)
+void VulkanGiTracePass::CreateBindingSets(const SceneRenderTargets& targets)
 {
-    const uint32_t copyCount = targets.GetTransientCopyCount();
-    m_descriptorSets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, copyCount);
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
+    m_bindingSets.clear();
+    for (uint32_t slot = 0; slot < targets.GetTransientCopyCount(); ++slot)
     {
-        const VkDescriptorImageInfo depthInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-        const VkDescriptorImageInfo normalInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-        const VkDescriptorImageInfo hdrInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneHdr, slot), kReadLayout};
-        const VkDescriptorImageInfo giInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::GiRaw, slot), VK_IMAGE_LAYOUT_GENERAL};
-        const std::array<VkWriteDescriptorSet, 4> writes = {
-            ImageWrite(m_descriptorSets[slot], 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
-            ImageWrite(m_descriptorSets[slot], 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
-            ImageWrite(m_descriptorSets[slot], 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &hdrInfo),
-            ImageWrite(m_descriptorSets[slot], 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &giInfo)};
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        nvrhi::BindingSetDesc desc;
+        desc.bindings = {
+            nvrhi::BindingSetItem::Texture_SRV(0, targets.GetTexture(RenderTargetId::SceneDepth, slot)),
+            nvrhi::BindingSetItem::Texture_SRV(1, targets.GetTexture(RenderTargetId::GBufferNormal, slot)),
+            nvrhi::BindingSetItem::Texture_SRV(2, targets.GetTexture(RenderTargetId::SceneHdr, slot)),
+            nvrhi::BindingSetItem::Texture_UAV(3, targets.GetTexture(RenderTargetId::GiRaw, slot)),
+            nvrhi::BindingSetItem::PushConstants(0, sizeof(GiPushConstants))};
+        m_bindingSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create a GI trace binding set"));
     }
-}
-
-void VulkanGiTracePass::DestroyHandles()
-{
-    DestroyPipelineHandles(m_device, m_pipeline, m_pipelineLayout);
-    m_descriptorSets.clear();
-    DestroySetHandles(m_device, m_descriptorPool, m_setLayout, m_sampler);
 }
 
 // ---------------------------------------------------------------------------------------------
 // Resolve
 // ---------------------------------------------------------------------------------------------
 
-VulkanGiResolvePass::VulkanGiResolvePass(
-    VkPhysicalDevice physicalDevice,
-    VkDevice device,
-    nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
-    const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout)
-    : m_physicalDevice(physicalDevice),
-      m_device(device),
-      m_nvrhiDevice(nvrhiDevice)
+VulkanGiResolvePass::VulkanGiResolvePass(nvrhi::IDevice* nvrhiDevice, VkDevice device, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout)
+    : m_nvrhiDevice(nvrhiDevice),
+      m_device(device)
 {
-    try
-    {
-        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
-        static constexpr std::array<VkDescriptorType, 7> kTypes = {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes);
-        CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "gi_resolve.comp.spv", sizeof(GiPushConstants), m_pipelineLayout, m_pipeline);
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 5, 2);
-        m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
-        CreateDescriptorSets(targets);
-    }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
-    }
+    m_setLayout = CreateSetLayout(m_nvrhiDevice, 5, 2, "Failed to create the GI resolve binding layout");
+    m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "gi_resolve.comp.spv", {frameSetLayout, m_setLayout});
+    m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
+    CreateBindingSets(targets);
 }
 
 VulkanGiResolvePass::~VulkanGiResolvePass()
 {
-    DestroyHandles();
+    m_history.Destroy();
 }
 
 ScenePassId VulkanGiResolvePass::Id() const
@@ -274,65 +235,51 @@ void VulkanGiResolvePass::Record(
     {
         return;
     }
-    // Runs even with GI off: the bound descriptors name both history images in GENERAL, and the
-    // debug view reads the zero it writes.
+    // Runs even with GI off: the debug view reads the zero it writes. Both history images are put in
+    // GENERAL first (discarded when the history is invalid).
     m_history.RecordBarrier(commandBuffer, frame.giHistory.valid);
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneGi, frame.imageIndex, frame.frameSlot);
-    const GiPushConstants constants = BuildPushConstants(frame);
-    DispatchCompute(
-        commandBuffer,
-        m_pipeline,
-        m_pipelineLayout,
-        frame.frameDescriptorSet,
-        m_descriptorSets.at(slot * 2 + frame.giHistory.readIndex),
-        &constants,
-        sizeof(constants),
-        frame.extent);
+    nvrhi::ITexture* historyRead = m_history.GetTexture(frame.giHistory.readIndex);
+    nvrhi::ICommandList* commandList = frame.commandList;
+    const NvrhiPassScope scope(
+        commandList,
+        {{historyRead, nvrhi::ResourceStates::UnorderedAccess},
+         {m_history.GetTexture(1u - frame.giHistory.readIndex), nvrhi::ResourceStates::UnorderedAccess},
+         {targets.GetTexture(RenderTargetId::SceneGi, slot), nvrhi::ResourceStates::UnorderedAccess}});
+    commandList->setTextureState(historyRead, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+    commandList->commitBarriers();
+    Dispatch(commandList, m_pipeline, frame.frameBindingSet, m_bindingSets.at(slot * 2 + frame.giHistory.readIndex), BuildPushConstants(frame), frame.extent);
 }
 
 void VulkanGiResolvePass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
     // The renderer resets the GI history at the same call sites, as it does the AO's.
+    m_bindingSets.clear();
     m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
-    CreateDescriptorSets(targets);
+    CreateBindingSets(targets);
 }
 
-void VulkanGiResolvePass::CreateDescriptorSets(const SceneRenderTargets& targets)
+void VulkanGiResolvePass::CreateBindingSets(const SceneRenderTargets& targets)
 {
-    const uint32_t copyCount = targets.GetTransientCopyCount();
-    m_descriptorSets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, copyCount * 2);
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
+    m_bindingSets.clear();
+    for (uint32_t slot = 0; slot < targets.GetTransientCopyCount(); ++slot)
     {
         for (uint32_t readIndex = 0; readIndex < 2; ++readIndex)
         {
-            const VkDescriptorSet set = m_descriptorSets[slot * 2 + readIndex];
-            const VkDescriptorImageInfo rawInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GiRaw, slot), kReadLayout};
-            const VkDescriptorImageInfo depthInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-            const VkDescriptorImageInfo velocityInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
-            const VkDescriptorImageInfo normalInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-            const VkDescriptorImageInfo historyReadInfo{NativeSampler(m_sampler), m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo historyWriteInfo{VK_NULL_HANDLE, m_history.GetView(1u - readIndex), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo giInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneGi, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const std::array<VkWriteDescriptorSet, 7> writes = {
-                ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &rawInfo),
-                ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
-                ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &velocityInfo),
-                ImageWrite(set, 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
-                ImageWrite(set, 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &historyReadInfo),
-                ImageWrite(set, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &historyWriteInfo),
-                ImageWrite(set, 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &giInfo)};
-            vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+            nvrhi::BindingSetDesc desc;
+            desc.bindings = {
+                nvrhi::BindingSetItem::Texture_SRV(0, targets.GetTexture(RenderTargetId::GiRaw, slot)),
+                nvrhi::BindingSetItem::Texture_SRV(1, targets.GetTexture(RenderTargetId::SceneDepth, slot)),
+                nvrhi::BindingSetItem::Texture_SRV(2, targets.GetTexture(RenderTargetId::GBufferVelocity, slot)),
+                nvrhi::BindingSetItem::Texture_SRV(3, targets.GetTexture(RenderTargetId::GBufferNormal, slot)),
+                nvrhi::BindingSetItem::Texture_SRV(4, m_history.GetTexture(readIndex)),
+                nvrhi::BindingSetItem::Texture_UAV(5, m_history.GetTexture(1u - readIndex)),
+                nvrhi::BindingSetItem::Texture_UAV(6, targets.GetTexture(RenderTargetId::SceneGi, slot)),
+                nvrhi::BindingSetItem::PushConstants(0, sizeof(GiPushConstants))};
+            m_bindingSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create a GI resolve binding set"));
         }
     }
-}
-
-void VulkanGiResolvePass::DestroyHandles()
-{
-    DestroyPipelineHandles(m_device, m_pipeline, m_pipelineLayout);
-    m_descriptorSets.clear();
-    m_history.Destroy();
-    DestroySetHandles(m_device, m_descriptorPool, m_setLayout, m_sampler);
 }
 
 // ---------------------------------------------------------------------------------------------

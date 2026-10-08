@@ -9,11 +9,13 @@ namespace me
 {
 
 // An image an NVRHI pass shares with the passes that still record native Vulkan, and the state
-// native code holds it in: before the pass, and again after it.
+// native code holds it in: before the pass, and again after it. exitState, when set, is where the
+// pass leaves it instead (an image the pass brings out of UNDEFINED, Common to NVRHI).
 struct NvrhiSharedTexture
 {
     nvrhi::ITexture* texture = nullptr;
     nvrhi::ResourceStates state = nvrhi::ResourceStates::Unknown;
+    nvrhi::ResourceStates exitState = nvrhi::ResourceStates::Unknown;
 };
 
 // One pass's NVRHI commands in the frame's command list, between passes that record native Vulkan

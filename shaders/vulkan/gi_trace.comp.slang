@@ -16,9 +16,10 @@
 #include "gbuffer_common.slang"
 #include "vbao_common.slang"
 
-[[vk::binding(0, 1)]] Sampler2D depthTexture;
-[[vk::binding(1, 1)]] Sampler2D normalTexture;
-[[vk::binding(2, 1)]] Sampler2D hdrTexture;
+// Set 1 is VulkanGiTracePass's NVRHI binding set; the inputs are read with Load only.
+[[vk::binding(0, 1)]] Texture2D depthTexture;
+[[vk::binding(1, 1)]] Texture2D normalTexture;
+[[vk::binding(2, 1)]] Texture2D hdrTexture;
 [[vk::binding(3, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> giRawImage;
 
 static const float PI = 3.14159265359;

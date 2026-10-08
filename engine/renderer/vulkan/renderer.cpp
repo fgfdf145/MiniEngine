@@ -1458,7 +1458,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               // After the atmosphere, whose sky-view LUT the capture samples.
                                               m_environmentProbe->Record(
                                                   commandBuffer,
-                                                  frame.frameDescriptorSet,
+                                                  frame.commandList,
+                                                  frame.frameBindingSet,
                                                   environmentMode != EnvironmentMode::None,
                                                   environmentData);
                                               m_gpuTimer->Mark(commandBuffer, "EnvironmentProbe");
@@ -2342,11 +2343,7 @@ void VulkanRenderer::CreateDeviceResources()
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_rayScene->HasHardwareRayTracing());
     m_environmentProbe = std::make_unique<VulkanEnvironmentProbe>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        m_frameSetLayout->GetHandle());
+        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), m_frameSetLayout->Get());
 
     // Set 0 binding 6 must name a valid image even when no HDRI is loaded.
     VulkanUploadBatch uploadBatch(
@@ -3078,19 +3075,8 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         view.gbufferDescriptors->GetEmptySetLayout(),
         view.gbufferDescriptors->GetSetLayout(),
         *m_rayScene));
-    view.passes.push_back(std::make_unique<VulkanGiTracePass>(
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle()));
-    view.passes.push_back(std::make_unique<VulkanGiResolvePass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle()));
+    view.passes.push_back(std::make_unique<VulkanGiTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
+    view.passes.push_back(std::make_unique<VulkanGiResolvePass>(m_nvrhi->Get(), m_device->GetHandle(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanGiCompositePass>(
         m_device->GetHandle(),
         m_pipelineCache,
