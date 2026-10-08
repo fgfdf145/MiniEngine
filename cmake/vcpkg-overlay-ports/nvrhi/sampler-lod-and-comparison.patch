@@ -1,0 +1,42 @@
+diff --git a/include/nvrhi/nvrhi.h b/include/nvrhi/nvrhi.h
+index e93cf10..3eeb325 100644
+--- a/include/nvrhi/nvrhi.h
++++ b/include/nvrhi/nvrhi.h
+@@ -1245,6 +1245,10 @@ namespace nvrhi
+         SamplerAddressMode addressV = SamplerAddressMode::Clamp;
+         SamplerAddressMode addressW = SamplerAddressMode::Clamp;
+         SamplerReductionType reductionType = SamplerReductionType::Standard;
++        // The comparison a Comparison sampler makes, and the levels of detail it clamps to.
++        ComparisonFunc comparisonFunc = ComparisonFunc::Less;
++        float minLod = 0.f;
++        float maxLod = 3.402823466e+38f;
+ 
+         SamplerDesc& setBorderColor(const Color& color) { borderColor = color; return *this; }
+         SamplerDesc& setMaxAnisotropy(float value) { maxAnisotropy = value; return *this; }
+@@ -1258,6 +1262,9 @@ namespace nvrhi
+         SamplerDesc& setAddressW(SamplerAddressMode mode) { addressW = mode; return *this; }
+         SamplerDesc& setAllAddressModes(SamplerAddressMode mode) { addressU = addressV = addressW = mode; return *this; }
+         SamplerDesc& setReductionType(SamplerReductionType type) { reductionType = type; return *this; }
++        SamplerDesc& setComparisonFunc(ComparisonFunc func) { comparisonFunc = func; return *this; }
++        SamplerDesc& setMinLod(float value) { minLod = value; return *this; }
++        SamplerDesc& setMaxLod(float value) { maxLod = value; return *this; }
+     };
+ 
+     class ISampler : public IResource
+diff --git a/src/vulkan/vulkan-texture.cpp b/src/vulkan/vulkan-texture.cpp
+index c3ea778..471b435 100644
+--- a/src/vulkan/vulkan-texture.cpp
++++ b/src/vulkan/vulkan-texture.cpp
+@@ -839,9 +839,9 @@ namespace nvrhi::vulkan
+                             .setAnisotropyEnable(anisotropyEnable)
+                             .setMaxAnisotropy(anisotropyEnable ? desc.maxAnisotropy : 1.f)
+                             .setCompareEnable(desc.reductionType == SamplerReductionType::Comparison)
+-                            .setCompareOp(vk::CompareOp::eLess)
+-                            .setMinLod(0.f)
+-                            .setMaxLod(std::numeric_limits<float>::max())
++                            .setCompareOp(convertCompareOp(desc.comparisonFunc))
++                            .setMinLod(desc.minLod)
++                            .setMaxLod(desc.maxLod)
+                             .setBorderColor(pickSamplerBorderColor(desc));
+ 
+         vk::SamplerReductionModeCreateInfoEXT samplerReductionCreateInfo;

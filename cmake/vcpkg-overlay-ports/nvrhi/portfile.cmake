@@ -12,6 +12,10 @@ vcpkg_from_github(
     HEAD_REF main
     PATCHES
         fix-vcpkg-deps.patch
+        # SamplerDesc gains the comparison a shadow sampler makes and min/max LOD clamps: the engine's
+        # shadows compare LESS_OR_EQUAL, and glTF's non-mipmapped filters sample level 0 alone
+        # (maxLod 0.25), which upstream cannot express.
+        sampler-lod-and-comparison.patch
 )
 
 if(VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")

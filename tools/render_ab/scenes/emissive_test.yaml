@@ -1,0 +1,73 @@
+# Emissive surfaces as the only light, for the path tracer's emissive triangle NEE (Graphics Debug > Path
+# tracing > "Emissive surfaces as lights") and the light list behind it. No sky, no sun, no light but an
+# Ambient one at zero (without it a scene with no sky gets a default ambient): everything lit is lit by
+# an emissive material; the grey above the walls is only the viewport's backdrop. A dark 30 m concrete
+# yard with a back and a left wall, a glossy wet patch, a chrome and a white sphere, the Skyline R34 in
+# the middle, and the emitters: a cyan sign (400 nit), a striped panel whose emissive texture is half
+# black (600 nit), four thin pink neon tubes (3000 nit), a 5 cm bulb on a post (50000 nit), a large dim
+# soft box (20 nit), red, green and blue cubes (150 nit) and a single-sided orange panel facing the back
+# wall (800 nit: only its dark back faces the camera). What each tests:
+# tools/render_scenes/make_emissive_test.py.
+# A good view: camera 0, 1.8, 13, yaw -90, pitch -6, fixed EV100 around 5 (auto exposure follows the
+# bulb). Compare the setting on and off with path tracing on; off, only paths that happen to hit an
+# emitter see it, so the tubes and the bulb light the yard as sparse fireflies.
+# Needs the yard at assets/models/emissive_test (tests/fixtures/render_scenes/models/emissive_test, from
+# scripts/install-render-scenes.*) and the car imported from Assetto Corsa at assets/skyline_r34_vspec
+# (not in git: the game's content), run from the repository's root.
+scene:
+  version: 3
+  selected_entity_uuid: e1155e00-7e57-4c0d-9a1e-000000000102
+  selected_entity: 1
+entities:
+  - entity_uuid: e1155e00-7e57-4c0d-9a1e-000000000101
+    tag: Emissive test yard
+    model:
+      display_name: emissive_test.gltf
+      source_path: assets/models/emissive_test/emissive_test.gltf
+      source_uuid: e1155e00-7e57-4c0d-9a1e-000000000001
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: e1155e00-7e57-4c0d-9a1e-000000000102
+    tag: skyline_r34_vspec
+    model:
+      display_name: skyline_r34_vspec.gltf
+      source_path: assets/skyline_r34_vspec/skyline_r34_vspec.gltf
+      source_uuid: 35d02ab2-1e85-4424-bcb6-174ffc06be03
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 90, 0]
+      scale: [1, 1, 1]
+lights:
+  # Zero: with no Ambient light, a scene without a sky gets a default ambient.
+  - entity_uuid: e1155e00-7e57-4c0d-9a1e-000000000103
+    tag: No ambient
+    light_type: ambient
+    color: [1, 1, 1]
+    intensity: 0
+    range: 10
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: false
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: none
+editor:
+  gizmo:
+    operation: combined
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

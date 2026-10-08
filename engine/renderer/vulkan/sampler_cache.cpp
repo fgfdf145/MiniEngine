@@ -5,30 +5,28 @@
 namespace me
 {
 
-VulkanSamplerCache::VulkanSamplerCache(VkDevice device, float maxAnisotropy)
+VulkanSamplerCache::VulkanSamplerCache(nvrhi::IDevice* device, float maxAnisotropy)
     : m_device(device), m_maxAnisotropy(maxAnisotropy)
 {
 }
 
-VulkanSamplerCache::~VulkanSamplerCache()
-{
-    for (const auto& [key, sampler] : m_samplers)
-    {
-        vkDestroySampler(m_device, sampler, nullptr);
-    }
-}
-
-VkSampler VulkanSamplerCache::Get(const TextureSampler& sampler)
+nvrhi::ISampler* VulkanSamplerCache::Get(const TextureSampler& sampler)
 {
     const Key key{sampler.wrapS, sampler.wrapT, sampler.magFilter, sampler.minFilter, sampler.mipFilter};
     if (const auto found = m_samplers.find(key); found != m_samplers.end())
     {
         return found->second;
     }
-    const VkSamplerCreateInfo info = BuildTextureSamplerInfo(sampler, m_maxAnisotropy);
-    VkSampler created = VK_NULL_HANDLE;
-    CheckVulkan(vkCreateSampler(m_device, &info, nullptr, &created), "Failed to create a material texture sampler");
-    m_samplers.emplace(key, created);
-    return created;
+    nvrhi::SamplerHandle created = m_device->createSampler(BuildTextureSamplerDesc(sampler, m_maxAnisotropy));
+    if (!created)
+    {
+        throw std::runtime_error("Failed to create a material texture sampler");
+    }
+    return m_samplers.emplace(key, std::move(created)).first->second;
+}
+
+VkSampler VulkanSamplerCache::GetNative(const TextureSampler& sampler)
+{
+    return Get(sampler)->getNativeObject(nvrhi::ObjectTypes::VK_Sampler);
 }
 }

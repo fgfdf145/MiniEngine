@@ -56,17 +56,17 @@ void ReadsGltfFilters()
 
 void DefaultIsTodaysSampler()
 {
-    const VkSamplerCreateInfo info = BuildTextureSamplerInfo(TextureSampler{}, 16.0f);
-    Require(info.magFilter == VK_FILTER_LINEAR && info.minFilter == VK_FILTER_LINEAR, "linear filtering");
-    Require(info.mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR, "linear mipmaps");
-    Require(info.addressModeU == VK_SAMPLER_ADDRESS_MODE_REPEAT && info.addressModeV == VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    const nvrhi::SamplerDesc desc = BuildTextureSamplerDesc(TextureSampler{}, 16.0f);
+    Require(desc.magFilter && desc.minFilter, "linear filtering");
+    Require(desc.mipFilter, "linear mipmaps");
+    Require(desc.addressU == nvrhi::SamplerAddressMode::Repeat && desc.addressV == nvrhi::SamplerAddressMode::Repeat,
             "repeat on both axes");
-    Require(info.anisotropyEnable == VK_TRUE && info.maxAnisotropy == 16.0f, "16x anisotropy");
-    Require(info.minLod == 0.0f && info.maxLod == VK_LOD_CLAMP_NONE, "every mip level");
-    Require(BuildTextureSamplerInfo(TextureSampler{}, 0.0f).anisotropyEnable == VK_FALSE, "no anisotropy on a device without it");
+    Require(desc.maxAnisotropy == 16.0f, "16x anisotropy");
+    Require(desc.minLod == 0.0f && desc.maxLod == VK_LOD_CLAMP_NONE, "every mip level");
+    Require(BuildTextureSamplerDesc(TextureSampler{}, 0.0f).maxAnisotropy == 1.0f, "no anisotropy on a device without it");
 }
 
-void MapsSettingsToVulkan()
+void MapsSettingsToSamplers()
 {
     TextureSampler sampler;
     sampler.wrapS = TextureWrap::ClampToEdge;
@@ -74,18 +74,18 @@ void MapsSettingsToVulkan()
     sampler.magFilter = TextureFilter::Nearest;
     sampler.minFilter = TextureFilter::Nearest;
     sampler.mipFilter = TextureMipFilter::None;
-    const VkSamplerCreateInfo info = BuildTextureSamplerInfo(sampler, 16.0f);
-    Require(info.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "wrapS is U");
-    Require(info.addressModeV == VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT, "wrapT is V");
-    Require(info.magFilter == VK_FILTER_NEAREST && info.minFilter == VK_FILTER_NEAREST, "nearest filtering");
-    Require(info.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST && info.maxLod == 0.25f, "no mipmaps samples the base level only");
-    Require(info.anisotropyEnable == VK_FALSE, "no anisotropy with nearest filtering");
+    const nvrhi::SamplerDesc desc = BuildTextureSamplerDesc(sampler, 16.0f);
+    Require(desc.addressU == nvrhi::SamplerAddressMode::Clamp, "wrapS is U");
+    Require(desc.addressV == nvrhi::SamplerAddressMode::Mirror, "wrapT is V");
+    Require(!desc.magFilter && !desc.minFilter, "nearest filtering");
+    Require(!desc.mipFilter && desc.maxLod == 0.25f, "no mipmaps samples the base level only");
+    Require(desc.maxAnisotropy == 1.0f, "no anisotropy with nearest filtering");
 
     TextureSampler nearestMips;
     nearestMips.mipFilter = TextureMipFilter::Nearest;
-    const VkSamplerCreateInfo mips = BuildTextureSamplerInfo(nearestMips, 16.0f);
-    Require(mips.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST && mips.maxLod == VK_LOD_CLAMP_NONE, "nearest mipmaps");
-    Require(mips.anisotropyEnable == VK_TRUE, "linear filters with mipmaps keep anisotropy");
+    const nvrhi::SamplerDesc mips = BuildTextureSamplerDesc(nearestMips, 16.0f);
+    Require(!mips.mipFilter && mips.maxLod == VK_LOD_CLAMP_NONE, "nearest mipmaps");
+    Require(mips.maxAnisotropy == 16.0f, "linear filters with mipmaps keep anisotropy");
 }
 }
 
@@ -96,7 +96,7 @@ int main()
         ReadsGltfWrapModes();
         ReadsGltfFilters();
         DefaultIsTodaysSampler();
-        MapsSettingsToVulkan();
+        MapsSettingsToSamplers();
     }
     catch (const std::exception& error)
     {

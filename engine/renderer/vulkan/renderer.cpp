@@ -409,13 +409,13 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
         // The texture's view with the sampler its slot asks for; slot is the binding's index.
         const auto bind = [&](uint32_t textureIndex, uint32_t slot)
         {
-            return TextureDescriptorBinding{textures[textureIndex]->GetImageView(), samplerCache.Get(slots.samplers[slot])};
+            return TextureDescriptorBinding{textures[textureIndex]->GetImageView(), samplerCache.GetNative(slots.samplers[slot])};
         };
         // The detail maps come outside glTF's texture slots: always the default sampler (repeat,
         // linear, mipmapped), which their tiling needs.
         const auto bindDefault = [&](uint32_t textureIndex)
         {
-            return TextureDescriptorBinding{textures[textureIndex]->GetImageView(), samplerCache.Get(TextureSampler{})};
+            return TextureDescriptorBinding{textures[textureIndex]->GetImageView(), samplerCache.GetNative(TextureSampler{})};
         };
         bindings.push_back(MaterialTextureBinding{
             bind(slots.baseColor, 0),
@@ -571,7 +571,7 @@ VulkanRenderer::VulkanRenderer(
         VkPhysicalDeviceProperties properties{};
         vkGetPhysicalDeviceProperties(m_device->GetPhysicalDevice(), &properties);
         const float maxAnisotropy = features.samplerAnisotropy ? std::min(16.0f, properties.limits.maxSamplerAnisotropy) : 0.0f;
-        m_samplerCache = std::make_unique<VulkanSamplerCache>(m_device->GetHandle(), maxAnisotropy);
+        m_samplerCache = std::make_unique<VulkanSamplerCache>(m_nvrhi->Get(), maxAnisotropy);
     }
     CreateDeviceResources();
     // Half the hardware threads: the rest stay free for the frame loop and for the band-parallel
@@ -2273,7 +2273,7 @@ void VulkanRenderer::CreateDeviceResources()
         m_rayDefaultTexture = std::make_unique<VulkanTexture>(
             m_device->GetPhysicalDevice(), m_device->GetHandle(), CreateSolidTexture(255, 255, 255, 255), rayUploadBatch, VulkanTextureFormat::LinearData);
         rayUploadBatch.Flush();
-        rayDefaultTexture = TextureDescriptorBinding{m_rayDefaultTexture->GetImageView(), m_samplerCache->Get(TextureSampler{})};
+        rayDefaultTexture = TextureDescriptorBinding{m_rayDefaultTexture->GetImageView(), m_samplerCache->GetNative(TextureSampler{})};
     }
     m_rayScene = std::make_unique<VulkanRayScene>(
         m_device->GetPhysicalDevice(),
@@ -2620,7 +2620,7 @@ VkSampler VulkanRenderer::EquirectangularSampler() const
 {
     TextureSampler sampler;
     sampler.wrapT = TextureWrap::ClampToEdge;
-    return m_samplerCache->Get(sampler);
+    return m_samplerCache->GetNative(sampler);
 }
 
 EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings(const VulkanSceneView& view) const

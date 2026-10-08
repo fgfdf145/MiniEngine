@@ -1832,6 +1832,7 @@ target_link_libraries(miniengine_texture_sampler_tests
     PRIVATE
         engine_scene
         Vulkan::Vulkan
+        ${MINIENGINE_NVRHI_TARGETS}
 )
 
 add_test(

@@ -84,9 +84,38 @@ Debug 下打开。
 验证：对比基线 exe（Slang 提交 89b5303 单独编的 Debug，`out/baseline_src`），A/B 截图在噪声底内；NVRHI validation
 层开着跑无报错；ctest 121 项全过（两个长物理测试另跑）。
 
-### 阶段 1 的做法（定了，未做）
+### 顺序调整（2026-10-09）
+
+NVRHI 的管线要求每个 set 都是 NVRHI 的 binding layout，而几乎所有 pass 都绑帧描述符集（set 0）；引擎里纹理的
+"通货"又是 `TextureDescriptorBinding {VkImageView, VkSampler}`，NVRHI 的 binding set 要的是 `ITexture` 和
+`ISampler`。所以在拆采样器之前先做 **阶段 A：资源归 NVRHI 所有**——纹理、缓冲、采样器都由 NVRHI 创建，还没迁的
+代码拿它们的原生句柄（`getNativeObject` / `getNativeView`）继续用；然后共享描述符集（帧、材质、G-buffer、光追）
+改成 NVRHI binding set（原生 pass 用它的原生 `VkDescriptorSet`/layout），同时给读这些集的着色器拆采样器；再逐个
+pass 迁移（pass 自己的集在迁它时拆采样器）。这样每个 pass 的描述符代码只改一次。
+
+阶段 A 分四步：A1 采样器，A2 网格缓冲 + 材质纹理 + 内存池放到 NVRHI 堆上，A3 渲染目标和各 pass 的图像，
+A4 其余缓冲（uniform、大气、DDGI、光追、回读……）。
+
+**A1 进行中**：
+- NVRHI 打了第二个补丁 `sampler-lod-and-comparison.patch`：`SamplerDesc` 加 `comparisonFunc`、`minLod`、`maxLod`
+  （上游比较固定为 LESS、LOD 不能限，阴影要 LESS_OR_EQUAL，glTF 不带 mip 的过滤要 maxLod 0.25）；
+- 材质采样器缓存（`VulkanSamplerCache`）已改成 NVRHI 采样器，`BuildTextureSamplerDesc` 代替
+  `BuildTextureSamplerInfo`，测试跟着改；原生描述符写入用 `GetNative`。验证：texture_sampler 测试通过，
+  materials_rt 截图在噪声内。
+- 还没做：各 pass 自己的采样器（`CreateClampSampler` 和 atmosphere、environment_probe、exposure、gbuffer_inputs、
+  local_shadow、selection_outline、shadow、tonemap、toon、transmission 里的 `vkCreateSampler`），要把
+  `nvrhi::IDevice*` 传进这些 pass 的构造函数。
+
+### 拆采样器的做法（定了，未做）
 
 着色器里每个 `Sampler2D x`（binding b）拆成 `Texture2D x`（binding b）和 `SamplerState xSampler`（binding
 b + 64），纹理的 binding 号不变；采样写成 `x.SampleLevel(xSampler, uv, lod)`，函数参数成对传。Slang 不允许全局
-`static` 变量装资源，所以没有"把两者包成一个结构"的捷径。`MaterialTexture` 宏用 `##Sampler` 拼名字。bindless 的
-`rayTextures[]` 改成纹理数组加一个小的采样器表。
+`static`/`static const` 变量装资源，所以没有"把两者包成一个结构"的捷径（试过）。`MaterialTexture` 宏用
+`##Sampler` 拼名字。bindless 的 `rayTextures[]` 改成纹理数组加一个小的采样器表。
+
+### 验证工具
+
+`tools/render_ab/`：`ab.py`（A/B 截图，`AB_MODE=exe` 对比 `out/baseline_src` 里编的基线 exe；基线 = 改动前的
+提交单独开 worktree 用同一 preset 编 `miniengine_app`）、`compare_reflection.py`（两组 SPIR-V 的接口比对）、
+`build_all.py`（不经 CMake 编全部 Slang 着色器）、`scenes/`（关了地面平面的测试场景）。跑之前备份
+`miniengine.settings.json`（运行会改写它）。
