@@ -975,7 +975,7 @@ struct PhysicsWorld::Impl
         VehicleGearbox gearbox;
         VehicleGearboxState gearboxState;
         float outputRpmPerSpeed = 0.0f;
-        // The manual gearbox's changes asked for (VehicleControls::gearShifts) and not yet made.
+        // The driver's gear changes asked for (VehicleControls::gearShifts) and not yet made.
         int pendingGearShifts = 0;
         // The brakes: the wheels' settings whose torque is set each step, the torque of each wheel as the
         // fixed front/rear split has it, and (when dynamicBrakeBias) the loads that share the total.
@@ -1648,8 +1648,9 @@ struct PhysicsWorld::Impl
         }
         else
         {
-            vehicle.pendingGearShifts = 0;
-            UpdateAutomaticGearbox(vehicle.gearbox, state, input.forward, outputRpm, kFixedStepSeconds, engineRpm);
+            // The driver's changes, if any, as a tiptronic's: the box holds the gear a while after each.
+            UpdateAutomaticGearbox(vehicle.gearbox, state, input.forward, outputRpm, kFixedStepSeconds, engineRpm,
+                                   std::exchange(vehicle.pendingGearShifts, 0));
         }
         JPH::VehicleTransmission& transmission = controller->GetTransmission();
         transmission.Set(state.gear, state.clutch);
@@ -3248,6 +3249,7 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
     telemetry.engineRpm = controller->GetEngine().GetCurrentRPM();
     telemetry.gear = controller->GetTransmission().GetCurrentGear();
     telemetry.clutch = vehicle.gearboxState.clutch;
+    telemetry.manualHold = !vehicle.controls.manualGearbox && vehicle.gearboxState.manualHoldLeft > 0.0f;
     for (const JPH::Wheel* wheel : vehicle.constraint->GetWheels())
     {
         telemetry.wheelsInContact += wheel->HasContact() ? 1u : 0u;

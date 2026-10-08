@@ -174,6 +174,7 @@ Gt7HudInput BuildGt7HudInput(const VehicleDriveStatus& vehicle)
     input.shiftRpm = vehicle.shiftUpRpm;
     input.gear = telemetry.gear;
     input.manualGearbox = vehicle.manualGearbox;
+    input.manualHold = telemetry.manualHold;
     const bool reversing = telemetry.gear < 0 && !vehicle.manualGearbox;
     const float drive = reversing ? -controls.throttle : controls.throttle;
     input.throttle = std::clamp(drive, 0.0f, 1.0f);
@@ -217,7 +218,9 @@ void DrawFullscreenViewportHud(
     if (vehicle.active && !drivingHud)
     {
         const VehicleTelemetry& telemetry = vehicle.telemetry;
-        const std::string gear = telemetry.gear < 0 ? "R" : telemetry.gear == 0 ? "N" : std::to_string(telemetry.gear);
+        const std::string gear = telemetry.gear < 0    ? "R"
+                                 : telemetry.gear == 0 ? "N"
+                                                       : (telemetry.manualHold ? "M" : "") + std::to_string(telemetry.gear);
         const std::string text = std::to_string(static_cast<int>(std::abs(telemetry.forwardSpeed) * 3.6f + 0.5f)) + " km/h   " + gear;
         const ImVec2 size = ImGui::CalcTextSize(text.c_str());
         drawText(ImVec2(rect.origin.x + rect.size.x - size.x - margin, rect.origin.y + rect.size.y - size.y - margin), text);

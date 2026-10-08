@@ -16,6 +16,8 @@ struct Gt7HudInput
     float shiftRpm = 6500.0f;
     int gear = 0; // negative reverse, 0 neutral
     bool manualGearbox = false;
+    // The automatic holding the gear the driver changed to with its paddles (labelled M).
+    bool manualHold = false;
     // The pedals as the car takes them (0 to 1) and the steering (-1 full left to 1 full right).
     float throttle = 0.0f;
     float brake = 0.0f;

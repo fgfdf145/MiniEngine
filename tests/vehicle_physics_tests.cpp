@@ -319,6 +319,68 @@ void TestManualGearboxChangesWhenAsked()
     Require(state.clutch == 1.0f, "and it bites when let go");
 }
 
+// The automatic takes the driver's changes as a tiptronic's paddles: it holds the gear until
+// manualHoldSeconds pass without another, changing itself only on the limiter or where the engine would
+// labour, and picks the gear again after that.
+void TestAutomaticGearboxHoldsThePaddlesGear()
+{
+    VehicleGearbox gearbox = GtrGearbox();
+    gearbox.limiterRpm = gearbox.shiftPoints.upFull * 1.05f;
+    constexpr float kStep = 1.0f / 1000.0f;
+    // The engine turns at the gear's speed (the clutch shut), unless `engineRpm` says otherwise.
+    const auto run = [&](VehicleGearboxState& state, int shifts, float forward, float outputRpm, float seconds, float engineRpm = 0.0f)
+    {
+        UpdateAutomaticGearbox(gearbox, state, forward, outputRpm, kStep,
+                               engineRpm > 0.0f ? engineRpm : VehicleGearRpm(gearbox, state.gear, outputRpm), shifts);
+        for (float time = kStep; time < seconds; time += kStep)
+        {
+            UpdateAutomaticGearbox(gearbox, state, forward, outputRpm, kStep,
+                                   engineRpm > 0.0f ? engineRpm : VehicleGearRpm(gearbox, state.gear, outputRpm));
+        }
+    };
+
+    // Cruising on a light throttle the box sits in a high gear; a press down holds the lower one.
+    VehicleGearboxState state;
+    const float cruise = gearbox.shiftPoints.upLight / gearbox.forwardRatios[3] * 1.1f;
+    run(state, 0, 0.2f, cruise, 5.0f);
+    const int automatic = state.gear;
+    Require(automatic >= 4 && state.manualHoldLeft == 0.0f, "the automatic cruises in a high gear, " + std::to_string(automatic));
+    run(state, -1, 0.2f, cruise, 0.001f);
+    Require(state.gear == automatic - 1 && state.manualHoldLeft > 0.0f, "a press changes down and holds the gear");
+    run(state, 0, 0.2f, cruise, gearbox.manualHoldSeconds - 1.0f);
+    Require(state.gear == automatic - 1, "the gear holds while the hold lasts, in " + std::to_string(state.gear));
+    run(state, 0, 0.2f, cruise, 2.0f);
+    Require(state.gear == automatic && state.manualHoldLeft == 0.0f, "then the automatic picks again, " + std::to_string(state.gear));
+
+    // Held in a gear, full throttle runs on past the automatic's change-up point, up only on the limiter.
+    const float pulling = gearbox.shiftPoints.upFull / gearbox.forwardRatios[1] * 1.02f;
+    VehicleGearboxState second;
+    second.gear = 2;
+    run(second, 1, 1.0f, gearbox.shiftPoints.upLight / gearbox.forwardRatios[1], 0.001f);
+    Require(second.gear == 3 && second.manualHoldLeft > 0.0f, "a press up from second");
+    run(second, -1, 1.0f, pulling, 1.0f);
+    Require(second.gear == 2, "and back down to second while second stays under the limiter");
+    run(second, 0, 1.0f, pulling, 1.0f);
+    Require(second.gear == 2, "full throttle holds second past the change-up point");
+    run(second, 0, 1.0f, gearbox.limiterRpm / gearbox.forwardRatios[1], 1.0f);
+    Require(second.gear == 3, "and changes up on the limiter, in " + std::to_string(second.gear));
+
+    // A change down that would rev past the limiter is refused; a gear the engine would labour in
+    // changes down by itself.
+    VehicleGearboxState fast;
+    fast.gear = 3;
+    const float third = gearbox.limiterRpm / gearbox.forwardRatios[1] * 1.05f; // second would pass the limiter
+    run(fast, -1, 1.0f, third, 0.001f);
+    Require(fast.gear == 3 && fast.manualHoldLeft > 0.0f, "no change down onto the limiter, in " + std::to_string(fast.gear));
+    const float labouring = gearbox.shiftPoints.downClosed / gearbox.forwardRatios[3] * 0.9f;
+    VehicleGearboxState slow;
+    slow.gear = 3;
+    run(slow, 1, 0.3f, labouring, 0.001f);
+    Require(slow.gear == 4, "a press up into fourth");
+    run(slow, 0, 0.3f, labouring, 2.0f);
+    Require(slow.gear < 4 && slow.manualHoldLeft > 0.0f, "fourth labouring changes down, held, in " + std::to_string(slow.gear));
+}
+
 void AddGroundMesh(PhysicsWorld& world, float friction = PhysicsWorld::kDefaultSurfaceFriction)
 {
     // A 400 m square facing up (counter-clockwise seen from above), as a triangle mesh like a track's.
@@ -3138,6 +3200,7 @@ int main()
         TestCarSettlesAfterBrakingToAStop();
         TestGearboxDoesNotHunt();
         TestManualGearboxChangesWhenAsked();
+        TestAutomaticGearboxHoldsThePaddlesGear();
         TestUpdateRunsFixedSteps();
         TestGroundCoverIsRecognised();
         TestGrassCardsStopACarUnlessTheyAreGroundCover();

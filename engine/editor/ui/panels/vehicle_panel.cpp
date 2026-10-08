@@ -331,14 +331,13 @@ void VehiclePanel::OnGui(EditorContext& context)
                 "The throttle only drives and the brake only brakes; reverse goes in once the car has (nearly) stopped,\n"
                 "and a change down that would over-rev the engine is refused. Holding the clutch (or the hand brake) opens it;\n"
                 "let go, it bites: rev the engine with it held and let go to launch or kick the car out.\n"
-                "Off: the automatic picks the gear and pulling back reverses once stopped.");
+                "Off: the automatic picks the gear and pulling back reverses once stopped. Its paddles (E/Q, R1/L1) still\n"
+                "change gear, as a tiptronic's: it then holds your gear (M on the HUD) until 8 s pass without a change,\n"
+                "changing up itself only on the limiter and down only where the engine would labour.");
         }
         ImGui::TextUnformatted(vehicle.manualGearbox ? "W/S or Up/Down: throttle and brake" : "W/S or Up/Down: throttle, brake and reverse");
         ImGui::TextUnformatted("A/D or Left/Right: steer    Space: hand brake");
-        if (vehicle.manualGearbox)
-        {
-            ImGui::TextUnformatted("E/Q: change up/down    N (held): clutch");
-        }
+        ImGui::TextUnformatted(vehicle.manualGearbox ? "E/Q: change up/down    N (held): clutch" : "E/Q: change up/down (holds the gear for 8 s)");
         ImGui::TextUnformatted("Backspace: reset the car    R: flip upright where it is    F5: stop");
         ImGui::TextUnformatted("V: change view (chase, cockpit, bonnet, bumper)");
         ImGui::TextUnformatted("B: ABS on/off    T: traction control on/off");

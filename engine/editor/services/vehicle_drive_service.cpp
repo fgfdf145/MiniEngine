@@ -1015,10 +1015,8 @@ VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptur
 
     if (gearButtonsHeld != nullptr)
     {
-        if (manualGearbox)
-        {
-            controls.gearShifts = (gearButtons.up && !gearButtonsHeld->up ? 1 : 0) - (gearButtons.down && !gearButtonsHeld->down ? 1 : 0);
-        }
+        // The manual box's changes, or the automatic's paddles (it holds the gear a while after each).
+        controls.gearShifts = (gearButtons.up && !gearButtonsHeld->up ? 1 : 0) - (gearButtons.down && !gearButtonsHeld->down ? 1 : 0);
         *gearButtonsHeld = gearButtons;
     }
 

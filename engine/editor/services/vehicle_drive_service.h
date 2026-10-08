@@ -322,7 +322,8 @@ void RunWithVehicleAtStart(RendererSharedState& state, const std::function<void(
 // the view, B and the D-pad's left switch ABS, T and the D-pad's right traction control, which Tick
 // reads). Gamepad: right and left trigger, left
 // stick, East button (Circle on a DualSense) for the hand brake, right/left shoulder (R1/L1) to change
-// up/down and South (Cross, held) for the clutch. With `manualGearbox` the gear buttons change gear, once per press:
+// up/down and South (Cross, held) for the clutch (with `manualGearbox`). The gear buttons change gear once per press,
+// the automatic's too (it holds the gear a while after):
 // `gearButtonsHeld` is what was held the frame before, carried between frames like `keyboardSteering`,
 // the eased keyboard steering.
 VehicleControls ReadVehicleControls(const InputState& input, bool keyboardCaptured, float deltaSeconds, float& keyboardSteering,

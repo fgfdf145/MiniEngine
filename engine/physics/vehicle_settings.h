@@ -779,7 +779,8 @@ struct VehicleControls
     // A sequential manual gearbox with an automatic clutch instead of the automatic one: the driver
     // changes gear (gearShifts), the throttle only drives and pulling it back only brakes.
     bool manualGearbox = false;
-    // Gear changes asked for since the last controls: +1 per change up, -1 per change down.
+    // Gear changes asked for since the last controls: +1 per change up, -1 per change down. The automatic
+    // takes them too, as a tiptronic's paddles (UpdateAutomaticGearbox).
     int gearShifts = 0;
     // The clutch pedal, held down: the manual gearbox's clutch is open until it is let go.
     bool clutchPedal = false;
@@ -836,6 +837,7 @@ struct VehicleGearbox
     float latencySeconds = 0.5f; // and the box waits this long before another change
     float launchRpm = 0.0f;      // moving off, the clutch slips around this engine rpm (0: none)
     float limiterRpm = 0.0f;     // the manual box refuses a change down that would rev past this (0: no guard)
+    float manualHoldSeconds = 8.0f; // the automatic holds a gear the driver changed to this long after the last change
 };
 
 // The gearbox's state, kept by the caller between steps. `gear` is 1 and up forward, -1 reverse;
@@ -856,6 +858,9 @@ struct VehicleGearboxState
     // Moving off with the clutch slipping on the engine's revs (gearbox.launchRpm): the caller then keeps
     // the throttle whole rather than scaling it by the clutch.
     bool launching = false;
+    // The automatic holding the gear the driver changed to (manual mode, a tiptronic's M): what is left of
+    // gearbox.manualHoldSeconds after the driver's last change. 0 when the box picks the gear itself.
+    float manualHoldLeft = 0.0f;
 };
 
 // The engine rpm the gearbox's output turns it at in `gear`; 0 in a gear the box does not have.
@@ -876,8 +881,14 @@ float VehicleGearRpm(const VehicleGearbox& gearbox, int gear, float outputRpm);
 // torque there rather than at the idle; the launch ends once the wheels turn the engine at its speed
 // (part throttle launches proportionally nearer the idle). The engine's speed also brings an upshift on
 // when it passes the point while the wheels lag it (the clutch slipping for traction control).
+//
+// `shifts` are the driver's changes, as a tiptronic's paddles: driving forward, each changes up (positive)
+// or down (negative) one gear between first and top, a change down that would rev the engine past
+// gearbox.limiterRpm refused. The box then holds the driver's gear (state.manualHoldLeft) until
+// gearbox.manualHoldSeconds pass without another change, only changing up itself on the limiter and down
+// below the closed throttle's change down point, and picks the gear itself again after that.
 void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds,
-                            float engineRpm = 0.0f);
+                            float engineRpm = 0.0f, int shifts = 0);
 
 // One step of a sequential manual gearbox with an automatic clutch: `shifts` changes up (positive) or
 // down (negative) one gear each, through neutral (0) between first and reverse. It refuses a change down

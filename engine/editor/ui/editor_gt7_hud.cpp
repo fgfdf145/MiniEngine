@@ -58,10 +58,11 @@ constexpr float kReferenceHeight = 1683.0f;
 constexpr float kMinScale = 0.2f;
 
 // The labels as the game's English HUD shows them: the speed's unit, and the gearbox, automatic or
-// manual.
+// manual (M: the automatic holding the gear the driver changed to with its paddles).
 constexpr const char* kKilometresPerHour = "km/h";
 constexpr const char* kAutomatic = "AT";
 constexpr const char* kManual = "MT";
+constexpr const char* kManualHold = "M";
 
 // Colours, opaque wherever shapes overlap (glyphs, icons), so nothing shows through twice.
 constexpr ImU32 kWhite = IM_COL32(242, 242, 242, 255);
@@ -468,7 +469,8 @@ void DrawRevPanel(Painter& p, const Assets& assets, const Gt7HudInput& input)
     p.Text(*assets.meter, 1162.0f, 275.0f, 65.0f, kWhite, gear);
     // The suggested gear's box, empty: there is no braking suggestion.
     p.Rect(1270.0f, 208.0f, 1337.0f, 258.0f, kGearBox, 4.0f);
-    p.Text(*assets.sans, 1303.5f, 288.0f, 14.2f, kLabel, input.manualGearbox ? kManual : kAutomatic, SvgFont::Align::Centre);
+    p.Text(*assets.sans, 1303.5f, 288.0f, 14.2f, kLabel, input.manualGearbox ? kManual : input.manualHold ? kManualHold : kAutomatic,
+           SvgFont::Align::Centre);
 
     p.Icon(*assets.arrowLeft, 829.0f, 302.0f, 30.0f, kArrow);
     p.Icon(*assets.arrowRight, 1440.0f, 302.0f, 30.0f, kArrow);
