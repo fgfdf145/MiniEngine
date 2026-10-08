@@ -18,7 +18,8 @@
 #include "ddgi_common.slang"
 
 // One layer per cascade, sampled with a LESS_OR_EQUAL depth comparison (see VulkanShadowPass).
-[[vk::binding(1, 0)]] Sampler2DArrayShadow shadowMap;
+[[vk::binding(1, 0)]] Texture2DArray<float> shadowMap;
+[[vk::binding(FRAME_SAMPLER(1), 0)]] SamplerComparisonState shadowMapSampler;
 
 // Every light the shader evaluates: ubo.lightCounts.x directional lights, then the local ones. The
 // C++ side is GpuLightData, written by VulkanUniformBuffer::Update.
@@ -42,7 +43,8 @@ uint LightClusterIndex(uint index)
 // The local lights' shadow atlas (see VulkanLocalShadowPass), sampled with a LESS_OR_EQUAL depth
 // comparison, and its tiles (GpuLocalShadowTile). A light's areaRightAxis.w is 1 + its first tile,
 // 0 when it casts no shadow; a point or area light's six cube faces follow in SelectCubeFace order.
-[[vk::binding(13, 0)]] Sampler2DShadow localShadowAtlas;
+[[vk::binding(13, 0)]] Texture2D<float> localShadowAtlas;
+[[vk::binding(FRAME_SAMPLER(13), 0)]] SamplerComparisonState localShadowAtlasSampler;
 
 struct LocalShadowTileData
 {
@@ -55,8 +57,10 @@ struct LocalShadowTileData
 
 // The area lights' LTC tables (engine/renderer/ltc_table.h): the inverse matrices and the lobe's
 // (albedo, Fresnel share), 64 x 64 RGBA32F, x = sqrt(1 - N.V), y = roughness.
-[[vk::binding(15, 0)]] Sampler2D ltcInverseMatrices;
-[[vk::binding(16, 0)]] Sampler2D ltcAmplitudes;
+[[vk::binding(15, 0)]] Texture2D ltcInverseMatrices;
+[[vk::binding(FRAME_SAMPLER(15), 0)]] SamplerState ltcInverseMatricesSampler;
+[[vk::binding(16, 0)]] Texture2D ltcAmplitudes;
+[[vk::binding(FRAME_SAMPLER(16), 0)]] SamplerState ltcAmplitudesSampler;
 
 // Where (roughness, N.V) falls in the LTC tables, clamped to texel centres.
 float2 LtcTableUv(float roughness, float NdV)
@@ -579,8 +583,8 @@ float3 EvaluateAreaLight(
     if (coat.factor > 0.0)
     {
         float2 uv = LtcTableUv(coat.roughness, max(dot(coat.normal, V), 0.0));
-        float3x3 minv = LtcInverseMatrix(ltcInverseMatrices.SampleLevel(uv, 0.0), coat.normal, V);
-        float2 amplitude = ltcAmplitudes.SampleLevel(uv, 0.0).rg;
+        float3x3 minv = LtcInverseMatrix(ltcInverseMatrices.SampleLevel(ltcInverseMatricesSampler, uv, 0.0), coat.normal, V);
+        float2 amplitude = ltcAmplitudes.SampleLevel(ltcAmplitudesSampler, uv, 0.0).rg;
         float coverage = LtcIntegrateQuad(mul(minv, c0), mul(minv, c1), mul(minv, c2), mul(minv, c3));
         coatContribution = luminance * (coverage * (COAT_F0 * amplitude.x + (1.0 - COAT_F0) * amplitude.y));
     }
@@ -619,8 +623,8 @@ float3 EvaluateAreaLight(
     else
     {
         float2 uv = LtcTableUv(roughness, NdV);
-        float3x3 minv = LtcInverseMatrix(ltcInverseMatrices.SampleLevel(uv, 0.0), N, V);
-        float2 amplitude = ltcAmplitudes.SampleLevel(uv, 0.0).rg;
+        float3x3 minv = LtcInverseMatrix(ltcInverseMatrices.SampleLevel(ltcInverseMatricesSampler, uv, 0.0), N, V);
+        float2 amplitude = ltcAmplitudes.SampleLevel(ltcAmplitudesSampler, uv, 0.0).rg;
         float coverage = LtcIntegrateQuad(mul(minv, c0), mul(minv, c1), mul(minv, c2), mul(minv, c3));
         // F0 norm + (F90 - F0) fresnel, as the split-sum pair (norm - fresnel, fresnel).
         specular = luminance * coverage * BaseSpecularAlbedo(float2(amplitude.x - amplitude.y, amplitude.y), F0, F90, specularParams);
@@ -662,7 +666,7 @@ float SampleShadowCascade(int cascade, float3 worldPos, float3 geoNormal)
         {
             // An explicit level: the lookup runs in non-uniform control flow, where implicit
             // derivatives are undefined, and the map has a single mip level anyway.
-            lit += shadowMap.SampleCmpLevelZero(float3(uv + float2(x, y) * texel, float(cascade)), lightClip.z);
+            lit += shadowMap.SampleCmpLevelZero(shadowMapSampler, float3(uv + float2(x, y) * texel, float(cascade)), lightClip.z);
         }
     }
     return lit / 9.0;
@@ -737,7 +741,7 @@ float EvaluateLocalShadow(SceneLightData light, float3 worldPos, float3 geoNorma
         for (int x = -1; x <= 1; ++x)
         {
             // An explicit level for the same reason as the cascades: non-uniform control flow.
-            lit += localShadowAtlas.SampleCmpLevelZero(coords.xy + float2(x, y) * atlasTexel, coords.z);
+            lit += localShadowAtlas.SampleCmpLevelZero(localShadowAtlasSampler, coords.xy + float2(x, y) * atlasTexel, coords.z);
         }
     }
     return lit / 9.0;
@@ -752,7 +756,7 @@ float2 SampleEnvironmentBrdf(float roughness, float NdV)
 {
     const float size = 64.0;
     float2 uv = clamp(float2(NdV, roughness), float2(0.5 / size), float2(1.0 - 0.5 / size));
-    return environmentBrdfLut.SampleLevel(uv, 0.0).rg;
+    return environmentBrdfLut.SampleLevel(environmentBrdfLutSampler, uv, 0.0).rg;
 }
 
 // Scales a single-scattering GGX specular term up by the energy the lobe loses to light bouncing
@@ -1035,7 +1039,7 @@ float3 EvaluateSkyAmbient(float3 worldPosition, float3 N, float3 geoNormal, floa
     float3 R = reflect(-V, anisotropy.strength > 0.0 ? AnisotropicBentNormal(N, V, anisotropy.tangent, anisotropy.strength, roughness) : N);
     float3 environment = SceneSpecularEnvironment(
         worldPosition, N, R, V,
-        prefilteredEnvironment.SampleLevel(R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R));
+        prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R));
     float3 diffuse = diffuseAlbedo * SceneDiffuseAmbient(worldPosition, N, V) * ao;
     if (specular.diffuseTransmissionFactor > 0.0)
     {
@@ -1071,7 +1075,7 @@ float SampleSheenAlbedo(float roughness, float NdV)
 {
     const float size = 64.0;
     float2 uv = clamp(float2(NdV, roughness), float2(0.5 / size), float2(1.0 - 0.5 / size));
-    return environmentBrdfLut.SampleLevel(uv, 0.0).b;
+    return environmentBrdfLut.SampleLevel(environmentBrdfLutSampler, uv, 0.0).b;
 }
 
 // The sheen's share of the ambient term, as Filament shades it: the GGX-prefiltered sky along the
@@ -1086,7 +1090,7 @@ float3 EvaluateSheenAmbient(float3 worldPosition, float3 N, float3 V, SheenParam
         return sheen.color * albedo * SceneSpecularEnvironment(worldPosition, N, uniformR, V, SceneAmbientAlong(uniformR));
     }
     float3 R = reflect(-V, N);
-    float3 sky = prefilteredEnvironment.SampleLevel(R, sheen.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
+    float3 sky = prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, R, sheen.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
     return sheen.color * albedo * SceneSpecularEnvironment(worldPosition, N, R, V, sky + SceneLightsAmbientAlong(R));
 }
 
@@ -1108,7 +1112,7 @@ float3 EvaluateCoatAmbient(float3 worldPosition, CoatParams coat, float3 geoNorm
                            ? SceneSpecularEnvironment(worldPosition, coat.normal, R, V, SceneAmbientAlong(R))
                            : SceneSpecularEnvironment(
                                  worldPosition, coat.normal, R, V,
-                                 prefilteredEnvironment.SampleLevel(R, coat.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R));
+                                 prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, R, coat.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R));
     return coatAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, coat.roughness, HorizonSpecularOcclusion(R, geoNormal));
 }
 

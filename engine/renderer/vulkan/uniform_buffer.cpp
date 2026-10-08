@@ -99,7 +99,7 @@ void VulkanUniformBuffer::SetEnvironmentMap(TextureDescriptorBinding environment
         write.descriptorCount = 1;
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.pImageInfo = &info;
-        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+        UpdateFrameDescriptorSets(m_device, std::span<const VkWriteDescriptorSet>(&write, 1));
     }
 }
 
@@ -122,7 +122,7 @@ void VulkanUniformBuffer::SetScatterImages(TextureDescriptorBinding light, Textu
             writes[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[index].pImageInfo = &infos[index];
         }
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        UpdateFrameDescriptorSets(m_device, writes);
     }
 }
 
@@ -147,7 +147,7 @@ void VulkanUniformBuffer::SetPathTraceLayerImages(TextureDescriptorBinding depth
             writes[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[index].pImageInfo = &infos[index];
         }
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        UpdateFrameDescriptorSets(m_device, writes);
     }
 }
 
@@ -164,7 +164,7 @@ void VulkanUniformBuffer::SetCloudTarget(TextureDescriptorBinding target)
         write.descriptorCount = 1;
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         write.pImageInfo = &info;
-        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+        UpdateFrameDescriptorSets(m_device, std::span<const VkWriteDescriptorSet>(&write, 1));
     }
 }
 
@@ -281,6 +281,26 @@ void VulkanUniformBuffer::Update(
     {
         motion[prevModelSlots[index]] = prevModels[index];
     }
+}
+
+void UpdateFrameDescriptorSets(VkDevice device, std::span<const VkWriteDescriptorSet> writes)
+{
+    std::vector<VkWriteDescriptorSet> split;
+    split.reserve(writes.size() * 2);
+    for (VkWriteDescriptorSet write : writes)
+    {
+        if (write.descriptorType != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+        {
+            split.push_back(write);
+            continue;
+        }
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        split.push_back(write);
+        write.dstBinding += kFrameSamplerBindingOffset;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        split.push_back(write);
+    }
+    vkUpdateDescriptorSets(device, static_cast<uint32_t>(split.size()), split.data(), 0, nullptr);
 }
 
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
@@ -408,10 +428,27 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
         bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
 
+    // Each texture's sampler is a binding of its own, kFrameSamplerBindingOffset on.
+    std::vector<VkDescriptorSetLayoutBinding> split;
+    split.reserve(bindings.size() * 2);
+    for (VkDescriptorSetLayoutBinding binding : bindings)
+    {
+        if (binding.descriptorType != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+        {
+            split.push_back(binding);
+            continue;
+        }
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        split.push_back(binding);
+        binding.binding += kFrameSamplerBindingOffset;
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        split.push_back(binding);
+    }
+
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-    layoutInfo.pBindings = bindings.data();
+    layoutInfo.bindingCount = static_cast<uint32_t>(split.size());
+    layoutInfo.pBindings = split.data();
 
     CheckVulkan(
         vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_layout),
@@ -562,8 +599,10 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
 {
     // Set 0 alone, one per swapchain image: its uniform buffer, image samplers and storage buffers (the
     // material sets, set 1, live in VulkanMaterialSetCache).
-    const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageCount * 23},
+    // The textures and their samplers are separate descriptors (kFrameSamplerBindingOffset).
+    const std::array<VkDescriptorPoolSize, 4> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
+                                                            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, imageCount * 23},
+                                                            {VK_DESCRIPTOR_TYPE_SAMPLER, imageCount * 23},
                                                             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 8}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -790,7 +829,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
             write.pImageInfo = &pathTraceLayerInfos[index];
         }
 
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
+        UpdateFrameDescriptorSets(m_device, frameWrites);
     }
 }
 }

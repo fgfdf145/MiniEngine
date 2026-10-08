@@ -29,7 +29,7 @@ static const float PATH_TRACE_LAYER_MIN_ALPHA = 0.05;
 #endif
 #if PATH_TRACE_LAYER_PASS == 2
 // The nearest forward-shaded surface's depth (the depth pass's result), set 0 binding 29.
-[[vk::binding(29, 0)]] Sampler2D pathTraceLayerDepth;
+[[vk::binding(29, 0)]] Texture2D pathTraceLayerDepth;
 #endif
 
 [[vk::binding(0, 1)]] Sampler2D baseColorTexture;

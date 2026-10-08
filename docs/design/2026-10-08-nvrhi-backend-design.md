@@ -168,12 +168,27 @@ AB_PRESET=linux-debug AB_MODE=exe AB_SIZE=320x180 AB_FRAMES=6 AB_ASSETS=<装了 
 基线在 `out/baseline_src`（改动前提交的 worktree，同样打上 Linux 构建修复，`-DVCPKG_MANIFEST_INSTALL=OFF` 指向主
 checkout 的 vcpkg_installed）。这不能代替 Windows + NVIDIA 上的 A/B（DLSS、真实 GPU 的格式/内存类型），那一部分留给本机验收。
 
-### 拆采样器的做法（定了，未做）
+### 拆采样器的做法
 
 着色器里每个 `Sampler2D x`（binding b）拆成 `Texture2D x`（binding b）和 `SamplerState xSampler`（binding
-b + 64），纹理的 binding 号不变；采样写成 `x.SampleLevel(xSampler, uv, lod)`，函数参数成对传。Slang 不允许全局
-`static`/`static const` 变量装资源，所以没有"把两者包成一个结构"的捷径（试过）。`MaterialTexture` 宏用
-`##Sampler` 拼名字。bindless 的 `rayTextures[]` 改成纹理数组加一个小的采样器表。
+b + 64，`FRAME_SAMPLER(b)` / `kFrameSamplerBindingOffset`），纹理的 binding 号不变；采样写成
+`x.SampleLevel(xSampler, uv, lod)`。Slang 不允许全局 `static`/`static const` 变量装资源，所以没有"把两者包成一个
+全局结构"的捷径（试过）。既被拆开的集又被还没拆的集调用的函数（大气的 `SampleTransmittance`、
+`SampleMultipleScattering`、`IntegrateScatteredLuminance`：帧集的透射 LUT 拆了，大气 pass 自己的集还没拆）改成
+泛型，参数是 `IAtmosphereLut`，两个实现 `CombinedAtmosphereLut`（`Sampler2D`）和 `SeparateAtmosphereLut`
+（纹理 + 采样器），Slang 全部内联，生成的 SPIR-V 合法。只 `Load` 的纹理（路径追踪层、云目标）不声明采样器。
+`MaterialTexture` 宏到材质集时用 `##Sampler` 拼名字。bindless 的 `rayTextures[]` 改成纹理数组加一个小的采样器表。
+
+**B1 完成（2026-10-09）**：帧描述符集（set 0）的 23 个 combined image sampler 拆成 SAMPLED_IMAGE（b）和
+SAMPLER（b + 64），仍是原生 Vulkan：布局按同样的规则展开，`UpdateFrameDescriptorSets` 把每个 combined 写拆成两个
+写（同一个 `VkDescriptorImageInfo`：Vulkan 对 SAMPLED_IMAGE 忽略 sampler、对 SAMPLER 忽略 view），描述符池
+按拆后的类型分配。着色器：`atmosphere_sampling`、`pbr_common`（级联阴影和局部阴影图集用
+`SamplerComparisonState` 和 `SampleCmpLevelZero`）、`ddgi_common`、`volumetric_clouds`、`cloud_shadow`、
+`triangle.frag`、`gbuffer.frag`、`sky.frag` 和各处 `prefilteredEnvironment` 的采样；`TextureSize` 补了
+`Texture2D/Texture2DArray` 的重载。
+
+验证：71 个 SPIR-V 全部 `spirv-val` 通过，用帧集的着色器在 set 0 里不再有 combined image sampler；A/B 对比 A1
+之前的基线，9 个场景逐像素相同，validation 无报告；ctest 与之前相同（120/123，三个已知失败与此无关）。
 
 ### 验证工具
 

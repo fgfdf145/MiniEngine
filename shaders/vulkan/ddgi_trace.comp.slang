@@ -62,7 +62,7 @@ float3 SkyRadiance(float3 direction)
     {
         return SceneAmbientAlong(direction);
     }
-    return prefilteredEnvironment.SampleLevel(direction, MISS_MIP).rgb + SceneLightsAmbientAlong(direction);
+    return prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, direction, MISS_MIP).rgb + SceneLightsAmbientAlong(direction);
 }
 
 // pbr_common.slang's RangeWindow and SmoothDistanceAttenuation, which cannot be included in compute.

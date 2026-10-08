@@ -33,7 +33,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     ScatteringResult result = IntegrateScatteredLuminance(
         camera, direction, ubo.sunDirectionAndMode.xyz, ubo.sunIlluminance.rgb,
-        transmittanceLut, multiScatteringLut, false, max(1.0, float(texel.z + 1) * 2.0), tMax, true, true);
+        AtmosphereLut(transmittanceLut), AtmosphereLut(multiScatteringLut), false, max(1.0, float(texel.z + 1) * 2.0), tMax, true, true);
     float meanTransmittance = dot(result.transmittance, float3(1.0 / 3.0));
     aerialPerspectiveOut[texel] = float4(result.luminance, meanTransmittance);
 }

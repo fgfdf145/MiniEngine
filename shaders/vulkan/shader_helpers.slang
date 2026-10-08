@@ -118,6 +118,19 @@ int2 TextureSize(SamplerCube t, int lod)
     t.GetDimensions(uint(lod), width, height, levels);
     return int2(width, height);
 }
+// The frame set's textures, whose samplers are bindings of their own.
+int2 TextureSize(Texture2D t, int lod)
+{
+    uint width, height, levels;
+    t.GetDimensions(uint(lod), width, height, levels);
+    return int2(width, height);
+}
+int2 TextureSize(Texture2DArray t, int lod)
+{
+    uint width, height, elements, levels;
+    t.GetDimensions(uint(lod), width, height, elements, levels);
+    return int2(width, height);
+}
 int TextureLevels(Sampler2D t)
 {
     uint width, height, levels;

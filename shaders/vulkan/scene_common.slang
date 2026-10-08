@@ -103,6 +103,10 @@ struct CameraBuffer
 };
 [[vk::binding(0, 0)]] ConstantBuffer<CameraBuffer> ubo;
 
+// The frame set's textures sample with samplers of their own: binding b's at FRAME_SAMPLER(b)
+// (kFrameSamplerBindingOffset in engine/renderer/vulkan/uniform_buffer.h).
+#define FRAME_SAMPLER(b) ((b) + 64)
+
 #define MATERIAL_MIP_BIAS (ubo.textureParams.x)
 // A material texture sampled with that bias. Fragment shaders only (a macro, so the compute shaders
 // that include this file never compile it).

@@ -291,6 +291,16 @@ static_assert(
 // per-material loop entirely — it is written once per swapchain image instead of once per image
 // per material — and so a material reload rebuilds only set 1. The deferred lighting pass binds
 // this same set with no material at all; the tone mapping pass binds no camera set.
+// The frame set's textures and their samplers are separate bindings, as NVRHI's binding sets have
+// them (it has no combined image sampler): a texture at binding b, its sampler at b + this
+// (shaders/vulkan's frame headers declare them so).
+inline constexpr uint32_t kFrameSamplerBindingOffset = 64;
+
+// vkUpdateDescriptorSets for the frame set: a combined image sampler write becomes the texture's
+// SAMPLED_IMAGE write and its sampler's SAMPLER write, from the same image info (Vulkan ignores the
+// sampler of the one and the view of the other).
+void UpdateFrameDescriptorSets(VkDevice device, std::span<const VkWriteDescriptorSet> writes);
+
 class VulkanFrameDescriptorSetLayout
 {
   public:

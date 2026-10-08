@@ -31,7 +31,7 @@ void main(uint3 groupThreadId : SV_GroupThreadID, uint3 groupId : SV_GroupID)
     float3 direction = float3(cos(theta) * sin(phi), cos(phi), sin(theta) * sin(phi));
 
     ScatteringResult result = IntegrateScatteredLuminance(
-        origin, direction, sunDirection, float3(1.0), transmittanceLut, multiScatteringLut,
+        origin, direction, sunDirection, float3(1.0), AtmosphereLut(transmittanceLut), AtmosphereLut(multiScatteringLut),
         true, 20.0, 9.0e9, false, false);
     sharedMultiScatteringAs1[index] = result.multiScatteringAs1 / 64.0;
     sharedLuminance[index] = result.luminance / 64.0;

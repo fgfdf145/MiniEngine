@@ -9,7 +9,9 @@ Runs each case three times: A twice (the noise floor) and B once, then compares 
 usage: python tools/render_ab/ab.py [case names...]   (all cases when none given)
 env: AB_PRESET (default vs2026-x64; a single-config preset such as linux-debug has no Debug folder),
      AB_EXE (default the preset's Debug app), AB_FRAMES (default 90), AB_SIZE (default 1280x720),
-     AB_ASSETS (default the main checkout's assets), AB_OUT (default out/render_ab)
+     AB_ASSETS (default the main checkout's assets), AB_OUT (default out/render_ab),
+     AB_REUSE_A (an earlier run's AB_OUT: its A captures stand in for this run's, so only B runs; for
+     AB_MODE=exe against the same baseline, AB_SIZE and AB_FRAMES)
 The fixture_* cases need only the repository's render scenes (tests/fixtures/render_scenes, installed
 into AB_ASSETS by scripts/install-render-scenes.sh), so they run where the R34 and Yuki do not exist,
 for example on lavapipe at a small AB_SIZE.
@@ -52,6 +54,7 @@ EXES = {
     "cur": (EXE, SHADERS["slang"]),
 }
 MODE = os.environ.get("AB_MODE", "shaders")
+REUSE_A = os.environ.get("AB_REUSE_A")
 A, B = ("base", "cur") if MODE == "exe" else ("glsl", "slang")
 
 ROLLING_ROAD_CAMERA = {"position": [4.0, 1.4, -4.0], "yaw": -123.7, "pitch": -4.0}
@@ -169,6 +172,14 @@ def run(case, variant, tag):
     return capture
 
 
+def run_a(case, tag):
+    if REUSE_A:
+        earlier = os.path.join(REUSE_A, f"{case}_{tag}.png")
+        if os.path.exists(earlier):
+            return earlier
+    return run(case, A, tag)
+
+
 def diff(a, b):
     x = np.asarray(Image.open(a).convert("RGB"), dtype=np.int16)
     y = np.asarray(Image.open(b).convert("RGB"), dtype=np.int16)
@@ -186,8 +197,8 @@ def main():
     cases = sys.argv[1:] or list(CASES)
     results = {}
     for case in cases:
-        a = run(case, A, A)
-        a2 = run(case, A, A + "2")
+        a = run_a(case, A)
+        a2 = run_a(case, A + "2")
         b = run(case, B, B)
         floor, _ = diff(a, a2)
         delta, d = diff(a, b)

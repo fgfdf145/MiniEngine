@@ -153,18 +153,61 @@ void UvToTransmittanceLutParams(float2 uv, out float viewHeight, out float cosZe
     cosZenith = clamp(cosZenith, -1.0, 1.0);
 }
 
-float3 SampleTransmittance(Sampler2D lut, float viewHeight, float cosZenith)
+// A LUT the functions below sample at its top level: a combined image sampler, as the LUT passes'
+// own sets bind them, or a texture and its sampler, as the frame set does.
+interface IAtmosphereLut
 {
-    return lut.SampleLevel(TransmittanceLutParamsToUv(viewHeight, cosZenith), 0.0).rgb;
+    float4 SampleTop(float2 uv);
 }
 
-float3 SampleMultipleScattering(Sampler2D lut, float viewHeight, float cosSunZenith)
+struct CombinedAtmosphereLut : IAtmosphereLut
+{
+    Sampler2D lut;
+
+    float4 SampleTop(float2 uv)
+    {
+        return lut.SampleLevel(uv, 0.0);
+    }
+}
+
+struct SeparateAtmosphereLut : IAtmosphereLut
+{
+    Texture2D lut;
+    SamplerState lutSampler;
+
+    float4 SampleTop(float2 uv)
+    {
+        return lut.SampleLevel(lutSampler, uv, 0.0);
+    }
+}
+
+CombinedAtmosphereLut AtmosphereLut(Sampler2D lut)
+{
+    CombinedAtmosphereLut result;
+    result.lut = lut;
+    return result;
+}
+
+SeparateAtmosphereLut AtmosphereLut(Texture2D lut, SamplerState lutSampler)
+{
+    SeparateAtmosphereLut result;
+    result.lut = lut;
+    result.lutSampler = lutSampler;
+    return result;
+}
+
+float3 SampleTransmittance<L : IAtmosphereLut>(L lut, float viewHeight, float cosZenith)
+{
+    return lut.SampleTop(TransmittanceLutParamsToUv(viewHeight, cosZenith)).rgb;
+}
+
+float3 SampleMultipleScattering<L : IAtmosphereLut>(L lut, float viewHeight, float cosSunZenith)
 {
     float2 uv = clamp(
         float2(cosSunZenith * 0.5 + 0.5, (viewHeight - BottomRadius()) / (TopRadius() - BottomRadius())),
         float2(0.0),
         float2(1.0));
-    return lut.SampleLevel(FromUnitToSubUvs(uv, MULTI_SCATTERING_LUT_SIZE), 0.0).rgb;
+    return lut.SampleTop(FromUnitToSubUvs(uv, MULTI_SCATTERING_LUT_SIZE)).rgb;
 }
 
 // Sky-view parameterisation: y concentrates texels at the horizon (above it in [0, 0.5), below in

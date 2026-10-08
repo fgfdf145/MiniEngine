@@ -34,17 +34,20 @@
 #include "volume_scatter_common.slang"
 
 // The scene behind transmissive surfaces (VulkanTransmissionCopyPass): pre-exposed, full mip chain.
-[[vk::binding(18, 0)]] Sampler2D transmissionCopy;
+[[vk::binding(18, 0)]] Texture2D transmissionCopy;
+[[vk::binding(FRAME_SAMPLER(18), 0)]] SamplerState transmissionCopySampler;
 // The scatter pre-pass (VulkanScatterPass): the light entering each scattering surface, pre-exposed,
 // with its draw slot + 1 in alpha (0 where nothing scatters), and that surface's own depth.
-[[vk::binding(19, 0)]] Sampler2D scatterLight;
-[[vk::binding(20, 0)]] Sampler2D scatterDepth;
+[[vk::binding(19, 0)]] Texture2D scatterLight;
+[[vk::binding(FRAME_SAMPLER(19), 0)]] SamplerState scatterLightSampler;
+[[vk::binding(20, 0)]] Texture2D scatterDepth;
+[[vk::binding(FRAME_SAMPLER(20), 0)]] SamplerState scatterDepthSampler;
 // Path tracing mode (camera block textureParams.y): the nearest forward-shaded surface's depth
 // (VulkanPathTraceLayerPass) and the light the path tracer found for it through its diffuse and
 // specular lobes, demodulated and pre-exposed (VulkanPathTracePass).
-[[vk::binding(29, 0)]] Sampler2D pathTraceLayerDepth;
-[[vk::binding(30, 0)]] Sampler2D pathTraceLayerDiffuse;
-[[vk::binding(31, 0)]] Sampler2D pathTraceLayerSpecular;
+[[vk::binding(29, 0)]] Texture2D pathTraceLayerDepth;
+[[vk::binding(30, 0)]] Texture2D pathTraceLayerDiffuse;
+[[vk::binding(31, 0)]] Texture2D pathTraceLayerSpecular;
 
 struct FragmentInput
 {
@@ -77,7 +80,7 @@ float4 SampleTransmission(float3 worldPosition, float3 N, float3 V, float ior, f
     float3 exitPoint = TransmissionExitPoint(worldPosition, N, V, ior, thickness, volumeScale);
     float4 exitClip = mul(mul(ubo.proj, ubo.view), float4(exitPoint, 1.0));
     float2 exitUv = exitClip.xy / exitClip.w * 0.5 + 0.5;
-    float3 behind = transmissionCopy.SampleLevel(exitUv, TransmissionLod(materialRoughness, ior)).rgb / max(ubo.exposure.x, 1e-20);
+    float3 behind = transmissionCopy.SampleLevel(transmissionCopySampler, exitUv, TransmissionLod(materialRoughness, ior)).rgb / max(ubo.exposure.x, 1e-20);
     return float4(behind, length(exitPoint - worldPosition));
 }
 
@@ -106,12 +109,12 @@ float3 GatherSubsurfaceScattering(float2 pixel, float3 multiscatter, float atten
 {
     float2 extent = float2(TextureSize(scatterLight, 0));
     float2 uv = pixel / extent;
-    float4 center = scatterLight.SampleLevel(uv, 0.0);
+    float4 center = scatterLight.SampleLevel(scatterLightSampler, uv, 0.0);
     float inverseExposure = 1.0 / max(ubo.exposure.x, 1e-20);
     float3 scatterDistance = attenuationDistance * multiscatter;
     float maxDistance = max(scatterDistance.r, max(scatterDistance.g, scatterDistance.b));
-    float3 centerPosition = ScatterWorldPosition(uv, scatterDepth.SampleLevel(uv, 0.0).r);
-    float metresPerPixel = distance(centerPosition, ScatterWorldPosition(uv + float2(1.0 / extent.x, 0.0), scatterDepth.SampleLevel(uv, 0.0).r));
+    float3 centerPosition = ScatterWorldPosition(uv, scatterDepth.SampleLevel(scatterDepthSampler, uv, 0.0).r);
+    float metresPerPixel = distance(centerPosition, ScatterWorldPosition(uv + float2(1.0 / extent.x, 0.0), scatterDepth.SampleLevel(scatterDepthSampler, uv, 0.0).r));
     float maxRadiusPixels = maxDistance / max(metresPerPixel, 1e-12);
     if (maxRadiusPixels <= 1.0)
     {
@@ -126,12 +129,12 @@ float3 GatherSubsurfaceScattering(float2 pixel, float3 multiscatter, float atten
         float3 scatterSample = BurleyScatterSample(i);
         float2 offset = float2(cos(scatterSample.x), sin(scatterSample.x)) * scatterSample.y * maxRadiusPixels / extent;
         float2 sampleUv = uv + offset;
-        float4 sampled = scatterLight.SampleLevel(sampleUv, 0.0);
+        float4 sampled = scatterLight.SampleLevel(scatterLightSampler, sampleUv, 0.0);
         if (sampled.a != center.a)
         {
             continue;
         }
-        float3 samplePosition = ScatterWorldPosition(sampleUv, scatterDepth.SampleLevel(sampleUv, 0.0).r);
+        float3 samplePosition = ScatterWorldPosition(sampleUv, scatterDepth.SampleLevel(scatterDepthSampler, sampleUv, 0.0).r);
         float3 weight = BurleyProfile(d, distance(samplePosition, centerPosition)) * scatterSample.z;
         totalWeight += weight;
         total += weight * sampled.rgb;

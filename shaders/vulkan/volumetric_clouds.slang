@@ -10,9 +10,12 @@
 
 // Set 0 bindings 24, 25 and 27: the large and small billows and the plume map (VulkanAtmosphere),
 // REPEAT and linear.
-[[vk::binding(24, 0)]] Sampler3D cloudShapeNoise;
-[[vk::binding(25, 0)]] Sampler3D cloudDetailNoise;
-[[vk::binding(27, 0)]] Sampler2D cloudWeatherMap;
+[[vk::binding(24, 0)]] Texture3D cloudShapeNoise;
+[[vk::binding(FRAME_SAMPLER(24), 0)]] SamplerState cloudShapeNoiseSampler;
+[[vk::binding(25, 0)]] Texture3D cloudDetailNoise;
+[[vk::binding(FRAME_SAMPLER(25), 0)]] SamplerState cloudDetailNoiseSampler;
+[[vk::binding(27, 0)]] Texture2D cloudWeatherMap;
+[[vk::binding(FRAME_SAMPLER(27), 0)]] SamplerState cloudWeatherMapSampler;
 
 // Must match kCloudScatteringOctaves and kCloudOctave* in engine/renderer/volumetric_clouds.h.
 static const int CLOUD_SCATTERING_OCTAVES = 5;
@@ -334,7 +337,7 @@ float CloudPlumeDistance(float3 positionKm, float heightFraction, out float colu
         return -1e3;
     }
     float thicknessKm = ubo.cloudLayer.y;
-    float2 weather = cloudWeatherMap.SampleLevel(positionKm.xz * ubo.cloudScales.z - float2(ubo.cloudShapeMotion.w, ubo.cloudDetailMotion.w), 0.0).rg;
+    float2 weather = cloudWeatherMap.SampleLevel(cloudWeatherMapSampler, positionKm.xz * ubo.cloudScales.z - float2(ubo.cloudShapeMotion.w, ubo.cloudDetailMotion.w), 0.0).rg;
     float top = weather.r * (1.0 - CLOUD_WEATHER_FLOOR) + CLOUD_WEATHER_FLOOR;
     columnTopKm = clamp((top - ubo.cloudLayer.z) * thicknessKm, 0.0, thicknessKm);
     return CloudSurfaceDistance(top, weather.g * CLOUD_WEATHER_SLOPE_SCALE, ubo.cloudLayer.z, thicknessKm, ubo.cloudScales.z, heightFraction * thicknessKm);
@@ -361,8 +364,8 @@ float CloudExtinction(float3 positionKm, float heightFraction, float detail, out
     }
     float heightKm = heightFraction * ubo.cloudLayer.y;
     // The wind carries the billows with the plumes, and they rise through them (CloudMotion).
-    float4 shape = cloudShapeNoise.SampleLevel(positionKm * ubo.cloudScales.x - ubo.cloudShapeMotion.xyz, 0.0);
-    float4 fine = detail > 0.0 ? cloudDetailNoise.SampleLevel(positionKm * ubo.cloudScales.y - ubo.cloudDetailMotion.xyz, 0.0) : float4(CLOUD_BILLOW_MEAN);
+    float4 shape = cloudShapeNoise.SampleLevel(cloudShapeNoiseSampler, positionKm * ubo.cloudScales.x - ubo.cloudShapeMotion.xyz, 0.0);
+    float4 fine = detail > 0.0 ? cloudDetailNoise.SampleLevel(cloudDetailNoiseSampler, positionKm * ubo.cloudScales.y - ubo.cloudDetailMotion.xyz, 0.0) : float4(CLOUD_BILLOW_MEAN);
     float shapeTileKm = 1.0 / ubo.cloudScales.x;
     float detailTileKm = 1.0 / ubo.cloudScales.y;
     distanceKm += CloudBillows(shape, fine, shapeTileKm, detailTileKm, ubo.cloudScales.w, detail, heightKm);
@@ -476,7 +479,7 @@ float4 MarchClouds(float3 direction, float jitter, int minSteps, int maxSteps, o
     float3 sunLight = float3(0.0);
     if (RaySphereIntersectNearest(entry, sunDirection, float3(0.0), BottomRadius()) < 0.0)
     {
-        sunLight = ubo.sunIlluminance.rgb * SampleTransmittance(atmosphereTransmittanceLut, entryRadius, dot(sunDirection, entryUp));
+        sunLight = ubo.sunIlluminance.rgb * SampleTransmittance(FrameTransmittanceLut(), entryRadius, dot(sunDirection, entryUp));
     }
     // The sky above the layer as a uniform upper hemisphere, and the lit ground below it.
     float3 skyAbove = GroundSkyIrradiance() / ATMOSPHERE_PI;

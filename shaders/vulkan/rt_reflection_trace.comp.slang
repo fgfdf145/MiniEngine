@@ -64,7 +64,7 @@ float3 SkyRadiance(float3 direction)
     {
         return SceneAmbientAlong(direction);
     }
-    return prefilteredEnvironment.SampleLevel(direction, 0.0).rgb + SceneLightsAmbientAlong(direction);
+    return prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, direction, 0.0).rgb + SceneLightsAmbientAlong(direction);
 }
 
 // The share of the shadow caster's light that reaches a reflected point: one ray at its centre.

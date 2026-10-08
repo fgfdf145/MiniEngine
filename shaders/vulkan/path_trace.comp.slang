@@ -279,7 +279,7 @@ float3 SkyRadiance(float3 direction)
     {
         return SceneAmbientAlong(direction);
     }
-    return prefilteredEnvironment.SampleLevel(direction, 0.0).rgb + SceneLightsAmbientAlong(direction);
+    return prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, direction, 0.0).rgb + SceneLightsAmbientAlong(direction);
 }
 
 // What the air and the height fog do to the light along one of a path's rays, as the lighting pass
@@ -311,7 +311,7 @@ PathMedium RayMedium(float3 origin, float3 direction, float distance, bool toSky
         {
             float3 startKm = ubo.atmosphereCameraPositionKm.xyz + (origin - ubo.cameraWorldPosition.xyz) * kilometresPerUnit;
             ScatteringResult air = IntegrateScatteredLuminance(
-                startKm, direction, ubo.sunDirectionAndMode.xyz, ubo.sunIlluminance.rgb, atmosphereTransmittanceLut, ptMultiScatteringLut,
+                startKm, direction, ubo.sunDirectionAndMode.xyz, ubo.sunIlluminance.rgb, FrameTransmittanceLut(), AtmosphereLut(ptMultiScatteringLut),
                 false, clamp(ceil(lengthKm * 2.0), 1.0, 8.0), lengthKm, true, true);
             medium.transmittance = air.transmittance;
             medium.inscatter = air.luminance;

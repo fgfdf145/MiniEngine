@@ -17,13 +17,13 @@ struct ScatteringResult
 // anisotropicPhase uses the Rayleigh and Cornette-Shanks phases; otherwise the uniform one.
 // useMultiScattering adds the multiple-scattering LUT's contribution; includeGround adds the
 // sunlit ground's Lambertian reflection where the ray ends on it.
-ScatteringResult IntegrateScatteredLuminance(
+ScatteringResult IntegrateScatteredLuminance<T : IAtmosphereLut, M : IAtmosphereLut>(
     float3 origin,
     float3 direction,
     float3 sunDirection,
     float3 illuminance,
-    Sampler2D transmittanceLut,
-    Sampler2D multiScatteringLut,
+    T transmittanceLut,
+    M multiScatteringLut,
     bool includeGround,
     float sampleCount,
     float tMaxLimit,

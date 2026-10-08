@@ -32,6 +32,6 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     ScatteringResult result = IntegrateScatteredLuminance(
         float3(0.0, viewHeight, 0.0), direction, sunDirection, ubo.sunIlluminance.rgb,
-        transmittanceLut, multiScatteringLut, false, 30.0, 9.0e9, true, true);
+        AtmosphereLut(transmittanceLut), AtmosphereLut(multiScatteringLut), false, 30.0, 9.0e9, true, true);
     skyViewOut[texel] = float4(result.luminance, 1.0);
 }
