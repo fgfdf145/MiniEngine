@@ -41,6 +41,12 @@ layout(set = 0, binding = 18) uniform sampler2D transmissionCopy;
 // with its draw slot + 1 in alpha (0 where nothing scatters), and that surface's own depth.
 layout(set = 0, binding = 19) uniform sampler2D scatterLight;
 layout(set = 0, binding = 20) uniform sampler2D scatterDepth;
+// Path tracing mode (camera block textureParams.y): the nearest forward-shaded surface's depth
+// (VulkanPathTraceLayerPass) and the light the path tracer found for it through its diffuse and
+// specular lobes, demodulated and pre-exposed (VulkanPathTracePass).
+layout(set = 0, binding = 29) uniform sampler2D pathTraceLayerDepth;
+layout(set = 0, binding = 30) uniform sampler2D pathTraceLayerDiffuse;
+layout(set = 0, binding = 31) uniform sampler2D pathTraceLayerSpecular;
 
 layout(location = 0) in vec3 fragColor;
 layout(location = 1) in vec2 fragTexCoord;
@@ -311,6 +317,19 @@ void main()
         return;
     }
     specular.diffuseTransmissionColor *= vec3(1.0) - singleScatter;
+    // In path tracing mode the nearest forward-shaded surface over each pixel was path traced: it
+    // takes that light in place of the ambient terms, as the deferred surfaces do. Surfaces behind it
+    // keep the environment and the probes.
+    if (ubo.textureParams.y > 0.5)
+    {
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        if (texelFetch(pathTraceLayerDepth, pixel, 0).r == gl_FragCoord.z)
+        {
+            pathTracedIndirect = true;
+            pathTracedDiffuse = texelFetch(pathTraceLayerDiffuse, pixel, 0).rgb * ubo.exposure.y;
+            pathTracedSpecular = texelFetch(pathTraceLayerSpecular, pixel, 0).rgb * ubo.exposure.y;
+        }
+    }
     // The forward path has no screen-space reflection: the environment alone, specularly occluded.
     vec3 color = ShadeSurface(fragWorldPosition, N, geoNormal, V, albedo.rgb, metallic, roughness, ao, emissive, coat, sheen, anisotropy, specular, vec4(0.0));
     if (scatters)

@@ -156,6 +156,17 @@ struct ScenePassFrameContext
     TemporalHistoryFrame restirPtHistory;
     glm::vec3 previousCameraPosition{0.0f};
     uint32_t restirPtAccumulatedFrames = 0;
+    // The forward-shaded surfaces' layer (path_trace_layer_pass.h), path traced as well this frame
+    // (with either path tracer); gbuffer.frag's two layer pipeline sets; and its own history, as
+    // pathTraceHistory is the plain path tracer's, and its own accumulate and denoise switches: DLSS
+    // ray reconstruction never sees it, so it is always denoised here.
+    bool pathTraceLayer = false;
+    const VulkanPipelineSet* pathTraceLayerDepthPipelines = nullptr;
+    const VulkanPipelineSet* pathTraceLayerSurfacePipelines = nullptr;
+    TemporalHistoryFrame pathTraceLayerHistory;
+    float pathTraceLayerHistoryScale = 1.0f;
+    bool pathTraceLayerAccumulate = false;
+    bool pathTraceLayerDenoise = false;
     // The frame's GPU timer, for passes that time their own dispatches (a mark closes the section since
     // the previous one; the renderer marks each pass after it records). Null without timestamps.
     VulkanGpuTimer* gpuTimer = nullptr;
@@ -198,6 +209,12 @@ struct ScenePassFrameContext
     std::span<const VulkanDrawItem> BlendDrawItems() const
     {
         return drawItems.subspan(blendDrawItemBegin);
+    }
+
+    // Every draw the forward pass shades: forward-shaded Opaque and Mask, transmissive, Blend.
+    std::span<const VulkanDrawItem> PathTraceLayerDrawItems() const
+    {
+        return drawItems.subspan(forwardShadedDrawItemBegin);
     }
 };
 

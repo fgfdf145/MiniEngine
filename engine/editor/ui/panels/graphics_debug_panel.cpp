@@ -342,6 +342,17 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
     {
         ImGui::SetTooltip("Local lights each path vertex resamples one from for its shadow ray");
     }
+    ImGui::Checkbox("Glass and blended surfaces##pt", &pathTracing.forwardSurfaces);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("The nearest glass, Blend or transmissive surface over each pixel is path traced too,\n"
+                          "and the paths meet those surfaces; off, they keep the probes and the sky");
+    }
+    ImGui::Checkbox("Air and fog along the paths##pt", &pathTracing.rayMedia);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Reflected and bounced light passes through the aerial perspective and the height fog");
+    }
     // ReSTIR PT Enhanced in place of the plain path tracer: it carries the direct light too.
     if (ImGui::Checkbox("ReSTIR PT Enhanced##pt", &pathTracing.restir))
     {

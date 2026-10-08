@@ -39,6 +39,9 @@ layout(set = PATH_TRACE_SET, binding = 14) uniform sampler2D ptPreviousDiffuse;
 layout(set = PATH_TRACE_SET, binding = 15) uniform sampler2D ptPreviousSpecular;
 layout(set = PATH_TRACE_SET, binding = 16) uniform sampler2D ptPreviousSurface;
 layout(set = PATH_TRACE_SET, binding = 17, rgba16f) uniform writeonly image2D ptHistorySurface;
+// The atmosphere's multiple-scattering LUT (GENERAL), with which the trace integrates the air along
+// its rays.
+layout(set = PATH_TRACE_SET, binding = 18) uniform sampler2D ptMultiScatteringLut;
 
 // PathTracePushConstants in engine/renderer/vulkan/path_trace_pass.cpp.
 layout(push_constant) uniform PathTraceConstants
@@ -72,6 +75,11 @@ pathTrace;
 const uint PT_FLAG_ACCUMULATE = 1u;
 const uint PT_FLAG_DENOISE = 2u;
 const uint PT_FLAG_HISTORY_VALID = 4u;
+// PathTracingSettings::rayMedia: the paths' rays pass through the air and the height fog.
+const uint PT_FLAG_RAY_MEDIA = 8u;
+// PathTracingSettings::forwardSurfaces: the paths meet Blend surfaces by their coverage and refract
+// through transmissive ones.
+const uint PT_FLAG_FORWARD_SURFACES = 16u;
 
 const uint PT_IMAGE_RAW = 0u;
 const uint PT_IMAGE_HISTORY = 1u;

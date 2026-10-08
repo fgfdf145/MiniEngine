@@ -9,6 +9,8 @@
 #ifndef RAY_HIT_COMMON_GLSL
 #define RAY_HIT_COMMON_GLSL
 
+#include "normal_map.glsl"
+
 #ifndef RAY_TEXTURE_SET
 #define RAY_TEXTURE_SET 3
 #endif
@@ -19,17 +21,16 @@
 #define RAY_VERTEX_COLOR 3u
 #define RAY_VERTEX_UV0 6u
 #define RAY_VERTEX_NORMAL 8u
+#define RAY_VERTEX_TANGENT 11u
 #define RAY_VERTEX_UV1 15u
 
 // kRayTexturesPerSlot and their order (VulkanRayScene::WriteTextureSlot).
-#define RAY_TEXTURES_PER_SLOT 4u
+#define RAY_TEXTURES_PER_SLOT 5u
 #define RAY_TEXTURE_BASE_COLOR 0u
 #define RAY_TEXTURE_METALLIC 1u
 #define RAY_TEXTURE_ROUGHNESS 2u
 #define RAY_TEXTURE_EMISSIVE 3u
-
-// kRayMaterialAlphaMask in ray_scene.cpp.
-#define RAY_MATERIAL_ALPHA_MASK 2u
+#define RAY_TEXTURE_NORMAL 4u
 
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RayVertexFloats
 {
@@ -206,11 +207,46 @@ RayHitShading RayHitShadingOf(RayHitSurface surface, float footprintWidth, float
     return result;
 }
 
+// The hit's shading normal with its material's normal map, where it has one (the main map through its
+// transform, times the normal scale) in the frame of the interpolated vertex normal and tangent, the frame mirrored with
+// the normal for a hit on its back, as gbuffer.frag mirrors it: what the path tracer shades its later
+// surfaces with. The map's level of detail is RayTexture's for footprintWidth and cosTheta. The tangent
+// goes to world space as the normal does, then into the normal's plane, which keeps its direction
+// under every transform but a non-uniform scale.
+vec3 RayHitMappedNormal(RayHit hit, RayHitSurface surface, float footprintWidth, float cosTheta)
+{
+    MaterialData material = materialData.materials[surface.drawSlot];
+    if (material.surfaceFactors.z == 0.0 || (floatBitsToUint(rayMaterials[surface.drawSlot].emissionFlags.w) & RAY_MATERIAL_NORMAL_MAP) == 0u)
+    {
+        return surface.normal;
+    }
+    RayInstance instance = rayInstances[hit.instance];
+    RayHitCorners corners = RayHitCornersOf(hit.instance, hit.triangle);
+    vec3 vertexNormal = RayObjectToWorldNormal(instance, RayInterpolate3(corners, RAY_VERTEX_NORMAL, hit.barycentrics));
+    float faceSign = dot(vertexNormal, surface.normal) < 0.0 ? -1.0 : 1.0;
+    vec3 tangent = RayObjectToWorldNormal(instance, RayInterpolate3(corners, RAY_VERTEX_TANGENT, hit.barycentrics)) * faceSign;
+    tangent -= surface.normal * dot(surface.normal, tangent);
+    float tangentLength2 = dot(tangent, tangent);
+    if (tangentLength2 < 1e-12)
+    {
+        return surface.normal;
+    }
+    tangent *= inversesqrt(tangentLength2);
+    float handedness = corners.vertices.values[corners.index[0] * RAY_VERTEX_FLOATS + RAY_VERTEX_TANGENT + 3u] < 0.0 ? -1.0 : 1.0;
+    vec3 bitangent = cross(surface.normal, tangent) * (handedness * faceSign);
+    vec3 mapped = DecodeNormalMap(RayTexture(surface, material, RAY_TEXTURE_NORMAL, 1u, footprintWidth, cosTheta));
+    mapped.xy = RotateMaterialTangentXy(material, surface.drawSlot, 1u, mapped.xy) * material.surfaceFactors.z;
+    vec3 N = mat3(tangent, bitangent, surface.normal) * mapped;
+    float length2 = dot(N, N);
+    return length2 > 1e-12 ? N * inversesqrt(length2) : surface.normal;
+}
+
 // The textured coverage test the visibility rays run on a candidate hit (RAY_TEXTURED_ALPHA in
 // ray_tracing_common.glsl): an alpha-tested surface (foliage, fences) stops a ray where its base
 // colour's alpha reaches the cutoff, so its shadow has the leaves' shapes rather than the averaged
-// coverage's dither. Read at a mip about 256 texels across, which keeps the shapes and the cache.
-// Other partly covered surfaces (transmission) keep the coverage decision.
+// coverage's dither; an alpha-blended one (glass, which only the path tracer's rays meet) stops the
+// share of rays its alpha there says. Read at a mip about 256 texels across, which keeps the shapes
+// and the cache. Other partly covered surfaces (transmission) keep the coverage decision.
 bool AcceptTexturedHit(uint instance, uint triangle, vec2 barycentrics, uint rayId)
 {
     RayMaterial rayMaterial = rayMaterials[rayInstances[instance].data.z];
@@ -219,7 +255,8 @@ bool AcceptTexturedHit(uint instance, uint triangle, vec2 barycentrics, uint ray
     {
         return true;
     }
-    if ((floatBitsToUint(rayMaterial.emissionFlags.w) & RAY_MATERIAL_ALPHA_MASK) == 0u)
+    uint materialFlags = floatBitsToUint(rayMaterial.emissionFlags.w);
+    if ((materialFlags & (RAY_MATERIAL_ALPHA_MASK | RAY_MATERIAL_ALPHA_BLEND)) == 0u)
     {
         return RayHash(rayId, triangle) < coverage;
     }
@@ -233,7 +270,7 @@ bool AcceptTexturedHit(uint instance, uint triangle, vec2 barycentrics, uint ray
     float lod = max(log2(width / 256.0), 0.0);
     vec2 uv = MaterialSlotUv(material, drawSlot, 0u, uv0, uv1);
     float alpha = textureLod(rayTextures[nonuniformEXT(textureIndex)], uv, lod).a * material.baseColorFactor.a;
-    return alpha >= material.alphaCutoff;
+    return (materialFlags & RAY_MATERIAL_ALPHA_BLEND) != 0u ? RayHash(rayId, triangle) < alpha : alpha >= material.alphaCutoff;
 }
 
 #endif

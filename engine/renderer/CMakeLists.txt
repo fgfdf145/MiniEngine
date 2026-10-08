@@ -132,6 +132,8 @@ add_library(engine_renderer
     vulkan/ddgi_debug_pass.h
     vulkan/rt_shadow_pass.cpp
     vulkan/rt_shadow_pass.h
+    vulkan/path_trace_layer_pass.cpp
+    vulkan/path_trace_layer_pass.h
     vulkan/path_trace_pass.cpp
     vulkan/path_trace_pass.h
     vulkan/restir_pt_pass.cpp
@@ -396,8 +398,34 @@ function(miniengine_add_shaders shader_target)
         list(APPEND spv_outputs "${shader_output}")
     endforeach()
 
+    # Shaders compiled again under another name with a define: source|output|NAME=value.
+    foreach(variant IN LISTS MINIENGINE_SHADER_DEFINE_VARIANTS)
+        string(REPLACE "|" ";" variant_fields "${variant}")
+        list(GET variant_fields 0 variant_source)
+        list(GET variant_fields 1 variant_name)
+        list(GET variant_fields 2 variant_define)
+        set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${variant_source}")
+        set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${variant_name}.spv")
+        add_custom_command(
+            OUTPUT "${shader_output}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
+            COMMAND ${Vulkan_GLSLC_EXECUTABLE} -fshader-stage=frag -D${variant_define} "${shader_source}" -o "${shader_output}"
+            DEPENDS "${shader_source}" ${shader_includes}
+            COMMENT "Compiling ${variant_name} (${variant_source}, ${variant_define})"
+            VERBATIM
+        )
+        list(APPEND spv_outputs "${shader_output}")
+    endforeach()
+
     add_custom_target(${shader_target} DEPENDS ${spv_outputs})
 endfunction()
+
+# The path traced layer's two passes (path_trace_layer_pass.h): gbuffer.frag writing the nearest
+# forward-shaded surface's depth, then its G-buffer.
+set(MINIENGINE_SHADER_DEFINE_VARIANTS
+    "gbuffer.frag|path_trace_layer_depth.frag|PATH_TRACE_LAYER_PASS=1"
+    "gbuffer.frag|path_trace_layer_surface.frag|PATH_TRACE_LAYER_PASS=2"
+)
 
 # Shaders that trace the ray scene, compiled a second time for hardware ray tracing.
 set(MINIENGINE_RAY_QUERY_SHADERS

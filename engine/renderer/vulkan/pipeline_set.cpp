@@ -22,15 +22,16 @@ namespace
 // copied or moved before vkCreateGraphicsPipelines consumes it.
 struct PipelineVariantState
 {
-    // The fragment stage's specialization constants 0 (kAlphaMask), 1 (kScatterPrepass) and 2
-    // (kDecal), in order.
+    // The fragment stage's specialization constants 0 (kAlphaMask), 1 (kScatterPrepass), 2
+    // (kDecal) and 3 (kBlendItem), in order.
     struct Constants
     {
         VkBool32 alphaMaskEnabled = VK_FALSE;
         VkBool32 scatterPrepass = VK_FALSE;
         VkBool32 decal = VK_FALSE;
+        VkBool32 blendItem = VK_FALSE;
     } constants;
-    std::array<VkSpecializationMapEntry, 3> specializationEntries{};
+    std::array<VkSpecializationMapEntry, 4> specializationEntries{};
     VkSpecializationInfo specialization{};
     std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
     VkPipelineRasterizationStateCreateInfo rasterizer{};
@@ -138,9 +139,11 @@ VulkanPipelineSet::VulkanPipelineSet(
                 variant.constants.alphaMaskEnabled = state.alphaMaskEnabled ? VK_TRUE : VK_FALSE;
                 variant.constants.scatterPrepass = config.scatterPrepass ? VK_TRUE : VK_FALSE;
                 variant.constants.decal = config.decal ? VK_TRUE : VK_FALSE;
+                variant.constants.blendItem = mode == MaterialAlphaMode::Blend ? VK_TRUE : VK_FALSE;
                 variant.specializationEntries[0] = {0, offsetof(PipelineVariantState::Constants, alphaMaskEnabled), sizeof(VkBool32)};
                 variant.specializationEntries[1] = {1, offsetof(PipelineVariantState::Constants, scatterPrepass), sizeof(VkBool32)};
                 variant.specializationEntries[2] = {2, offsetof(PipelineVariantState::Constants, decal), sizeof(VkBool32)};
+                variant.specializationEntries[3] = {3, offsetof(PipelineVariantState::Constants, blendItem), sizeof(VkBool32)};
                 variant.specialization.mapEntryCount = static_cast<uint32_t>(variant.specializationEntries.size());
                 variant.specialization.pMapEntries = variant.specializationEntries.data();
                 variant.specialization.dataSize = sizeof(variant.constants);
@@ -170,8 +173,10 @@ VulkanPipelineSet::VulkanPipelineSet(
                 variant.rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
                 variant.depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-                variant.depthStencil.depthTestEnable = VK_TRUE;
-                variant.depthStencil.depthWriteEnable = state.depthWriteEnabled && !config.decal ? VK_TRUE : VK_FALSE;
+                // The layer's surface pass has no depth attachment: the fragments it keeps are the ones
+                // at the depth its first pass found.
+                variant.depthStencil.depthTestEnable = config.layerPass == 2 ? VK_FALSE : VK_TRUE;
+                variant.depthStencil.depthWriteEnable = state.depthWriteEnabled && !config.decal && config.layerPass == 0 ? VK_TRUE : VK_FALSE;
                 variant.depthStencil.depthCompareOp = config.depthLessOrEqual ? kReverseDepthNearerOrEqual : kReverseDepthNearer;
                 variant.depthStencil.depthBoundsTestEnable = VK_FALSE;
                 variant.depthStencil.stencilTestEnable = VK_FALSE;
@@ -212,6 +217,18 @@ VulkanPipelineSet::VulkanPipelineSet(
                             kRgb};
                         blend.colorWriteMask = attachment < kDecalMasks.size() ? kDecalMasks[attachment] : 0u;
                         blend.blendEnable = blend.colorWriteMask != 0u ? VK_TRUE : VK_FALSE;
+                    }
+                    if (config.layerPass == 1)
+                    {
+                        // The nearest fragment's depth (reverse-Z: the greatest).
+                        blend.blendEnable = VK_TRUE;
+                        blend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                        blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                        blend.colorBlendOp = VK_BLEND_OP_MAX;
+                        blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                        blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                        blend.alphaBlendOp = VK_BLEND_OP_MAX;
+                        blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
                     }
                 }
 

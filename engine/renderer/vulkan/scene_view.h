@@ -3,6 +3,7 @@
 #include "atmosphere.h"
 #include "exposure_histogram_pass.h"
 #include "gbuffer_inputs.h"
+#include "path_trace_layer_pass.h"
 #include "path_trace_pass.h"
 #include "render_target_layout.h"
 #include "restir_pt_pass.h"
@@ -47,6 +48,7 @@ struct VulkanSceneView
     VulkanExposureHistogramPass* exposurePass = nullptr;
     VulkanScatterPass* scatterPass = nullptr;
     VulkanPathTracePass* pathTracePass = nullptr;
+    VulkanPathTraceLayerPass* pathTraceLayerPass = nullptr;
     VulkanRestirPtPass* restirPtPass = nullptr;
     // Set 0 per swapchain image: this camera's block, lights and clusters, previous model matrices,
     // and the bindings that follow this view's targets (scatter, clouds, aerial perspective,
@@ -69,9 +71,11 @@ struct VulkanSceneView
     TemporalHistory taaHistory;
     TemporalHistory restirPtHistory;
     TemporalHistory pathTraceHistory;
+    TemporalHistory pathTraceLayerHistory;
     // The pre-exposure the TAA and path tracing histories were written with; 0 before any frame.
     float taaHistoryPreExposure = 0.0f;
     float pathTraceHistoryPreExposure = 0.0f;
+    float pathTraceLayerHistoryPreExposure = 0.0f;
     // Advances once per frame that jitters; picks the frame's offset in the TAA jitter sequence.
     uint32_t taaFrameIndex = 0;
     // Seeds the AO trace's noise; advances once per recorded frame.
@@ -106,6 +110,7 @@ struct VulkanSceneView
         aoHistory.Reset();
         rtShadowHistory.Reset();
         pathTraceHistory.Reset();
+        pathTraceLayerHistory.Reset();
         restirPtHistory.Reset();
         giHistory.Reset();
         ssrHistory.Reset();
@@ -120,6 +125,7 @@ struct VulkanSceneView
         exposurePass = nullptr;
         scatterPass = nullptr;
         pathTracePass = nullptr;
+        pathTraceLayerPass = nullptr;
         restirPtPass = nullptr;
         gbufferDescriptors.reset();
     }

@@ -178,6 +178,31 @@ void VulkanUniformBuffer::SetScatterImages(TextureDescriptorBinding light, Textu
     }
 }
 
+void VulkanUniformBuffer::SetPathTraceLayerImages(TextureDescriptorBinding depth, TextureDescriptorBinding diffuse, TextureDescriptorBinding specular)
+{
+    m_environment.pathTraceLayerDepth = depth;
+    m_environment.pathTraceLayerDiffuse = diffuse;
+    m_environment.pathTraceLayerSpecular = specular;
+    const std::array<VkDescriptorImageInfo, 3> infos = {
+        VkDescriptorImageInfo{depth.sampler, depth.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        VkDescriptorImageInfo{diffuse.sampler, diffuse.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        VkDescriptorImageInfo{specular.sampler, specular.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    for (VkDescriptorSet set : m_frameDescriptorSets)
+    {
+        std::array<VkWriteDescriptorSet, 3> writes{};
+        for (uint32_t index = 0; index < 3; ++index)
+        {
+            writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[index].dstSet = set;
+            writes[index].dstBinding = 29 + index;
+            writes[index].descriptorCount = 1;
+            writes[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[index].pImageInfo = &infos[index];
+        }
+        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+}
+
 void VulkanUniformBuffer::SetCloudTarget(TextureDescriptorBinding target)
 {
     m_environment.cloudTarget = target;
@@ -222,7 +247,8 @@ void VulkanUniformBuffer::Update(
     bool specularAntiAliasing,
     float preExposure,
     const DdgiUniformData& ddgi,
-    float textureMipBias)
+    float textureMipBias,
+    bool pathTraceLayer)
 {
     // A draw whose slot lies past the buffer would read out of bounds on the GPU, and no
     // robustness feature is enabled to catch it, so a mismatch is refused here instead.
@@ -298,7 +324,7 @@ void VulkanUniformBuffer::Update(
     data.specularAntiAliasing = glm::vec4(specularAntiAliasing ? 1.0f : 0.0f, kSpecularAAVariance, kSpecularAAThreshold, 0.0f);
     data.exposure = glm::vec4(preExposure, 1.0f / preExposure, 0.0f, 0.0f);
     data.ddgi = ddgi;
-    data.textureParams = glm::vec4(textureMipBias, 0.0f, 0.0f, 0.0f);
+    data.textureParams = glm::vec4(textureMipBias, pathTraceLayer ? 1.0f : 0.0f, 0.0f, 0.0f);
 
     std::memcpy(m_mappedBuffers[imageIndex], &data, sizeof(data));
     auto* motion = static_cast<glm::mat4*>(m_mappedMotionBuffers[imageIndex]);
@@ -311,7 +337,7 @@ void VulkanUniformBuffer::Update(
 VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 29> bindings{};
+    std::array<VkDescriptorSetLayoutBinding, 32> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -421,6 +447,16 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
         bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    // The path traced layer of the forward-shaded surfaces: the nearest one's depth (29), which
+    // gbuffer.frag's layer pre-pass and triangle.frag match against, and its traced diffuse (30) and
+    // specular (31) light, which triangle.frag takes in place of the ambient terms.
+    for (uint32_t binding : {29u, 30u, 31u})
+    {
+        bindings[binding].binding = binding;
+        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[binding].descriptorCount = 1;
+        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -629,7 +665,7 @@ void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
     // Set 0 alone, one per swapchain image: its uniform buffer, image samplers and storage buffers (the
     // material sets, set 1, live in VulkanMaterialSetCache).
     const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageCount * 20},
+                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageCount * 23},
                                                             {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 8}}};
 
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -676,7 +712,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         motionInfo.offset = 0;
         motionInfo.range = VK_WHOLE_SIZE;
 
-        std::array<VkWriteDescriptorSet, 29> frameWrites{};
+        std::array<VkWriteDescriptorSet, 32> frameWrites{};
         frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         frameWrites[0].dstSet = m_frameDescriptorSets[i];
         frameWrites[0].dstBinding = 0;
@@ -840,6 +876,20 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
                                               : binding == 26u ? &cloudShadowInfo
                                               : binding == 27u ? &cloudWeatherInfo
                                                                : &cloudTargetInfo;
+        }
+        const std::array<VkDescriptorImageInfo, 3> pathTraceLayerInfos = {
+            VkDescriptorImageInfo{m_environment.pathTraceLayerDepth.sampler, m_environment.pathTraceLayerDepth.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            VkDescriptorImageInfo{m_environment.pathTraceLayerDiffuse.sampler, m_environment.pathTraceLayerDiffuse.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            VkDescriptorImageInfo{m_environment.pathTraceLayerSpecular.sampler, m_environment.pathTraceLayerSpecular.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        for (uint32_t index = 0; index < 3; ++index)
+        {
+            VkWriteDescriptorSet& write = frameWrites[29 + index];
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = m_frameDescriptorSets[i];
+            write.dstBinding = 29 + index;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.descriptorCount = 1;
+            write.pImageInfo = &pathTraceLayerInfos[index];
         }
 
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);

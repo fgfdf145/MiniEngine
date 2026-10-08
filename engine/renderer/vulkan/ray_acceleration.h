@@ -26,6 +26,9 @@ inline constexpr uint8_t kRayMaskStaticCaster = 0x1;
 inline constexpr uint8_t kRayMaskDynamicCaster = 0x2;
 inline constexpr uint8_t kRayMaskStaticNoShadow = 0x4;
 inline constexpr uint8_t kRayMaskDynamicNoShadow = 0x8;
+// Blend surfaces (kRayInstanceBlend), moving or not, casting shadows or not: only the path tracer's
+// rays name it.
+inline constexpr uint8_t kRayMaskBlend = 0x10;
 
 // One mesh's bottom-level acceleration structure, shared by every content that holds the mesh and
 // freed with the last of them. Made on the ray scene's worker, built on the GPU by the

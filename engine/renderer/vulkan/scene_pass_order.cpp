@@ -28,12 +28,13 @@ namespace
 // The path tracer follows the reflection resolve, whose target it overwrites in path tracing mode (as
 // it does the indirect diffuse's, which the GI resolve writes only after lighting has read it), and
 // precedes the lighting that remodulates it; deferred order only, and it records nothing while off.
+// Right before it, the forward-shaded surfaces' layer it traces as well, over the finished depth.
 // The toon passes follow the forward pass in both: the anime characters are cel shaded over the opaque
 // scene (their opaque surfaces are in the G-buffer, which gives them depth, normals and motion) and
 // come before the transmission copy, so glass shows them.
 // The selection outline comes last in both: it reads the finished scene depth and writes an image of
 // its own, which nothing in the scene reads.
-constexpr std::array<ScenePassId, 25> kDeferredOrder = {
+constexpr std::array<ScenePassId, 26> kDeferredOrder = {
     ScenePassId::Geometry,
     ScenePassId::RtShadow,
     ScenePassId::RestirPt,
@@ -41,6 +42,7 @@ constexpr std::array<ScenePassId, 25> kDeferredOrder = {
     ScenePassId::AoResolve,
     ScenePassId::SsrTrace,
     ScenePassId::SsrResolve,
+    ScenePassId::PathTraceLayer,
     ScenePassId::PathTrace,
     ScenePassId::Lighting,
     ScenePassId::GiTrace,
@@ -93,6 +95,8 @@ const char* ScenePassName(ScenePassId id)
         return "SsrTrace";
     case ScenePassId::SsrResolve:
         return "SsrResolve";
+    case ScenePassId::PathTraceLayer:
+        return "PathTraceLayer";
     case ScenePassId::PathTrace:
         return "PathTrace";
     case ScenePassId::Lighting:

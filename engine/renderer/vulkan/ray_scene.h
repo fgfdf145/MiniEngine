@@ -34,9 +34,10 @@ struct RaySceneSubmesh
     // The mesh's GPU buffers, device addressable with hardware ray tracing: hit shading reads the hit's
     // vertices through them. Held while any content naming them is installed.
     std::shared_ptr<const VulkanBuffer> buffer;
-    // Its instance's flags (kRayInstance*): kRayInstanceSkip for a surface every ray passes through
-    // (a Blend one, or a far level of detail, which would double the near one it stands in for), and
-    // kRayInstanceNoShadow for one that casts no shadow. The frame adds kRayInstanceDynamic.
+    // Its instance's flags (kRayInstance*): kRayInstanceSkip for a surface every ray passes through (a
+    // far level of detail, which would double the near one it stands in for), kRayInstanceBlend for a
+    // Blend one only the path tracer's rays meet, and kRayInstanceNoShadow for one that casts no
+    // shadow. The frame adds kRayInstanceDynamic.
     uint32_t flags = 0;
     // The submesh's draw slot, which is where its ray material lives.
     uint32_t slot = 0;
@@ -55,11 +56,14 @@ struct RayMaterialSource
     // Its metallic and roughness maps, which hit shading reads with the two above.
     TextureDescriptorBinding metallic;
     TextureDescriptorBinding roughness;
+    // Its normal map, which the path tracer's hit shading reads; none when it has no map of its own
+    // (the ray material then says so, kRayMaterialNormalMap).
+    TextureDescriptorBinding normal;
 };
 
 // The textures hit shading samples per draw slot, in this order, in the ray texture table
 // (RAY_TEXTURE_* in shaders/vulkan/ray_hit_common.glsl).
-inline constexpr uint32_t kRayTexturesPerSlot = 4;
+inline constexpr uint32_t kRayTexturesPerSlot = 5;
 
 // The scene as compute shaders trace it (shaders/vulkan/ray_tracing_common.glsl): the meshes'
 // hierarchies (ray_tracing_bvh.h), built on a worker thread when content changes; each submesh's ray

@@ -221,6 +221,14 @@ class DdgiLightingWatch
 // About a third of a degree of the sun's direction, or half a percent of its strength.
 inline constexpr float kDdgiLightingTolerance = 5e-3f;
 
+// A new lighting epoch whose light level (the directional lights' illuminance plus the ambient's and
+// the HDRI's average luminance) is more than this many times the last epoch's, or less than its
+// inverse, clears the probes instead of letting them average toward it.
+inline constexpr float kDdgiLightingJump = 2.0f;
+
+// Whether a light level moved from previous to current by more than kDdgiLightingJump either way.
+bool DdgiLightingJumped(float previous, float current);
+
 // A rotation for this frame's probe ray directions: the spherical Fibonacci set turned randomly, so
 // the directions cover the sphere over frames.
 glm::mat3 DdgiRayRotation(uint32_t frameIndex);

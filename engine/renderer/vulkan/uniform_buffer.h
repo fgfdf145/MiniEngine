@@ -65,6 +65,14 @@ struct EnvironmentDescriptorBindings
     // Binding 28: the clouds resolved at the scene's extent (VulkanAtmosphere), in GENERAL. It
     // follows the scene's extent: SetCloudTarget repoints it.
     TextureDescriptorBinding cloudTarget;
+    // Bindings 29 to 31: the path traced layer of the forward-shaded surfaces
+    // (docs/design/2026-10-08-path-tracing-missing-effects-design.md): the nearest one's depth
+    // (VulkanPathTraceLayerPass) and the light the path tracer found for it through its diffuse and
+    // specular lobes (VulkanPathTracePass), all in SHADER_READ_ONLY_OPTIMAL. Placeholders until path
+    // tracing first runs; SetPathTraceLayerImages repoints them.
+    TextureDescriptorBinding pathTraceLayerDepth;
+    TextureDescriptorBinding pathTraceLayerDiffuse;
+    TextureDescriptorBinding pathTraceLayerSpecular;
 };
 
 struct MaterialTextureBinding
@@ -349,6 +357,9 @@ class VulkanUniformBuffer
     // Points set 0 binding 28 of every frame set at the clouds' recreated resolved target. The
     // caller has waited for the device.
     void SetCloudTarget(TextureDescriptorBinding target);
+    // Points set 0 bindings 29 to 31 of every frame set at the path traced layer's images, or back at
+    // placeholders. The caller has waited for every frame in flight.
+    void SetPathTraceLayerImages(TextureDescriptorBinding depth, TextureDescriptorBinding diffuse, TextureDescriptorBinding specular);
     uint32_t GetDrawCapacity() const;
     // A draw's material and texture transforms, read by the GPU from the next frame recorded. The
     // caller has waited for every frame that may still read the slot's previous draw.
@@ -371,7 +382,9 @@ class VulkanUniformBuffer
         bool specularAntiAliasing,
         float preExposure,
         const DdgiUniformData& ddgi,
-        float textureMipBias);
+        float textureMipBias,
+        // The forward pass takes its ambient light from the path traced layer (bindings 29 to 31).
+        bool pathTraceLayer);
 
   private:
     // Shared by the destructor and the constructor's unwind path. Skips null handles.

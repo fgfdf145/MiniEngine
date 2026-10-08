@@ -103,6 +103,7 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     TextureDescriptorBinding rayEmissive;
     TextureDescriptorBinding rayMetallic;
     TextureDescriptorBinding rayRoughness;
+    TextureDescriptorBinding rayNormal;
     // The draw slot (firstInstance) holding this submesh's material, texture transforms, previous model
     // matrix and ray material, from the commit that first draws it until the one that drops it. Set at
     // commit, hence mutable: everything else is fixed once made.
@@ -292,6 +293,14 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Set 0's environment bindings for a view: the shared images, and the view's own scatter images,
     // aerial perspective and clouds.
     EnvironmentDescriptorBindings BuildEnvironmentBindings(const VulkanSceneView& view) const;
+    // Set 0 bindings 29 to 31 for a view: its path traced layer's images once they exist, the DFG
+    // table in their place before.
+    void PathTraceLayerBindings(
+        const VulkanSceneView& view, TextureDescriptorBinding& depth, TextureDescriptorBinding& diffuse, TextureDescriptorBinding& specular) const;
+    // A path traced frame's forward-shaded surfaces' layer (path_trace_layer_pass.h): its images,
+    // made, moved to their resting layout and named in set 0 the first time; true when the frame
+    // can trace it.
+    bool PreparePathTraceLayer(VulkanSceneView& view);
     // A view's set 0 for drawCapacity draws, with every live draw's material written in.
     std::unique_ptr<VulkanUniformBuffer> CreateViewUniformBuffer(const VulkanSceneView& view, uint32_t drawCapacity) const;
     VkSampler EquirectangularSampler() const;
@@ -550,6 +559,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     DdgiMovingInstances m_ddgiMovingInstances;
     // Faster blending after the lighting changes, timed from the previous frame.
     DdgiLightingWatch m_ddgiLighting;
+    // How much light the probes' lighting epoch started with (DdgiLightLevel): a new epoch that differs
+    // from it by more than kDdgiLightingJump either way clears the probes.
+    float m_ddgiLightLevel = 0.0f;
     // Counts the ray scene's installs: probes that recorded another judge their surroundings afresh.
     uint32_t m_ddgiGeometryEpoch = 0;
     // VulkanDdgi::TakeFeedback's output, kept to reuse the allocations.
@@ -678,6 +690,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanPipelineSet> m_geometryPipelines;
     // gbuffer.frag as a deferred decal, against the geometry pass.
     std::unique_ptr<VulkanPipelineSet> m_decalPipelines;
+    // gbuffer.frag's two passes of the path traced layer (kLayerPass 1 and 2), against
+    // VulkanPathTraceLayerPass's render passes; null where the device cannot blend R32F.
+    std::unique_ptr<VulkanPipelineSet> m_pathTraceLayerDepthPipelines;
+    std::unique_ptr<VulkanPipelineSet> m_pathTraceLayerSurfacePipelines;
     std::unique_ptr<VulkanCommandContext> m_commandContext;
     std::unique_ptr<VulkanImGuiLayer> m_imguiLayer;
     // GPU time per pass, and the CPU's time per frame outside the waits, for LogFrameTimings.

@@ -1115,6 +1115,31 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     ddgiLighting.push_back(glm::vec4(lightSelection.ambientLuminance, static_cast<float>(environmentMode)));
     ddgiLighting.push_back(glm::vec4(environmentMode == EnvironmentMode::Hdri ? m_environmentMapSh[0] : glm::vec3(0.0f), 0.0f));
     m_ddgiLighting.Update(ddgiLighting);
+    // A jump in how much light there is (the time of day scrubbed from afternoon to night, the sun
+    // switched off) clears the probes: each restarts its own average on a new epoch, but its rays'
+    // bounce reads its neighbours, which still hold the old light until their turn comes, and from
+    // sunlight to moonlight (some 10^5 times darker) that kept a night scene lit for minutes.
+    bool ddgiLightingJump = false;
+    {
+        float lightLevel = 0.0f;
+        for (size_t index = 1; index + 2 < ddgiLighting.size(); index += 2)
+        {
+            const glm::vec4& colorAndIntensity = ddgiLighting[index];
+            lightLevel += std::max({colorAndIntensity.r, colorAndIntensity.g, colorAndIntensity.b}) * colorAndIntensity.w;
+        }
+        const glm::vec4& ambient = ddgiLighting[ddgiLighting.size() - 2];
+        const glm::vec4& hdri = ddgiLighting.back();
+        lightLevel += std::max({ambient.r, ambient.g, ambient.b}) + std::max({hdri.r, hdri.g, hdri.b});
+        if (m_ddgiLighting.Changed())
+        {
+            ddgiLightingJump = DdgiLightingJumped(m_ddgiLightLevel, lightLevel);
+            m_ddgiLightLevel = lightLevel;
+        }
+        else if (m_ddgiLightLevel <= 0.0f)
+        {
+            m_ddgiLightLevel = lightLevel;
+        }
+    }
     const float ddgiHysteresis = std::clamp(packet.renderDebug.ddgi.hysteresis, 0.0f, 0.999f);
     const uint32_t ddgiLightingEpoch = m_ddgiLighting.Epoch();
     const uint32_t ddgiGeometryEpoch = m_ddgiGeometryEpoch;
@@ -1143,7 +1168,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         const uint32_t levelCount = static_cast<uint32_t>(std::clamp(ddgiSettings.levels, 1, static_cast<int>(kDdgiMaxLevels)));
         const float baseSpacing = std::clamp(ddgiSettings.baseSpacing, 0.25f, 8.0f);
         const glm::vec2 layout(static_cast<float>(levelCount), baseSpacing);
-        if (layout != m_ddgiLayout)
+        if (layout != m_ddgiLayout || ddgiLightingJump)
         {
             m_ddgi->Invalidate();
             m_ddgiScheduler.Reset();
@@ -1703,6 +1728,10 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     lightUpload.clustered = clusteredLighting;
     lightUpload.shadowTiles = shared.gpuShadowTiles;
 
+    // The forward-shaded surfaces path traced as well (the viewport's path tracing only), from images
+    // made before the camera block says so.
+    const bool pathTraceLayer = viewport && features.pathTracing && renderDebug.pathTracing.forwardSurfaces && PreparePathTraceLayer(view);
+
     // This frame's EV, already adapted by UpdateAutoExposure, so every writer and reader of the
     // HDR target agrees on one pre-exposure.
     const float preExposure = PreExposureFromEv100(camera.exposureEv100);
@@ -1727,7 +1756,8 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
         dlssEnabled ? UpscaleTextureMipBias(
                           glm::uvec2(extent.width, extent.height),
                           glm::uvec2(outputExtent.width, outputExtent.height))
-                    : 0.0f);
+                    : 0.0f,
+        pathTraceLayer);
     // Culled against the jittered projection, the one the GPU rasterises with.
     std::vector<VulkanDrawItem>& drawItems = prepared->drawItems;
     drawItems = BuildDrawItems(imageIndex, shared.models, renderMatrices.renderProjection * renderMatrices.view, viewportMatrices.view);
@@ -1890,6 +1920,16 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.pathTracing = renderDebug.pathTracing;
     frame.pathTracing.enabled = features.pathTracing;
     frame.pathTracing.restir = features.restirPt;
+    // The layer accumulates and denoises by the settings whatever DLSS does: ray reconstruction never
+    // sees it.
+    frame.pathTraceLayer = pathTraceLayer;
+    frame.pathTraceLayerDepthPipelines = m_pathTraceLayerDepthPipelines.get();
+    frame.pathTraceLayerSurfacePipelines = m_pathTraceLayerSurfacePipelines.get();
+    frame.pathTraceLayerAccumulate = renderDebug.pathTracing.accumulate;
+    frame.pathTraceLayerDenoise = renderDebug.pathTracing.denoise;
+    frame.pathTraceLayerHistory = view.pathTraceLayerHistory.Advance(pathTraceLayer && frame.pathTraceLayerAccumulate);
+    frame.pathTraceLayerHistoryScale = TaaHistoryScale(frame.pathTraceLayerHistory.valid, preExposure, view.pathTraceLayerHistoryPreExposure);
+    view.pathTraceLayerHistoryPreExposure = preExposure;
     const RestirPtSettings& restirPt = frame.pathTracing.restirPt;
     if (frame.pathTracing.restir)
     {
@@ -2222,6 +2262,8 @@ void VulkanRenderer::DestroySwapchainResources()
     m_scatterPipelines.reset();
     m_geometryPipelines.reset();
     m_decalPipelines.reset();
+    m_pathTraceLayerDepthPipelines.reset();
+    m_pathTraceLayerSurfacePipelines.reset();
     if (m_view.targets)
     {
         m_view.targets->ReleaseImages();
@@ -2655,12 +2697,62 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings(const Vul
     bindings.transmission = m_transmissionImage->GetSampledBinding();
     bindings.scatterLight = view.scatterPass->GetLightBinding();
     bindings.scatterDepth = view.scatterPass->GetDepthBinding();
+    PathTraceLayerBindings(view, bindings.pathTraceLayerDepth, bindings.pathTraceLayerDiffuse, bindings.pathTraceLayerSpecular);
     bindings.ddgiIrradiance = m_ddgi->GetIrradianceBinding();
     bindings.ddgiVisibility = m_ddgi->GetVisibilityBinding();
     bindings.ddgiProbeStates = m_ddgi->GetProbeStateBuffer();
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
     bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), floatTableSampler};
     return bindings;
+}
+
+void VulkanRenderer::PathTraceLayerBindings(
+    const VulkanSceneView& view, TextureDescriptorBinding& depth, TextureDescriptorBinding& diffuse, TextureDescriptorBinding& specular) const
+{
+    if (view.pathTraceLayerPass != nullptr && view.pathTraceLayerPass->IsReady() && view.pathTracePass != nullptr &&
+        view.pathTracePass->IsLayerReady())
+    {
+        depth = view.pathTraceLayerPass->GetDepthBinding();
+        diffuse = view.pathTracePass->GetLayerDiffuseBinding();
+        specular = view.pathTracePass->GetLayerSpecularBinding();
+        return;
+    }
+    // Never sampled while the camera block says there is no layer (textureParams.y), but named in
+    // the layout the real ones rest in.
+    const TextureDescriptorBinding placeholder{m_environmentBrdfLut->GetImageView(), EquirectangularSampler()};
+    depth = placeholder;
+    diffuse = placeholder;
+    specular = placeholder;
+}
+
+bool VulkanRenderer::PreparePathTraceLayer(VulkanSceneView& view)
+{
+    VulkanPathTraceLayerPass* layerPass = view.pathTraceLayerPass;
+    VulkanPathTracePass* pathTracePass = view.pathTracePass;
+    if (layerPass == nullptr || pathTracePass == nullptr || !m_pathTraceLayerDepthPipelines || !m_pathTraceLayerSurfacePipelines)
+    {
+        return false;
+    }
+    bool made = layerPass->Prepare(*view.targets);
+    made = pathTracePass->PrepareLayer(*view.targets, *layerPass) || made;
+    if (made)
+    {
+        // Set 0 names the new images from now on, in the layout they rest in: the frames that may
+        // still use the sets finish first, and the images are moved there at once.
+        m_commandContext->WaitForAllFrames();
+        VulkanUploadBatch transitions(
+            m_device->GetHandle(), m_device->GetQueueFamilies().graphicsFamily.value(), m_device->GetGraphicsQueue());
+        layerPass->RecordInitialTransition(transitions.GetCommandBuffer());
+        pathTracePass->RecordLayerInitialTransition(transitions.GetCommandBuffer());
+        transitions.Flush();
+        TextureDescriptorBinding depth;
+        TextureDescriptorBinding diffuse;
+        TextureDescriptorBinding specular;
+        PathTraceLayerBindings(view, depth, diffuse, specular);
+        view.uniformBuffer->SetPathTraceLayerImages(depth, diffuse, specular);
+        view.pathTraceLayerHistory.Reset();
+    }
+    return layerPass->IsReady() && pathTracePass->IsLayerReady();
 }
 
 // The mode the frame renders with: an HDRI that is still loading, or failed to, renders as None.
@@ -2824,6 +2916,8 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_scatterPipelines.reset();
         m_geometryPipelines.reset();
         m_decalPipelines.reset();
+        m_pathTraceLayerDepthPipelines.reset();
+        m_pathTraceLayerSurfacePipelines.reset();
     }
     view.gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), *view.targets);
 
@@ -2921,8 +3015,39 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
-        *m_rayScene);
+        *m_rayScene,
+        m_atmosphere->GetMultiScatteringBinding());
     view.pathTracePass = pathTracePass.get();
+    // The forward-shaded surfaces' layer it traces too: gbuffer.frag twice, against its two passes.
+    auto pathTraceLayerPass = std::make_unique<VulkanPathTraceLayerPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), *view.targets);
+    if (viewport && pathTraceLayerPass->IsSupported() && pathTracePass->IsSupported())
+    {
+        MaterialPipelineSetConfig layerConfig{};
+        layerConfig.fragmentShader = "path_trace_layer_depth.frag.spv";
+        layerConfig.allowBlending = false;
+        layerConfig.depthLessOrEqual = true;
+        layerConfig.layerPass = 1;
+        m_pathTraceLayerDepthPipelines = std::make_unique<VulkanPipelineSet>(
+            m_device->GetHandle(),
+            m_pipelineCache,
+            pathTraceLayerPass->GetDepthRenderPass(),
+            m_frameSetLayout->GetHandle(),
+            m_materialSetLayout->GetHandle(),
+            layerConfig);
+        layerConfig.fragmentShader = "path_trace_layer_surface.frag.spv";
+        layerConfig.colorAttachmentCount = VulkanPathTraceLayerPass::kSurfaceColorSlots;
+        layerConfig.writeAlpha = true;
+        layerConfig.layerPass = 2;
+        m_pathTraceLayerSurfacePipelines = std::make_unique<VulkanPipelineSet>(
+            m_device->GetHandle(),
+            m_pipelineCache,
+            pathTraceLayerPass->GetSurfaceRenderPass(),
+            m_frameSetLayout->GetHandle(),
+            m_materialSetLayout->GetHandle(),
+            layerConfig);
+    }
+    view.pathTraceLayerPass = pathTraceLayerPass.get();
+    view.passes.push_back(std::move(pathTraceLayerPass));
     view.passes.push_back(std::move(pathTracePass));
     auto restirPtPass = std::make_unique<VulkanRestirPtPass>(
         m_device->GetPhysicalDevice(),
@@ -3216,10 +3341,16 @@ void VulkanRenderer::RebuildViewTargets(VulkanSceneView& view, VkExtent2D render
     {
         pass->OnTargetsRebuilt(*view.targets);
     }
-    // The scatter pass recreated its images at the new extent; set 0 still names the old ones.
+    // The scatter pass recreated its images at the new extent; set 0 still names the old ones. The
+    // path traced layer's are gone until the next path traced frame makes them again.
     if (view.uniformBuffer)
     {
         view.uniformBuffer->SetScatterImages(view.scatterPass->GetLightBinding(), view.scatterPass->GetDepthBinding());
+        TextureDescriptorBinding depth;
+        TextureDescriptorBinding diffuse;
+        TextureDescriptorBinding specular;
+        PathTraceLayerBindings(view, depth, diffuse, specular);
+        view.uniformBuffer->SetPathTraceLayerImages(depth, diffuse, specular);
     }
     // Likewise the clouds' resolved target.
     if (m_atmosphere->EnsureCloudTarget(*view.atmosphere, view.targets->GetExtent()) && view.uniformBuffer)
@@ -3634,6 +3765,8 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             madeSubmeshes[index]->rayEmissive = bindings[index].emissive;
             madeSubmeshes[index]->rayMetallic = bindings[index].metallic;
             madeSubmeshes[index]->rayRoughness = bindings[index].roughness;
+            // Only a map of its own: the ray material says the flat one is not worth a fetch.
+            madeSubmeshes[index]->rayNormal = madeSlots[index].normal != defaultNormalIndex ? bindings[index].normal : TextureDescriptorBinding{};
         }
         if (!uploadBatch->IsEmpty())
         {
@@ -4158,9 +4291,11 @@ void VulkanRenderer::ApplyRenderContent(
                     {
                         const RenderSubmesh& renderSubmesh = *newRenderSubmeshes[index];
                         // Rays see a track's nearest level of detail at every distance: a far one would
-                        // stand in the same place.
-                        const bool passThrough = renderSubmesh.alphaMode == MaterialAlphaMode::Blend || renderSubmesh.drawDistance.min > 0.0f;
-                        const uint32_t flags = (passThrough ? kRayInstanceSkip : 0u) | (renderSubmesh.castShadows ? 0u : kRayInstanceNoShadow);
+                        // stand in the same place. Blend surfaces only the path tracer's rays meet.
+                        const bool farLevel = renderSubmesh.drawDistance.min > 0.0f;
+                        const bool blend = renderSubmesh.alphaMode == MaterialAlphaMode::Blend;
+                        const uint32_t flags = (farLevel ? kRayInstanceSkip : blend ? kRayInstanceBlend : 0u) |
+                                               (renderSubmesh.castShadows ? 0u : kRayInstanceNoShadow);
                         raySubmeshes[index] = RaySceneSubmesh{renderSubmesh.mesh, renderSubmesh.buffer, flags, renderSubmesh.drawSlot};
                         rayModels[index] = frame.transforms.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal);
                     }
@@ -4178,7 +4313,8 @@ void VulkanRenderer::ApplyRenderContent(
                     renderSubmesh->rayBaseColor,
                     renderSubmesh->rayEmissive,
                     renderSubmesh->rayMetallic,
-                    renderSubmesh->rayRoughness});
+                    renderSubmesh->rayRoughness,
+                    renderSubmesh->rayNormal});
             }
             m_rayScene->SetContent(
                 std::move(raySubmeshes), std::move(rayModels), m_view.uniformBuffer->GetDrawCapacity(), placedMaterials, releasedSlots);
@@ -4559,10 +4695,11 @@ void VulkanRenderer::UpdatePathTracing(
 {
     uint32_t stillFrames = 0;
     // The plain path tracer: not while ReSTIR PT runs in its place (its bookkeeping is in the frame setup).
+    // The forward-shaded surfaces' layer, which either traces, keeps its history the same way.
     const bool plainPathTracing = frame.pathTracing.enabled && !frame.pathTracing.restir;
-    if (plainPathTracing)
+    if (plainPathTracing || frame.pathTraceLayer)
     {
-        if (m_view.pathTracePass->Prepare(*m_view.targets))
+        if (plainPathTracing && m_view.pathTracePass->Prepare(*m_view.targets))
         {
             m_view.pathTraceHistory.Reset();
             m_pathTraceAccumulation.Reset();
