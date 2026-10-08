@@ -3141,13 +3141,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         *view.targets,
         m_frameSetLayout->GetHandle(),
         ForwardPassPart::Translucent));
-    auto taaPass = std::make_unique<VulkanTaaPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle());
+    auto taaPass = std::make_unique<VulkanTaaPass>(m_nvrhi->Get(), m_device->GetHandle(), *view.targets, m_frameSetLayout->Get());
     const VulkanTaaPass& taa = *taaPass;
     view.passes.push_back(std::move(taaPass));
     // After TAA in this list, whose order OnTargetsRebuilt follows: the trace names TAA's history

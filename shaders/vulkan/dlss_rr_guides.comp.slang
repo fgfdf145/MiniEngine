@@ -13,15 +13,16 @@
 #include "scene_common.slang"
 #include "gbuffer_common.slang"
 
-[[vk::binding(0, 1)]] Sampler2D albedoTexture;   // GB0
-[[vk::binding(1, 1)]] Sampler2D normalTexture;   // GB1
-[[vk::binding(2, 1)]] Sampler2D surfaceTexture;  // GB2
-[[vk::binding(3, 1)]] Sampler2D specularTexture; // GB5
-[[vk::binding(4, 1)]] Sampler2D depthTexture;
+// Set 1 is VulkanTaaPass's NVRHI binding set; every input is read with Load.
+[[vk::binding(0, 1)]] Texture2D albedoTexture;   // GB0
+[[vk::binding(1, 1)]] Texture2D normalTexture;   // GB1
+[[vk::binding(2, 1)]] Texture2D surfaceTexture;  // GB2
+[[vk::binding(3, 1)]] Texture2D specularTexture; // GB5
+[[vk::binding(4, 1)]] Texture2D depthTexture;
 [[vk::binding(5, 1)]] [[vk::image_format("rgba8")]] RWTexture2D<float4> diffuseAlbedoImage;
 [[vk::binding(6, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> specularAlbedoImage;
 [[vk::binding(7, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> normalRoughnessImage;
-[[vk::binding(8, 1)]] Sampler2D reflectionsTexture;  // the path tracer's specular result
+[[vk::binding(8, 1)]] Texture2D reflectionsTexture;  // the path tracer's specular result
 [[vk::binding(9, 1)]] [[vk::image_format("r16f")]] RWTexture2D<float> hitDistanceImage;
 [[vk::binding(10, 1)]] [[vk::image_format("rg16f")]] RWTexture2D<float2> reflectionMotionImage;
 

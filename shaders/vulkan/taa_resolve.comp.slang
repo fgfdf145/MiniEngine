@@ -12,10 +12,12 @@
 #include "scene_common.slang"
 #include "pre_exposure.slang"
 
-[[vk::binding(0, 1)]] Sampler2D currentTexture;  // SceneHdr, nearest
-[[vk::binding(1, 1)]] Sampler2D depthTexture;    // nearest
-[[vk::binding(2, 1)]] Sampler2D velocityTexture; // nearest
-[[vk::binding(3, 1)]] Sampler2D historyTexture;  // last frame's result, linear
+// Set 1 is VulkanTaaPass's NVRHI binding set: the inputs read with Load have no samplers.
+[[vk::binding(0, 1)]] Texture2D currentTexture;  // SceneHdr
+[[vk::binding(1, 1)]] Texture2D depthTexture;
+[[vk::binding(2, 1)]] Texture2D velocityTexture;
+[[vk::binding(3, 1)]] Texture2D historyTexture;  // last frame's result
+[[vk::binding(67, 1)]] SamplerState historyTextureSampler; // linear
 [[vk::binding(4, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> historyImage;
 [[vk::binding(5, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> outputImage; // SceneTaa
 
@@ -84,11 +86,11 @@ float3 SampleHistoryCatmullRom(float2 uv)
     float2 position3 = (center + 2.0) * taa.invExtent;
     float2 position12 = (center + w2 / w12) * taa.invExtent;
 
-    float3 result = historyTexture.SampleLevel(float2(position12.x, position0.y), 0.0).rgb * (w12.x * w0.y);
-    result += historyTexture.SampleLevel(float2(position0.x, position12.y), 0.0).rgb * (w0.x * w12.y);
-    result += historyTexture.SampleLevel(position12, 0.0).rgb * (w12.x * w12.y);
-    result += historyTexture.SampleLevel(float2(position3.x, position12.y), 0.0).rgb * (w3.x * w12.y);
-    result += historyTexture.SampleLevel(float2(position12.x, position3.y), 0.0).rgb * (w12.x * w3.y);
+    float3 result = historyTexture.SampleLevel(historyTextureSampler, float2(position12.x, position0.y), 0.0).rgb * (w12.x * w0.y);
+    result += historyTexture.SampleLevel(historyTextureSampler, float2(position0.x, position12.y), 0.0).rgb * (w0.x * w12.y);
+    result += historyTexture.SampleLevel(historyTextureSampler, position12, 0.0).rgb * (w12.x * w12.y);
+    result += historyTexture.SampleLevel(historyTextureSampler, float2(position3.x, position12.y), 0.0).rgb * (w3.x * w12.y);
+    result += historyTexture.SampleLevel(historyTextureSampler, float2(position12.x, position3.y), 0.0).rgb * (w12.x * w3.y);
     float weight = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
     // The negative lobes can ring below zero at hard edges; the clip below bounds the rest.
     return max(result / weight, float3(0.0));

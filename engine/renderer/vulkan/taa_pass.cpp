@@ -1,9 +1,11 @@
 #include "taa_pass.h"
 
 #include "dlss.h"
-#include "nvrhi_resources.h"
+#include "nvrhi_pass.h"
 
 #include <array>
+#include <stdexcept>
+#include <string>
 
 namespace me
 {
@@ -39,6 +41,15 @@ constexpr std::array<VkFormat, 5> kGuideFormats = {
     VK_FORMAT_R16G16_SFLOAT};
 constexpr size_t kGuideHitDistance = 3;
 constexpr size_t kGuideReflectionMotion = 4;
+
+// The resolve's set: SceneHdr, depth and velocity read with Load (no samplers), the history sampled
+// bilinearly (its sampler at 3 + 64), the other history and SceneTaa stored.
+constexpr uint32_t kHistorySamplerBinding = 3 + 64;
+
+uint32_t Groups(uint32_t size)
+{
+    return (size + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize;
+}
 
 // Must match DlssMotionConstants in shaders/vulkan/dlss_motion_vectors.comp.
 struct DlssMotionPushConstants
@@ -90,94 +101,66 @@ void RecordBarriers(
 }
 }
 
-VulkanTaaPass::VulkanTaaPass(
-    VkPhysicalDevice physicalDevice,
-    VkDevice device,
-    nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
-    const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout)
-    : m_physicalDevice(physicalDevice),
-      m_device(device),
-      m_nvrhiDevice(nvrhiDevice)
+VulkanTaaPass::VulkanTaaPass(nvrhi::IDevice* nvrhiDevice, VkDevice device, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout)
+    : m_nvrhiDevice(nvrhiDevice),
+      m_device(device)
 {
-    try
+    m_linearSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
+    const auto layout = [&](std::initializer_list<nvrhi::BindingLayoutItem> items, const char* failure)
     {
-        m_nearestSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
-        m_linearSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
-        static constexpr std::array<VkDescriptorType, 6> kTypes = {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes);
-        CreateComputePipeline(
-            m_device,
-            pipelineCache,
-            frameSetLayout,
-            m_setLayout,
-            "taa_resolve.comp.spv",
-            sizeof(TaaPushConstants),
-            m_pipelineLayout,
-            m_pipeline);
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 2);
-        m_history.Create(m_nvrhiDevice, m_device, targets.GetOutputExtent(), kHistoryFormat, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        nvrhi::BindingLayoutDesc desc;
+        desc.visibility = nvrhi::ShaderType::Compute;
+        desc.registerSpace = 1;
+        desc.registerSpaceIsDescriptorSet = true;
+        desc.bindingOffsets = ShaderBindingOffsets();
+        desc.bindings = items;
+        return CreateNvrhiBindingLayout(m_nvrhiDevice, desc, failure);
+    };
+    using Item = nvrhi::BindingLayoutItem;
+    m_setLayout = layout(
+        {Item::Texture_SRV(0),
+         Item::Texture_SRV(1),
+         Item::Texture_SRV(2),
+         Item::Texture_SRV(3),
+         Item::Sampler(kHistorySamplerBinding),
+         Item::Texture_UAV(4),
+         Item::Texture_UAV(5),
+         Item::PushConstants(0, sizeof(TaaPushConstants))},
+        "Failed to create the TAA binding layout");
+    m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "taa_resolve.comp.spv", {frameSetLayout, m_setLayout});
+    m_history.Create(m_nvrhiDevice, m_device, targets.GetOutputExtent(), kHistoryFormat, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 
-        static constexpr std::array<VkDescriptorType, 3> kMotionTypes = {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        m_motionSetLayout = CreateComputeSetLayout(m_device, kMotionTypes);
-        CreateComputePipeline(
-            m_device,
-            pipelineCache,
-            frameSetLayout,
-            m_motionSetLayout,
-            "dlss_motion_vectors.comp.spv",
-            sizeof(DlssMotionPushConstants),
-            m_motionPipelineLayout,
-            m_motionPipeline);
-        m_motionDescriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 2, 1);
-        CreateMotionImage(targets.GetExtent());
+    m_motionSetLayout = layout(
+        {Item::Texture_SRV(0), Item::Texture_SRV(1), Item::Texture_UAV(2), Item::PushConstants(0, sizeof(DlssMotionPushConstants))},
+        "Failed to create the DLSS motion vector binding layout");
+    m_motionPipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "dlss_motion_vectors.comp.spv", {frameSetLayout, m_motionSetLayout});
+    m_motion = CreateDlssInputImage(targets.GetExtent(), kMotionFormat, "DLSS motion vectors");
 
-        static constexpr std::array<VkDescriptorType, 11> kGuideTypes = {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        m_guideSetLayout = CreateComputeSetLayout(m_device, kGuideTypes);
-        CreateComputePipeline(
-            m_device,
-            pipelineCache,
-            frameSetLayout,
-            m_guideSetLayout,
-            "dlss_rr_guides.comp.spv",
-            sizeof(DlssMotionPushConstants),
-            m_guidePipelineLayout,
-            m_guidePipeline);
-        m_guideDescriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 6, 5);
-        CreateGuideImages(targets.GetExtent());
-        CreateDescriptorSets(targets);
-    }
-    catch (...)
+    m_guideSetLayout = layout(
+        {Item::Texture_SRV(0),
+         Item::Texture_SRV(1),
+         Item::Texture_SRV(2),
+         Item::Texture_SRV(3),
+         Item::Texture_SRV(4),
+         Item::Texture_UAV(5),
+         Item::Texture_UAV(6),
+         Item::Texture_UAV(7),
+         Item::Texture_SRV(8),
+         Item::Texture_UAV(9),
+         Item::Texture_UAV(10),
+         Item::PushConstants(0, sizeof(DlssMotionPushConstants))},
+        "Failed to create the ray reconstruction guide binding layout");
+    m_guidePipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "dlss_rr_guides.comp.spv", {frameSetLayout, m_guideSetLayout});
+    for (size_t index = 0; index < m_guides.size(); ++index)
     {
-        DestroyHandles();
-        throw;
+        m_guides[index] = CreateDlssInputImage(targets.GetExtent(), kGuideFormats[index], "Ray reconstruction guide");
     }
+    CreateBindingSets(targets);
 }
 
 VulkanTaaPass::~VulkanTaaPass()
 {
-    DestroyHandles();
+    m_history.Destroy();
 }
 
 ScenePassId VulkanTaaPass::Id() const
@@ -226,16 +209,24 @@ void VulkanTaaPass::Record(
     constants.historyScale = frame.taaHistoryScale;
     constants.flags = (frame.taaEnabled ? kFlagEnabled : 0u) | (frame.taaHistory.valid ? kFlagHistoryValid : 0u);
 
+    // SceneHdr, depth and velocity are where the native passes left them, in the read layout; the
+    // history images (just put in GENERAL) and SceneTaa go back to GENERAL.
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot);
-    DispatchCompute(
-        commandBuffer,
-        m_pipeline,
-        m_pipelineLayout,
-        frame.frameDescriptorSet,
-        m_descriptorSets.at(slot * 2 + frame.taaHistory.readIndex),
-        &constants,
-        sizeof(constants),
-        frame.extent);
+    nvrhi::ITexture* historyRead = m_history.GetTexture(frame.taaHistory.readIndex);
+    nvrhi::ICommandList* commandList = frame.commandList;
+    const NvrhiPassScope scope(
+        commandList,
+        {{historyRead, nvrhi::ResourceStates::UnorderedAccess},
+         {m_history.GetTexture(1u - frame.taaHistory.readIndex), nvrhi::ResourceStates::UnorderedAccess},
+         {targets.GetTexture(RenderTargetId::SceneTaa, slot), nvrhi::ResourceStates::UnorderedAccess}});
+    commandList->setTextureState(historyRead, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+    commandList->commitBarriers();
+    nvrhi::ComputeState state;
+    state.pipeline = m_pipeline;
+    state.bindings = {frame.frameBindingSet, m_bindingSets.at(slot * 2 + frame.taaHistory.readIndex)};
+    commandList->setComputeState(state);
+    commandList->setPushConstants(&constants, sizeof(constants));
+    commandList->dispatch(Groups(frame.extent.width), Groups(frame.extent.height));
 }
 
 void VulkanTaaPass::RecordDlss(
@@ -243,64 +234,44 @@ void VulkanTaaPass::RecordDlss(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    // DLSS's motion vectors. The image is rewritten whole, so last frame's contents are discarded; the
-    // barrier orders this frame's stores after last frame's DLSS read them.
-    {
-        const std::array<VkImageMemoryBarrier, 1> barriers = {
-            ImageBarrier(m_motionImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_WRITE_BIT)};
-        RecordBarriers(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, barriers);
-    }
     DlssMotionPushConstants constants{};
     constants.extent = glm::vec2(static_cast<float>(frame.extent.width), static_cast<float>(frame.extent.height));
     constants.invExtent = 1.0f / constants.extent;
     constants.jitterPixels = frame.jitterPixels;
-    DispatchCompute(
-        commandBuffer,
-        m_motionPipeline,
-        m_motionPipelineLayout,
-        frame.frameDescriptorSet,
-        m_motionDescriptorSets.at(frame.frameSlot),
-        &constants,
-        sizeof(constants),
-        frame.extent);
     {
-        const std::array<VkImageMemoryBarrier, 1> barriers = {ImageBarrier(
-            m_motionImage,
-            VK_IMAGE_LAYOUT_GENERAL,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_ACCESS_SHADER_WRITE_BIT,
-            VK_ACCESS_SHADER_READ_BIT)};
-        RecordBarriers(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, barriers);
-    }
+        // DLSS's motion vectors and ray reconstruction's guides: rewritten whole, then left in
+        // ShaderResource for NGX. The states order this frame's stores after last frame's NGX reads.
+        nvrhi::ICommandList* commandList = frame.commandList;
+        const NvrhiPassScope scope(commandList, {});
+        commandList->setTextureState(m_motion.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+        commandList->commitBarriers();
+        nvrhi::ComputeState state;
+        state.pipeline = m_motionPipeline;
+        state.bindings = {frame.frameBindingSet, m_motionBindingSets.at(frame.frameSlot)};
+        commandList->setComputeState(state);
+        commandList->setPushConstants(&constants, sizeof(constants));
+        commandList->dispatch(Groups(frame.extent.width), Groups(frame.extent.height));
+        commandList->setTextureState(m_motion.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
 
-    // Ray reconstruction's guides, as the motion vectors: rewritten whole, then read by NGX.
-    if (frame.dlssRayReconstruction)
-    {
-        std::array<VkImageMemoryBarrier, kGuideFormats.size()> toGeneral{};
-        std::array<VkImageMemoryBarrier, kGuideFormats.size()> toRead{};
-        for (size_t index = 0; index < m_guides.size(); ++index)
+        if (frame.dlssRayReconstruction)
         {
-            toGeneral[index] = ImageBarrier(m_guides[index].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_WRITE_BIT);
-            toRead[index] = ImageBarrier(
-                m_guides[index].image,
-                VK_IMAGE_LAYOUT_GENERAL,
-                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_ACCESS_SHADER_WRITE_BIT,
-                VK_ACCESS_SHADER_READ_BIT);
+            for (const DlssInputImage& guide : m_guides)
+            {
+                commandList->setTextureState(guide.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+            }
+            commandList->commitBarriers();
+            DlssMotionPushConstants guideConstants = constants;
+            guideConstants.unused.x = frame.pathTraceHitDistance ? 1.0f : 0.0f;
+            state.pipeline = m_guidePipeline;
+            state.bindings = {frame.frameBindingSet, m_guideBindingSets.at(frame.frameSlot)};
+            commandList->setComputeState(state);
+            commandList->setPushConstants(&guideConstants, sizeof(guideConstants));
+            commandList->dispatch(Groups(frame.extent.width), Groups(frame.extent.height));
+            for (const DlssInputImage& guide : m_guides)
+            {
+                commandList->setTextureState(guide.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+            }
         }
-        RecordBarriers(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, toGeneral);
-        DlssMotionPushConstants guideConstants = constants;
-        guideConstants.unused.x = frame.pathTraceHitDistance ? 1.0f : 0.0f;
-        DispatchCompute(
-            commandBuffer,
-            m_guidePipeline,
-            m_guidePipelineLayout,
-            frame.frameDescriptorSet,
-            m_guideDescriptorSets.at(frame.frameSlot),
-            &guideConstants,
-            sizeof(guideConstants),
-            frame.extent);
-        RecordBarriers(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, toRead);
     }
 
     // The layout tracker has SceneHdr and the depth in the read layout and SceneTaa in GENERAL, as
@@ -320,7 +291,7 @@ void VulkanTaaPass::RecordDlss(
         targets.GetFormat(RenderTargetId::SceneDepth),
         VK_IMAGE_ASPECT_DEPTH_BIT,
         frame.extent};
-    inputs.motionVectors = {m_motionImage, m_motionView, kMotionFormat, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
+    inputs.motionVectors = {m_motion.image, m_motion.view, m_motion.format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
     inputs.output = {
         targets.GetImage(RenderTargetId::SceneTaa, outputSlot),
         targets.GetView(RenderTargetId::SceneTaa, outputSlot),
@@ -337,8 +308,8 @@ void VulkanTaaPass::RecordDlss(
         inputs.normalRoughness = {m_guides[2].image, m_guides[2].view, m_guides[2].format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
         if (frame.pathTraceHitDistance)
         {
-            const GuideImage& hitDistance = m_guides[kGuideHitDistance];
-            const GuideImage& reflectionMotion = m_guides[kGuideReflectionMotion];
+            const DlssInputImage& hitDistance = m_guides[kGuideHitDistance];
+            const DlssInputImage& reflectionMotion = m_guides[kGuideReflectionMotion];
             inputs.specularHitDistance = {hitDistance.image, hitDistance.view, hitDistance.format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
             inputs.reflectionMotionVectors = {
                 reflectionMotion.image, reflectionMotion.view, reflectionMotion.format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
@@ -387,233 +358,95 @@ void VulkanTaaPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
     // The renderer resets the TAA TemporalHistory at the same call sites, so the next frame
     // discards the new images' undefined contents. The history holds the output; the motion
     // vectors are at the render size.
+    m_bindingSets.clear();
+    m_motionBindingSets.clear();
+    m_guideBindingSets.clear();
     m_history.Create(m_nvrhiDevice, m_device, targets.GetOutputExtent(), kHistoryFormat, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-    CreateMotionImage(targets.GetExtent());
-    CreateGuideImages(targets.GetExtent());
-    CreateDescriptorSets(targets);
-}
-
-void VulkanTaaPass::CreateGuideImages(VkExtent2D extent)
-{
-    DestroyGuideImages();
+    m_motion = CreateDlssInputImage(targets.GetExtent(), kMotionFormat, "DLSS motion vectors");
     for (size_t index = 0; index < m_guides.size(); ++index)
     {
-        GuideImage& guide = m_guides[index];
-        guide.format = kGuideFormats[index];
-        VkImageCreateInfo imageInfo{};
-        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        imageInfo.imageType = VK_IMAGE_TYPE_2D;
-        imageInfo.extent = {extent.width, extent.height, 1};
-        imageInfo.mipLevels = 1;
-        imageInfo.arrayLayers = 1;
-        imageInfo.format = guide.format;
-        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        guide.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, guide.image, "Failed to create a ray reconstruction guide image");
-        VkImageViewCreateInfo viewInfo{};
-        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = guide.image;
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = guide.format;
-        viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &guide.view), "Failed to create a ray reconstruction guide view");
+        m_guides[index] = CreateDlssInputImage(targets.GetExtent(), kGuideFormats[index], "Ray reconstruction guide");
     }
+    CreateBindingSets(targets);
 }
 
-void VulkanTaaPass::DestroyGuideImages()
+VulkanTaaPass::DlssInputImage VulkanTaaPass::CreateDlssInputImage(VkExtent2D extent, VkFormat format, const char* name) const
 {
-    for (GuideImage& guide : m_guides)
+    nvrhi::TextureDesc desc;
+    desc.dimension = nvrhi::TextureDimension::Texture2D;
+    desc.width = extent.width;
+    desc.height = extent.height;
+    desc.format = ToNvrhiFormat(format);
+    desc.isShaderResource = true;
+    desc.isUAV = true;
+    desc.debugName = name;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    DlssInputImage result;
+    result.texture = m_nvrhiDevice->createTexture(desc);
+    if (!result.texture)
     {
-        if (guide.view != VK_NULL_HANDLE)
-        {
-            vkDestroyImageView(m_device, guide.view, nullptr);
-        }
-        // The image and its memory go with the texture, released with the rest below.
-        guide = GuideImage{};
+        throw std::runtime_error(std::string("Failed to create the image for ") + name);
     }
+    result.image = ToNative<VkImage>(result.texture->getNativeObject(nvrhi::ObjectTypes::VK_Image));
+    result.view = ToNative<VkImageView>(result.texture->getNativeView(nvrhi::ObjectTypes::VK_ImageView));
+    result.format = format;
+    return result;
 }
 
-void VulkanTaaPass::CreateMotionImage(VkExtent2D extent)
+void VulkanTaaPass::CreateBindingSets(const SceneRenderTargets& targets)
 {
-    DestroyMotionImage();
-    VkImageCreateInfo imageInfo{};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent = {extent.width, extent.height, 1};
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
-    imageInfo.format = kMotionFormat;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    m_motionTexture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, m_motionImage, "Failed to create the DLSS motion vector image");
-
-    VkImageViewCreateInfo viewInfo{};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = m_motionImage;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = kMotionFormat;
-    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_motionView), "Failed to create the DLSS motion vector view");
-}
-
-void VulkanTaaPass::DestroyMotionImage()
-{
-    if (m_motionView != VK_NULL_HANDLE)
-    {
-        vkDestroyImageView(m_device, m_motionView, nullptr);
-        m_motionView = VK_NULL_HANDLE;
-    }
-    // The image and its memory go with the texture.
-    m_motionTexture = nullptr;
-    m_motionImage = VK_NULL_HANDLE;
-}
-
-void VulkanTaaPass::CreateDescriptorSets(const SceneRenderTargets& targets)
-{
+    using Item = nvrhi::BindingSetItem;
     const uint32_t copyCount = targets.GetTransientCopyCount();
-    m_descriptorSets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, copyCount * 2);
+    m_bindingSets.clear();
+    m_motionBindingSets.clear();
+    m_guideBindingSets.clear();
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
+        const auto target = [&](RenderTargetId id)
+        {
+            return targets.GetTexture(id, slot);
+        };
         for (uint32_t readIndex = 0; readIndex < 2; ++readIndex)
         {
-            const VkDescriptorSet set = m_descriptorSets[slot * 2 + readIndex];
-            const VkDescriptorImageInfo currentInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::SceneHdr, slot), kReadLayout};
-            const VkDescriptorImageInfo depthInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-            const VkDescriptorImageInfo velocityInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
-            const VkDescriptorImageInfo historyReadInfo{NativeSampler(m_linearSampler), m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo historyWriteInfo{VK_NULL_HANDLE, m_history.GetView(1u - readIndex), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo outputInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneTaa, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const std::array<VkWriteDescriptorSet, 6> writes = {
-                ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &currentInfo),
-                ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
-                ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &velocityInfo),
-                ImageWrite(set, 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &historyReadInfo),
-                ImageWrite(set, 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &historyWriteInfo),
-                ImageWrite(set, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outputInfo)};
-            vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+            nvrhi::BindingSetDesc desc;
+            desc.bindings = {
+                Item::Texture_SRV(0, target(RenderTargetId::SceneHdr)),
+                Item::Texture_SRV(1, target(RenderTargetId::SceneDepth)),
+                Item::Texture_SRV(2, target(RenderTargetId::GBufferVelocity)),
+                Item::Texture_SRV(3, m_history.GetTexture(readIndex)),
+                Item::Sampler(kHistorySamplerBinding, m_linearSampler),
+                Item::Texture_UAV(4, m_history.GetTexture(1u - readIndex)),
+                Item::Texture_UAV(5, target(RenderTargetId::SceneTaa)),
+                Item::PushConstants(0, sizeof(TaaPushConstants))};
+            m_bindingSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create a TAA binding set"));
         }
-    }
 
-    m_motionDescriptorSets = AllocateDescriptorSets(m_device, m_motionDescriptorPool, m_motionSetLayout, copyCount);
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
-    {
-        const VkDescriptorSet set = m_motionDescriptorSets[slot];
-        const VkDescriptorImageInfo depthInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-        const VkDescriptorImageInfo velocityInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
-        const VkDescriptorImageInfo motionInfo{VK_NULL_HANDLE, m_motionView, VK_IMAGE_LAYOUT_GENERAL};
-        const std::array<VkWriteDescriptorSet, 3> writes = {
-            ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
-            ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &velocityInfo),
-            ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &motionInfo)};
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    }
+        nvrhi::BindingSetDesc motionDesc;
+        motionDesc.bindings = {
+            Item::Texture_SRV(0, target(RenderTargetId::SceneDepth)),
+            Item::Texture_SRV(1, target(RenderTargetId::GBufferVelocity)),
+            Item::Texture_UAV(2, m_motion.texture),
+            Item::PushConstants(0, sizeof(DlssMotionPushConstants))};
+        m_motionBindingSets.push_back(
+            CreateNvrhiBindingSet(m_nvrhiDevice, motionDesc, m_motionSetLayout, "Failed to create a DLSS motion vector binding set"));
 
-    m_guideDescriptorSets = AllocateDescriptorSets(m_device, m_guideDescriptorPool, m_guideSetLayout, copyCount);
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
-    {
-        const VkDescriptorSet set = m_guideDescriptorSets[slot];
-        const VkDescriptorImageInfo albedoInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferAlbedo, slot), kReadLayout};
-        const VkDescriptorImageInfo normalInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-        const VkDescriptorImageInfo surfaceInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferSurface, slot), kReadLayout};
-        const VkDescriptorImageInfo specularInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferSpecular, slot), kReadLayout};
-        const VkDescriptorImageInfo depthInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-        const VkDescriptorImageInfo diffuseInfo{VK_NULL_HANDLE, m_guides[0].view, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo specularAlbedoInfo{VK_NULL_HANDLE, m_guides[1].view, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo normalRoughnessInfo{VK_NULL_HANDLE, m_guides[2].view, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo reflectionsInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::SceneReflections, slot), kReadLayout};
-        const VkDescriptorImageInfo hitDistanceInfo{VK_NULL_HANDLE, m_guides[kGuideHitDistance].view, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo reflectionMotionInfo{VK_NULL_HANDLE, m_guides[kGuideReflectionMotion].view, VK_IMAGE_LAYOUT_GENERAL};
-        const std::array<VkWriteDescriptorSet, 11> writes = {
-            ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &albedoInfo),
-            ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
-            ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &surfaceInfo),
-            ImageWrite(set, 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &specularInfo),
-            ImageWrite(set, 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
-            ImageWrite(set, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &diffuseInfo),
-            ImageWrite(set, 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &specularAlbedoInfo),
-            ImageWrite(set, 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &normalRoughnessInfo),
-            ImageWrite(set, 8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &reflectionsInfo),
-            ImageWrite(set, 9, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &hitDistanceInfo),
-            ImageWrite(set, 10, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &reflectionMotionInfo)};
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        nvrhi::BindingSetDesc guideDesc;
+        guideDesc.bindings = {
+            Item::Texture_SRV(0, target(RenderTargetId::GBufferAlbedo)),
+            Item::Texture_SRV(1, target(RenderTargetId::GBufferNormal)),
+            Item::Texture_SRV(2, target(RenderTargetId::GBufferSurface)),
+            Item::Texture_SRV(3, target(RenderTargetId::GBufferSpecular)),
+            Item::Texture_SRV(4, target(RenderTargetId::SceneDepth)),
+            Item::Texture_UAV(5, m_guides[0].texture),
+            Item::Texture_UAV(6, m_guides[1].texture),
+            Item::Texture_UAV(7, m_guides[2].texture),
+            Item::Texture_SRV(8, target(RenderTargetId::SceneReflections)),
+            Item::Texture_UAV(9, m_guides[kGuideHitDistance].texture),
+            Item::Texture_UAV(10, m_guides[kGuideReflectionMotion].texture),
+            Item::PushConstants(0, sizeof(DlssMotionPushConstants))};
+        m_guideBindingSets.push_back(
+            CreateNvrhiBindingSet(m_nvrhiDevice, guideDesc, m_guideSetLayout, "Failed to create a ray reconstruction guide binding set"));
     }
-}
-
-void VulkanTaaPass::DestroyHandles()
-{
-    DestroyMotionImage();
-    DestroyGuideImages();
-    if (m_guidePipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_guidePipeline, nullptr);
-        m_guidePipeline = VK_NULL_HANDLE;
-    }
-    if (m_guidePipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_guidePipelineLayout, nullptr);
-        m_guidePipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_guideDescriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_guideDescriptorPool, nullptr);
-        m_guideDescriptorPool = VK_NULL_HANDLE;
-    }
-    m_guideDescriptorSets.clear();
-    if (m_guideSetLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_guideSetLayout, nullptr);
-        m_guideSetLayout = VK_NULL_HANDLE;
-    }
-    if (m_motionPipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_motionPipeline, nullptr);
-        m_motionPipeline = VK_NULL_HANDLE;
-    }
-    if (m_motionPipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_motionPipelineLayout, nullptr);
-        m_motionPipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_motionDescriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_motionDescriptorPool, nullptr);
-        m_motionDescriptorPool = VK_NULL_HANDLE;
-    }
-    m_motionDescriptorSets.clear();
-    if (m_motionSetLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_motionSetLayout, nullptr);
-        m_motionSetLayout = VK_NULL_HANDLE;
-    }
-    if (m_pipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
-    m_descriptorSets.clear();
-    m_history.Destroy();
-    if (m_setLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
-    }
-    m_nearestSampler = nullptr;
-    m_linearSampler = nullptr;
 }
 }

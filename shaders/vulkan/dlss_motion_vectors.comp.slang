@@ -6,8 +6,9 @@
 
 #include "scene_common.slang"
 
-[[vk::binding(0, 1)]] Sampler2D depthTexture;    // nearest
-[[vk::binding(1, 1)]] Sampler2D velocityTexture; // nearest
+// Set 1 is VulkanTaaPass's NVRHI binding set; both inputs are read with Load.
+[[vk::binding(0, 1)]] Texture2D depthTexture;
+[[vk::binding(1, 1)]] Texture2D velocityTexture;
 [[vk::binding(2, 1)]] [[vk::image_format("rg16f")]] RWTexture2D<float2> motionImage;
 
 // Must match DlssMotionPushConstants in engine/renderer/vulkan/taa_pass.cpp.
