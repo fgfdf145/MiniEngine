@@ -103,6 +103,74 @@ void DrawTelemetry(const VehicleDriveStatus& status)
             ImGui::EndTable();
         }
     }
+    if (std::any_of(telemetry.tyres.begin(), telemetry.tyres.end(), [](const VehicleTelemetry::TyreTemperatures& tyre) { return tyre.simulated; }))
+    {
+        // The tyres' temperatures (the tread's lanes round the tyre, inside to outside, and the core), their
+        // pressure and the grip the two leave them, as the game's thermal model has them.
+        ImGui::SeparatorText("Tyre temperatures");
+        static constexpr const char* kWheelNames[] = {"FL", "FR", "RL", "RR"};
+        if (ImGui::BeginTable("TyreTemperatures", 5, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg))
+        {
+            for (const char* column : {"", "Tread I / M / O C", "Core C", "Pressure psi", "Grip %"})
+            {
+                ImGui::TableSetupColumn(column);
+            }
+            ImGui::TableHeadersRow();
+            for (size_t index = 0; index < telemetry.tyres.size(); ++index)
+            {
+                const VehicleTelemetry::TyreTemperatures& tyre = telemetry.tyres[index];
+                if (!tyre.simulated)
+                {
+                    continue;
+                }
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(kWheelNames[index]);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.0f / %.0f / %.0f", tyre.tread[0], tyre.tread[1], tyre.tread[2]);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.1f", tyre.core);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.1f", tyre.pressure);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.1f", tyre.grip * 100.0f);
+            }
+            ImGui::EndTable();
+        }
+    }
+    if (std::any_of(telemetry.wear.begin(), telemetry.wear.end(), [](const VehicleTelemetry::TyreWear& tyre) { return tyre.simulated; }))
+    {
+        ImGui::SeparatorText("Tyre wear");
+        static constexpr const char* kWheelNames[] = {"FL", "FR", "RL", "RR"};
+        if (ImGui::BeginTable("TyreWear", 5, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg))
+        {
+            for (const char* column : {"", "Slid km", "Grain %", "Blister %", "Grip %"})
+            {
+                ImGui::TableSetupColumn(column);
+            }
+            ImGui::TableHeadersRow();
+            for (size_t index = 0; index < telemetry.wear.size(); ++index)
+            {
+                const VehicleTelemetry::TyreWear& tyre = telemetry.wear[index];
+                if (!tyre.simulated)
+                {
+                    continue;
+                }
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(kWheelNames[index]);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.3f", tyre.virtualKm);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.1f", tyre.grain);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.1f", tyre.blister);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.1f", tyre.grip * 100.0f);
+            }
+            ImGui::EndTable();
+        }
+    }
 }
 
 // ABS and traction control on or off. While a car is driven the switches are its own (the keys and the
@@ -290,6 +358,29 @@ bool DrawTuning(VehicleSettings& tuning)
 
 void VehiclePanel::DrawTyres(const IEditorWorld& scene, EditorVehicleSettings& vehicle, bool driving)
 {
+    ImGui::Checkbox("Tyre Wear", &vehicle.tuning.tyreWear);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "The tyres wear with sliding (WEAR_CURVE over the km slid) and, with temperatures on, grain when too cold and\n"
+            "blister when too hot, as Assetto Corsa has them. Each drive starts on new tyres; takes effect on the next drive.");
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Tyre Temperatures", &vehicle.tuning.tyreTemperatures);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "The tyres warm with sliding and rolling and cool with speed, and their grip and pressure follow, as Assetto\n"
+            "Corsa's thermal model has them (the performance curve, PRESSURE_IDEAL, PRESSURE_D_GAIN ...). Off, they stay\n"
+            "at their best grip and ideal pressure. Brush tyres only; takes effect on the next drive.");
+    }
+    ImGui::BeginDisabled(!vehicle.tuning.tyreTemperatures);
+    DragFloatInRange("Start Temperature", &vehicle.tuning.tyreStartTemperature, -20.0f, 120.0f, "%.0f C", 1.0f);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("What the tyres start at: the game's air and road are 26 C; warm tyres (blankets) are 80 C.");
+    }
     std::string path;
     if (scene.HasSelection() && scene.HasModelComponent(scene.GetSelectedEntity()))
     {

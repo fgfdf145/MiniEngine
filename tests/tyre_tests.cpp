@@ -1,10 +1,13 @@
 #include <engine/tyre/tyre_brush.h>
 #include <engine/tyre/tyre_magic_formula.h>
+#include <engine/tyre/tyre_thermal.h>
 #include <engine/tyre/tyre_tir_file.h>
+#include <engine/tyre/tyre_wear.h>
 
 #include "test_fixture_paths.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -786,6 +789,256 @@ void TestFinelyCutBrushAgreesWithTheDefault()
     }
 }
 
+// The RX-7 Tuned's front semislicks as tyres.ini gives them.
+TyreThermalParameters Rx7Semislicks()
+{
+    TyreThermalParameters p;
+    p.surfaceTransfer = 0.0150;
+    p.patchTransfer = 0.00027;
+    p.coreTransfer = 0.00015;
+    p.internalCoreTransfer = 0.0029;
+    p.frictionK = 0.06446;
+    p.rollingK = 0.18;
+    p.surfaceRollingK = 0.96443;
+    p.coolFactor = 2.17;
+    p.performanceCurve = {{0, 0.8f}, {20, 0.92f}, {40, 0.95f}, {60, 0.98f}, {75, 1.0f}, {85, 1.0f}, {95, 1.0f}, {105, 0.97f}, {140, 0.95f}};
+    p.staticPressure = 28.0;
+    p.idealPressure = 33.0;
+    p.rollingResistanceGain = 0.55;
+    return p;
+}
+
+// Each part of the game's thermal model alone, one step from rest, against its formula.
+void TestThermalModelStepsAsTheGame()
+{
+    const double dt = 0.001;
+    const double load = 3000.0;
+    const double spin = 90.0;
+    // Cold: everything at 26 C, the pressure cold, the grip the curve's at 26 C.
+    {
+        const TyreThermalModel cold(Rx7Semislicks());
+        RequireNear(cold.CoreTemperature(), 26.0, 0.0, "starts at the air's temperature");
+        RequireNear(cold.Pressure(), 28.0, 1e-12, "at the cold pressure");
+        RequireNear(cold.Performance(), 0.92 + (0.95 - 0.92) * 6.0 / 20.0, 1e-6, "with the curve's grip at 26 C");
+        RequireNear(cold.PressureFactor(), 1.0 + (33.0 / 28.0 - 1.0) * 0.55, 1e-12, "and the pressure's rolling factor");
+    }
+    const double factor = 1.0 + (33.0 / 28.0 - 1.0) * 0.55;
+    // The core towards the rolling heat ROLLING_K * factor * spin * load / 1000.
+    {
+        TyreThermalParameters p = Rx7Semislicks();
+        p.surfaceTransfer = p.patchTransfer = p.coreTransfer = 0.0;
+        TyreThermalModel model(p);
+        TyreThermalInput in;
+        in.dt = dt;
+        in.wheelSpeed = spin;
+        in.load = load;
+        model.Step(in);
+        const double target = 0.18 * factor * spin * load * 0.001;
+        RequireNear(model.CoreTemperature(), 26.0 + (target - 26.0) * dt * 0.0029, 1e-12, "the core's step towards its rolling heat");
+        RequireNear(model.Pressure(), 28.0 + (model.CoreTemperature() - 26.0) * 0.16, 1e-12, "the pressure 0.16 psi per degree of core");
+    }
+    // The patch on the road towards its heat level: sliding (speed * load * grip * FRICTION_K * road) and rolling
+    // (SURFACE_ROLLING_K * factor * spin * load / 1000) over the road's 26 C, by lane.
+    {
+        TyreThermalParameters p = Rx7Semislicks();
+        p.patchTransfer = p.coreTransfer = p.internalCoreTransfer = 0.0;
+        TyreThermalModel model(p);
+        TyreThermalInput in;
+        in.dt = dt;
+        in.wheelSpeed = spin;
+        in.load = load;
+        in.slideSpeed = 2.0;
+        in.grip = 1.3;
+        in.camber = 0.05;
+        model.Step(in);
+        const double heat = 2.0 * load * 1.3 * 0.06446 + factor * 0.96443 * spin * load * 0.001;
+        const double ratio = 28.0 / 33.0 - 1.0;
+        const double spread = std::clamp(0.05 * 1.4, -1.0, 1.0);
+        const double level = (heat + 26.0) * (1.0 - 0.5 * ratio);
+        const std::array<double, 3> expected{
+            26.0 + ((1.0 + spread - 0.05 * ratio) * level - 26.0) * dt * 0.015,
+            26.0 + ((1.0 + 0.1 * ratio) * level - 26.0) * dt * 0.015,
+            26.0 + ((1.0 - spread - 0.05 * ratio) * level - 26.0) * dt * 0.015};
+        for (int lane = 0; lane < 3; ++lane)
+        {
+            RequireNear(model.Patch(lane, 0), expected[static_cast<size_t>(lane)], 1e-9, "the contact patch's lane " + std::to_string(lane));
+            RequireNear(model.Patch(lane, 5), 26.0, 0.0, "a patch off the road stays at the air's temperature");
+        }
+        Require(model.Patch(0, 0) > model.Patch(2, 0), "camber to the right heats lane 0 more");
+    }
+    // Off the road a patch cools towards the air at SURFACE_TRANSFER times 1 + speed^2 (COOL_FACTOR - 1) 0.000324.
+    {
+        TyreThermalParameters p = Rx7Semislicks();
+        p.patchTransfer = p.coreTransfer = p.internalCoreTransfer = 0.0;
+        TyreThermalModel model(p, 80.0);
+        TyreThermalInput in;
+        in.dt = dt;
+        in.carSpeed = 30.0;
+        model.Step(in);
+        RequireNear(model.Patch(1, 3), 80.0 + (26.0 - 80.0) * (1.0 + 900.0 * 1.17 * 0.000324) * 0.015 * dt, 1e-12, "the cooling, faster with speed");
+    }
+    // A patch shares with its four neighbours and the core.
+    {
+        TyreThermalParameters p = Rx7Semislicks();
+        p.surfaceTransfer = p.internalCoreTransfer = 0.0;
+        p.patchTransfer = 0.1;
+        p.coreTransfer = 0.0;
+        TyreThermalModel model(p, 26.0);
+        TyreThermalInput in;
+        in.dt = 0.01;
+        in.wheelSpeed = 0.0;
+        in.load = load;
+        in.slideSpeed = 5.0;
+        in.grip = 1.3;
+        // Surface transfer off: the contact patch keeps 26 C; nothing moves.
+        model.Step(in);
+        RequireNear(model.Patch(1, 0), 26.0, 1e-12, "no transfer, no heat");
+    }
+    // The contact's temperature: the lanes weighted 1 + camber spread, 1, 1 - spread; the practical one a quarter
+    // of the way from the core to it, and the grip the curve's there.
+    {
+        TyreThermalParameters p = Rx7Semislicks();
+        TyreThermalModel model(p, 26.0);
+        TyreThermalInput in;
+        in.dt = 0.002;
+        in.wheelSpeed = 0.0;
+        in.load = load;
+        in.slideSpeed = 3.0;
+        in.grip = 1.3;
+        in.camber = -0.2;
+        for (int step = 0; step < 2000; ++step)
+        {
+            model.Step(in);
+        }
+        const std::array<double, 3> t = model.ContactTemperatures();
+        const double spread = std::clamp(-0.2 * 1.4, -1.0, 1.0);
+        RequireNear(model.ContactTemperature(-0.2), ((1.0 + spread) * t[0] + t[1] + (1.0 - spread) * t[2]) / 3.0, 1e-12, "the contact's mix of lanes");
+        Require(t[2] > t[0], "camber to the left heats lane 2 more");
+        const double practical = model.CoreTemperature() + (model.ContactTemperature(-0.2) - model.CoreTemperature()) * 0.25;
+        RequireNear(model.PracticalTemperature(), practical, 1e-12, "the practical temperature");
+        RequireNear(model.Performance(), EvaluateThermalCurve(p.performanceCurve, practical), 1e-12, "and the grip from the curve");
+        Require(model.ContactTemperature(-0.2) > 40.0, "four seconds of sliding in place heat the patch: " + std::to_string(model.ContactTemperature(-0.2)));
+    }
+}
+
+// Driving: a minute at 100 km/h rolling warms the tread and the core and raises the pressure; turning round, the
+// patches take turns on the road and warm alike; parked, the tyre cools back to the air.
+void TestThermalModelWarmsRollingAndCools()
+{
+    TyreThermalModel model(Rx7Semislicks());
+    TyreThermalInput in;
+    in.dt = 0.001;
+    in.load = 3000.0;
+    in.carSpeed = 100.0 / 3.6;
+    in.wheelSpeed = in.carSpeed / 0.312;
+    in.grip = 1.3;
+    for (int step = 0; step < 60000; ++step)
+    {
+        model.Step(in);
+    }
+    const std::array<double, 3> lanes = model.LaneTemperatures();
+    std::cout << "  thermal: a minute at 100 km/h: tread " << lanes[0] << " / " << lanes[1] << " / " << lanes[2] << " C, core " << model.CoreTemperature()
+              << " C, " << model.Pressure() << " psi, grip " << model.Performance() << '\n';
+    Require(lanes[1] > 26.5 && model.CoreTemperature() > 26.0 && model.Pressure() > 28.0, "rolling warms the tyre and raises its pressure");
+    double lowest = 1e9;
+    double highest = -1e9;
+    for (int index = 0; index < kThermalPatches; ++index)
+    {
+        lowest = std::min(lowest, model.Patch(1, index));
+        highest = std::max(highest, model.Patch(1, index));
+    }
+    Require(highest - lowest < 0.5 * (lanes[1] - 26.0) + 0.5, "the patches round the tyre warm alike as it turns");
+    // Sliding warms faster.
+    TyreThermalModel sliding(Rx7Semislicks());
+    in.slideSpeed = 1.5;
+    for (int step = 0; step < 60000; ++step)
+    {
+        sliding.Step(in);
+    }
+    Require(sliding.LaneTemperatures()[1] > lanes[1] + 5.0, "sliding heats the tread more than rolling alone");
+    // Parked.
+    in = TyreThermalInput{};
+    in.dt = 0.01;
+    for (int step = 0; step < 100000; ++step)
+    {
+        sliding.Step(in);
+    }
+    RequireNear(sliding.LaneTemperatures()[1], 26.0, 1.0, "parked, the tread cools to the air");
+}
+
+// The game's wear: virtual km from the distance slid (times the load over FZ0 with USE_LOAD), the grip WEAR_CURVE
+// leaves by them, graining below the performance curve's window and blistering above it, each step against its
+// formula, with the RX-7 Tuned's semislicks.
+void TestWearModelFollowsTheGame()
+{
+    TyreWearParameters p;
+    p.wearCurve = {{0.0f, 100.0f}, {0.25f, 100.0f}, {10.0f, 98.0f}, {25.0f, 80.0f}, {27.5f, 70.0f}};
+    p.useLoad = true;
+    p.referenceLoad = 2860.0;
+    p.grainGain = 0.4;
+    p.grainGamma = 1.0;
+    p.blisterGain = 0.3;
+    p.blisterGamma = 1.0;
+    p.performanceCurve = Rx7Semislicks().performanceCurve;
+    TyreWearModel model(p);
+    RequireNear(model.GrainBelow(), 75.0, 0.0, "graining below the window's start, where the curve first reaches 1");
+    RequireNear(model.BlisterAbove(), 95.0, 0.0, "blistering above its end, the last 1");
+    RequireNear(model.Grip(), 1.0, 0.0, "new tyres grip fully");
+
+    // Sliding 2 m/s for 10 s at twice FZ0: 0.04 virtual km; cold or hot nothing else without temperatures.
+    TyreWearInput in;
+    in.dt = 10.0;
+    in.slideSpeed = 2.0;
+    in.contactSpeed = 20.0;
+    in.load = 2.0 * 2860.0;
+    in.slip = 1.0;
+    model.Step(in);
+    RequireNear(model.VirtualKm(), 2.0 * 10.0 * 2.0 * 0.001, 1e-12, "virtual km, the load counted");
+    Require(model.Grain() == 0.0 && model.Blister() == 0.0, "no graining or blistering without temperatures");
+
+    // A second of graining at 50 C (25 below the window): 20 m/s * 0.4 * 25 * 0.0001, less 20 * 0.4 * 0.00005 worn off.
+    model.Reset();
+    in.dt = 1.0;
+    in.slideSpeed = 0.0;
+    in.temperatures = true;
+    in.coreTemperature = 50.0;
+    model.Step(in);
+    RequireNear(model.Grain(), 20.0 * 0.4 * 25.0 * 0.0001 - 20.0 * 0.4 * 0.00005, 1e-12, "graining below the window");
+    // And blistering at 105 C (10 above it): 20 * 0.3 * 10 * 0.0001.
+    model.Reset();
+    in.coreTemperature = 105.0;
+    model.Step(in);
+    RequireNear(model.Blister(), 20.0 * 0.3 * 10.0 * 0.0001, 1e-12, "blistering above the window");
+    // Slow, or on a slippery road, neither.
+    model.Reset();
+    in.contactSpeed = 1.5;
+    model.Step(in);
+    in.contactSpeed = 20.0;
+    in.surfaceGrip = 0.9;
+    model.Step(in);
+    Require(model.Blister() == 0.0, "nothing blisters slowly or on a slippery road");
+
+    // The grip: the wear curve (%, scaled) over 1 + 0.2 of the blister share.
+    TyreWearModel worn(p);
+    TyreWearInput slide;
+    slide.dt = 1000.0;
+    slide.slideSpeed = 25.0;
+    slide.load = 2860.0;
+    worn.Step(slide);
+    RequireNear(worn.VirtualKm(), 25.0, 1e-9, "25 km slid");
+    RequireNear(worn.Grip(), 0.8, 1e-9, "the wear curve's 80 % at 25 km");
+    TyreWearInput blistering;
+    blistering.dt = 1e6;
+    blistering.contactSpeed = 20.0;
+    blistering.load = 2860.0;
+    blistering.slip = 2.5;
+    blistering.temperatures = true;
+    blistering.coreTemperature = 140.0;
+    worn.Step(blistering);
+    RequireNear(worn.Blister(), 100.0, 0.0, "blistering stops at 100");
+    RequireNear(worn.Grip(), 0.8 / 1.2, 1e-9, "and takes a fifth more");
+}
+
 int main()
 {
     const struct
@@ -794,6 +1047,9 @@ int main()
         void (*run)();
     } tests[] = {
         {"TestTirFileReadsTheTable", TestTirFileReadsTheTable},
+        {"TestThermalModelStepsAsTheGame", TestThermalModelStepsAsTheGame},
+        {"TestThermalModelWarmsRollingAndCools", TestThermalModelWarmsRollingAndCools},
+        {"TestWearModelFollowsTheGame", TestWearModelFollowsTheGame},
         {"TestTirReaderAcceptsMf52NamesAndRejectsBadInput", TestTirReaderAcceptsMf52NamesAndRejectsBadInput},
         {"TestMatchesThePythonTranscription", TestMatchesThePythonTranscription},
         {"TestSlipStiffnessesAreTheCurvesSlopes", TestSlipStiffnessesAreTheCurvesSlopes},

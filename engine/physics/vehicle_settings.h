@@ -1,6 +1,8 @@
 #pragma once
 
 #include <engine/tyre/tyre_spec.h>
+#include <engine/tyre/tyre_thermal.h>
+#include <engine/tyre/tyre_wear.h>
 
 #include <glm/glm.hpp>
 
@@ -127,6 +129,16 @@ struct VehicleTyreSettings
     float referenceLoad = 0.0f;
     float flexGain = 0.0f;
     float combinedFactor = 0.0f;
+    // Temperatures and pressure (VehicleSettings::tyreTemperatures): the thermal model's numbers (none without
+    // surfaceTransfer), DY_REF for the grip sliding heats with, and what the pressure changes beyond them: the
+    // vertical rate (PRESSURE_SPRING_GAIN, N/m per psi over the cold pressure) and the grip (PRESSURE_D_GAIN,
+    // over 1 + it times the psi off the ideal).
+    tyre::TyreThermalParameters thermal;
+    // Wear, graining and blistering (VehicleSettings::tyreWear; tyre::TyreWearModel).
+    tyre::TyreWearParameters wear;
+    float lateralReference = 0.0f;
+    float pressureSpringGain = 0.0f;
+    float pressureGripGain = 0.0f;
 
     bool operator==(const VehicleTyreSettings&) const = default;
 };
@@ -414,6 +426,14 @@ struct VehicleSettings
     // square root of the two.
     std::array<VehicleTyreSettings, kVehicleWheelCount> tyres{};
     VehicleTyreModel tyreModel = VehicleTyreModel::PhysicsEngine;
+    // Tyres with the game's thermal data warm and cool, and their grip and pressure follow (the brush tyre only;
+    // tyre::TyreThermalModel). Off they stay at their best: the curve's grip of 1 and the ideal pressure. They
+    // start at tyreStartTemperature (C; the game's 26 for the air and road).
+    bool tyreTemperatures = false;
+    float tyreStartTemperature = 26.0f;
+    // Tyres with the game's wear data wear with sliding (WEAR_CURVE), and with temperatures on grain and blister
+    // (tyre::TyreWearModel); a new car starts on new tyres.
+    bool tyreWear = false;
     // How many ribs the brush tyre is cut into across its tread (0 keeps the brush tyre's own 50; at most
     // tyre::kBrushMaxRibs), and how many segments along each rib's contact (0 keeps its own 20; 2 to
     // tyre::kBrushMaxSegments). Its cost grows about in step with ribs times segments.
@@ -766,6 +786,9 @@ struct VehicleTyreMotion
     float radius = 0.0f;
     float camber = 0.0f;
     float load = 0.0f;
+    // What the tyre's pressure makes of its rolling resistance (tyre::TyreThermalModel::PressureFactor; 1 at the
+    // ideal pressure).
+    float pressureFactor = 1.0f;
 };
 
 // What a tyre's own data changes in one step of the brush tyre, as Assetto Corsa's tyre model V10 does it
@@ -774,6 +797,9 @@ struct VehicleTyreMotion
 // the rolling resistance coefficient on top of ROLLING_RESISTANCE_0's, and how far the tyre has grown.
 struct VehicleTyreStepTerms
 {
+    // The theoretical slip over its peak's (what the game's rolling resistance, graining and blistering go by);
+    // 0 for a tyre without FRICTION_LIMIT_ANGLE.
+    float slip = 0.0f;
     float lateralVelocity = 0.0f;
     std::array<float, 2> axisFrictionScale{1.0f, 1.0f};
     float extraRollingResistance = 0.0f;

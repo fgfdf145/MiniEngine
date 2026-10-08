@@ -296,6 +296,9 @@ VehicleSettings DefaultTuning()
     tuning.tyreModel = VehicleTyreModel::Brush;
     // The brakes by the car's own front/rear split (and its ABS), as the game has them.
     tuning.dynamicBrakeBias = false;
+    // The tyres warm and cool as the game's do.
+    tuning.tyreTemperatures = true;
+    tuning.tyreWear = true;
     return tuning;
 }
 

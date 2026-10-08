@@ -394,6 +394,34 @@ VehicleTyreSettings TyreSettingsFromSpec(const tyre::TyreSpec& spec, float stati
     settings.referenceLoad = positive(spec.grip.referenceLoad);
     settings.flexGain = spec.carcass.flexGain.value_or(0.0f);
     settings.combinedFactor = positive(spec.slip.combinedFactor);
+    // Temperatures and pressure, with the game's defaults for what [ADDITIONAL1] leaves out.
+    tyre::TyreThermalParameters& thermal = settings.thermal;
+    thermal.surfaceTransfer = positive(spec.thermal.surfaceTransfer);
+    thermal.patchTransfer = positive(spec.thermal.patchTransfer);
+    thermal.coreTransfer = positive(spec.thermal.coreTransfer);
+    thermal.internalCoreTransfer = positive(spec.thermal.internalCoreTransfer);
+    thermal.frictionK = positive(spec.thermal.frictionK);
+    thermal.rollingK = positive(spec.thermal.rollingK);
+    thermal.surfaceRollingK = positive(spec.thermal.surfaceRollingK);
+    thermal.coolFactor = positive(spec.thermal.coolFactor);
+    thermal.performanceCurve = spec.thermal.performanceCurve;
+    thermal.camberSpread = spec.thermal.camberSpread.value_or(1.4f);
+    thermal.staticPressure = spec.pressure.staticPsi.value_or(0.0f) > 0.0f ? *spec.pressure.staticPsi : 26.0f;
+    thermal.idealPressure = positive(spec.pressure.idealPsi);
+    thermal.temperatureGain = spec.pressure.temperatureGain.value_or(0.16f);
+    thermal.rollingResistanceGain = spec.pressure.rollingResistanceGain.value_or(0.0f);
+    tyre::TyreWearParameters& wear = settings.wear;
+    wear.wearCurve = spec.wear.wearCurve;
+    wear.useLoad = spec.wear.useLoad.value_or(0.0f) != 0.0f;
+    wear.referenceLoad = positive(spec.grip.referenceLoad);
+    wear.grainGain = positive(spec.wear.grainGain);
+    wear.grainGamma = positive(spec.wear.grainGamma);
+    wear.blisterGain = positive(spec.wear.blisterGain);
+    wear.blisterGamma = positive(spec.wear.blisterGamma);
+    wear.performanceCurve = spec.thermal.performanceCurve;
+    settings.lateralReference = positive(spec.grip.lateralReference);
+    settings.pressureSpringGain = spec.pressure.springGain.value_or(0.0f);
+    settings.pressureGripGain = positive(spec.pressure.footprintGain);
     return settings;
 }
 
@@ -449,35 +477,41 @@ VehicleTyreStepTerms ComputeTyreStepTerms(const VehicleTyreSettings& tyre, const
     {
         terms.axisFrictionScale[0] *= 1.0f + tyre.brakeLongitudinalMod;
     }
+    // The theoretical slip (kappa and tan(alpha) over 1 + kappa), combined by COMBINED_FACTOR's norm, over the
+    // peak's, which FLEX_GAIN moves with load (to tan((1 + FLEX_GAIN) angle) at twice FZ0).
+    if (tyre.peakSlipAngleDegrees > 0.0f)
+    {
+        const float kappa = std::max(absVx > kSlowest ? slideX / absVx : 0.0f, -0.99999f);
+        const float sx = kappa / (1.0f + kappa);
+        const float sy = std::tan(shifted) / (1.0f + kappa);
+        const float exponent = tyre.combinedFactor > 0.0f ? tyre.combinedFactor : 2.0f;
+        const float slip = exponent == 2.0f ? std::sqrt(sx * sx + sy * sy)
+                                            : std::pow(std::pow(std::abs(sx), exponent) + std::pow(std::abs(sy), exponent), 1.0f / exponent);
+        const float degrees = std::numbers::pi_v<float> / 180.0f;
+        const float atReference = std::tan(tyre.peakSlipAngleDegrees * degrees);
+        const float atDouble = std::tan(tyre.peakSlipAngleDegrees * (1.0f + tyre.flexGain) * degrees);
+        const float loadShare = tyre.referenceLoad > 0.0f ? (motion.load - tyre.referenceLoad) / tyre.referenceLoad : 0.0f;
+        const float peak = std::max(atReference + loadShare * (atDouble - atReference), 1e-4f);
+        terms.slip = slip / peak;
+    }
     // The tyre grows with its spin.
     const float spin = std::abs(motion.wheelSpeed);
     terms.radiusGrowth = tyre.radiusGrowth * spin;
     // Rolling resistance, a coefficient on load times radius: ROLLING_RESISTANCE_0 (the brush tyre's own) and
     // _1 on the tread's speed squared above 1 rad/s, and above 20 rad/s all of it times 1 + _SLIP / 1000 times
-    // the slip over its peak (at most 1).
-    if (spin > 1.0f && (tyre.rollingResistance1 > 0.0f || tyre.rollingResistanceSlip > 0.0f))
+    // the slip over its peak (at most 1), and all of it times the pressure's factor.
+    if (spin > 1.0f && (tyre.rollingResistance1 > 0.0f || tyre.rollingResistanceSlip > 0.0f || motion.pressureFactor != 1.0f))
     {
         const float speed = (motion.radius + terms.radiusGrowth) * motion.wheelSpeed;
         const float base = 0.001f * (tyre.rollingResistance0 + tyre.rollingResistance1 * speed * speed);
         float coefficient = base;
         if (spin > 20.0f && tyre.rollingResistanceSlip > 0.0f && tyre.peakSlipAngleDegrees > 0.0f)
         {
-            // The theoretical slip (kappa and tan(alpha) over 1 + kappa), combined by COMBINED_FACTOR's norm,
-            // over the peak's, which FLEX_GAIN moves with load (to tan((1 + FLEX_GAIN) angle) at twice FZ0).
-            const float kappa = std::max(absVx > kSlowest ? slideX / absVx : 0.0f, -0.99999f);
-            const float sx = kappa / (1.0f + kappa);
-            const float sy = std::tan(shifted) / (1.0f + kappa);
-            const float exponent = tyre.combinedFactor > 0.0f ? tyre.combinedFactor : 2.0f;
-            const float slip = exponent == 2.0f ? std::sqrt(sx * sx + sy * sy)
-                                                : std::pow(std::pow(std::abs(sx), exponent) + std::pow(std::abs(sy), exponent), 1.0f / exponent);
-            const float degrees = std::numbers::pi_v<float> / 180.0f;
-            const float atReference = std::tan(tyre.peakSlipAngleDegrees * degrees);
-            const float atDouble = std::tan(tyre.peakSlipAngleDegrees * (1.0f + tyre.flexGain) * degrees);
-            const float loadShare = tyre.referenceLoad > 0.0f ? (motion.load - tyre.referenceLoad) / tyre.referenceLoad : 0.0f;
-            const float peak = std::max(atReference + loadShare * (atDouble - atReference), 1e-4f);
-            coefficient *= 1.0f + 0.001f * tyre.rollingResistanceSlip * std::clamp(slip / peak, 0.0f, 1.0f);
+            coefficient *= 1.0f + 0.001f * tyre.rollingResistanceSlip * std::clamp(terms.slip, 0.0f, 1.0f);
         }
-        terms.extraRollingResistance = coefficient - 0.001f * tyre.rollingResistance0;
+        // All of it times what the pressure makes of it; ROLLING_RESISTANCE_0 at the ideal pressure is the brush
+        // tyre's own.
+        terms.extraRollingResistance = coefficient * motion.pressureFactor - 0.001f * tyre.rollingResistance0;
     }
     return terms;
 }

@@ -38,7 +38,8 @@ VehicleTyreRef RefFor(const std::filesystem::path& path);
 
 // Puts `spec` in the library as "<folder>/<stem>.tyre.yaml" (folder relative to Root()), unless a tyre
 // equal to it but for `source` is already somewhere in the library, which is then referred to instead.
-// A different tyre already at that name gets "_2", "_3", ... added to the stem.
+// A tyre already at that name from the same source is updated in place; a different one gets "_2", "_3",
+// ... added to the stem.
 VehicleTyreRef Store(const tyre::TyreSpec& spec, const std::filesystem::path& folder, const std::string& stem);
 
 // The tyre a car refers to, found by uuid, else by its path; nullopt when neither finds a readable one.
@@ -72,7 +73,8 @@ void WriteCarTyres(const std::filesystem::path& gltfPath, const VehicleCarSpec& 
 
 // For a car imported before the library: puts the compounds its glTF carries (MINIENGINE_vehicle's
 // tyreCompounds) in the library under `carFolder` (the game's folder name for the car) and writes the refs
-// into the glTF, the default compound on all four wheels. Returns how many tyres the car refers to; throws
+// into the glTF, the default compound on all four wheels. Given the game's car folder itself (a directory),
+// the compounds are read afresh from its data, and tyres stored from it before are updated in place. Returns how many tyres the car refers to; throws
 // as WriteCarTyres does, or when the glTF carries no compounds.
 size_t AdoptGltfCarTyres(const std::filesystem::path& gltfPath, const std::string& carFolder);
 

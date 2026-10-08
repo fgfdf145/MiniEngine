@@ -998,6 +998,86 @@ void TestTyreDataTermsFollowTheGame()
     }
 }
 
+// Tyre temperatures in a driven car: the RX-7's semislicks start at the air's 26 C at their cold pressure with the
+// grip the curve and the pressure leave them, warm as the car drives and slides, and their pressure rises; off,
+// nothing is simulated and the tyres keep their best grip.
+void TestTyreTemperaturesFollowTheDrive()
+{
+    VehicleTyreSettings tyre{1.30f, 1.28f, 0.13f, 7.62f, 0.86f, 1.36f};
+    tyre.lateralReference = 1.28f;
+    tyre.referenceLoad = 2860.0f;
+    tyre.lateralLoadExponent = 0.8334f;
+    tyre.pressureGripGain = 0.0045f;
+    tyre.pressureSpringGain = 8111.0f;
+    tyre.thermal.surfaceTransfer = 0.0150;
+    tyre.thermal.patchTransfer = 0.00027;
+    tyre.thermal.coreTransfer = 0.00015;
+    tyre.thermal.internalCoreTransfer = 0.0029;
+    tyre.thermal.frictionK = 0.06446;
+    tyre.thermal.rollingK = 0.18;
+    tyre.thermal.surfaceRollingK = 0.96443;
+    tyre.thermal.coolFactor = 2.17;
+    tyre.thermal.performanceCurve = {{0, 0.8f}, {20, 0.92f}, {40, 0.95f}, {60, 0.98f}, {75, 1.0f}, {95, 1.0f}, {105, 0.97f}};
+    tyre.thermal.staticPressure = 28.0;
+    tyre.thermal.idealPressure = 33.0;
+    tyre.thermal.rollingResistanceGain = 0.55;
+    tyre.wear.wearCurve = {{0.0f, 100.0f}, {1.25f, 99.5f}, {10.0f, 98.0f}, {25.0f, 80.0f}};
+    tyre.wear.useLoad = true;
+    tyre.wear.referenceLoad = 2860.0;
+    tyre.wear.grainGain = 0.4;
+    tyre.wear.grainGamma = 1.0;
+    tyre.wear.blisterGain = 0.3;
+    tyre.wear.blisterGamma = 1.0;
+    tyre.wear.performanceCurve = tyre.thermal.performanceCurve;
+    const auto drive = [&](bool temperatures)
+    {
+        VehicleSettings tuning;
+        tuning.tyreModel = VehicleTyreModel::Brush;
+        tuning.brushTyreRibs = 8;
+        tuning.brushTyreSegments = 8;
+        SetAxleTyres(tuning, true, tyre);
+        SetAxleTyres(tuning, false, tyre);
+        tuning.tyreTemperatures = temperatures;
+        tuning.tyreWear = temperatures;
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        const VehicleId car = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning), {glm::vec3(0.0f, 0.0f, -150.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        const VehicleTelemetry start = world.GetVehicleTelemetry(car);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        Simulate(world, 6.0f);
+        controls.throttle = 0.0f;
+        controls.brake = 1.0f;
+        world.SetVehicleControls(car, controls);
+        Simulate(world, 4.0f);
+        return std::pair{start, world.GetVehicleTelemetry(car)};
+    };
+    const auto [cold, driven] = drive(true);
+    for (size_t wheel = 0; wheel < 4; ++wheel)
+    {
+        const VehicleTelemetry::TyreTemperatures& before = cold.tyres[wheel];
+        const VehicleTelemetry::TyreTemperatures& after = driven.tyres[wheel];
+        Require(before.simulated && after.simulated, "the tyres' temperatures are simulated");
+        RequireNear(before.core, 26.0f, 1e-4f, "they start at the air's temperature");
+        RequireNear(before.pressure, 28.0f, 1e-4f, "at their cold pressure");
+        const float curveAt26 = 0.92f + 0.03f * 6.0f / 20.0f;
+        RequireNear(before.grip, curveAt26 / (1.0f + 5.0f * 0.0045f), 1e-4f, "with the curve's grip at 26 C over the pressure's loss");
+        Require(after.tread[1] > before.tread[1] + 0.5f, "driving warms the tread: " + std::to_string(after.tread[1]) + " C");
+        Require(after.core > before.core && after.pressure > before.pressure, "and the core, and the pressure with it");
+        Require(cold.wear[wheel].simulated && cold.wear[wheel].virtualKm == 0.0f && cold.wear[wheel].grip == 1.0f, "new tyres");
+        Require(driven.wear[wheel].virtualKm > 0.0f && driven.wear[wheel].grip <= 1.0f, "the drive wears them a little");
+        // Cold (below the window), the slip grains them.
+        Require(driven.wear[wheel].grain >= 0.0f && driven.wear[wheel].blister == 0.0f, "cold tyres grain, never blister");
+    }
+    std::cout << "tyre wear after the drive: rear left " << driven.wear[2].virtualKm * 1000.0f << " m slid, grain " << driven.wear[2].grain << " %\n";
+    std::cout << "tyre temperatures after 6 s flat out and a stop: front left tread " << driven.tyres[0].tread[0] << " / " << driven.tyres[0].tread[1] << " / "
+              << driven.tyres[0].tread[2] << " C, core " << driven.tyres[0].core << " C, " << driven.tyres[0].pressure << " psi, grip " << driven.tyres[0].grip
+              << '\n';
+    const auto [off, offDriven] = drive(false);
+    Require(!off.tyres[0].simulated && !offDriven.tyres[0].simulated && offDriven.tyres[0].grip == 1.0f, "off, nothing is simulated");
+}
+
 void TestCarDataGivesDifferentialAndTyreSensitivity()
 {
     VehicleCarSpec spec;
@@ -3392,6 +3472,7 @@ int main()
         TestTurboSpoolsWithItsLag();
         TestCarDataGivesDifferentialAndTyreSensitivity();
         TestTyreDataTermsFollowTheGame();
+        TestTyreTemperaturesFollowTheDrive();
         TestGameTractionControlCutsTheThrottle();
         TestDrivenWheelsKeepNearTheGround();
         TestMultibodyCarRestsAtItsDesignPosition(false);

@@ -165,6 +165,29 @@ struct VehicleTelemetry
     float submergedShare = 0.0f;
     float flooded = 0.0f;
     bool engineDrowned = false;
+    // Each wheel's tyre with VehicleSettings::tyreTemperatures on (simulated): its tread's lanes round the tyre
+    // (inside, middle, outside: the car's centre side first), its core (C), its pressure (psi) and the grip
+    // temperature and pressure leave it (1 at their best).
+    struct TyreTemperatures
+    {
+        bool simulated = false;
+        std::array<float, 3> tread{};
+        float core = 0.0f;
+        float pressure = 0.0f;
+        float grip = 1.0f;
+    };
+    std::array<TyreTemperatures, 4> tyres{};
+    // And its wear with VehicleSettings::tyreWear on: the virtual km slid, graining and blistering (0 to 100) and
+    // the grip they leave it.
+    struct TyreWear
+    {
+        bool simulated = false;
+        float virtualKm = 0.0f;
+        float grain = 0.0f;
+        float blister = 0.0f;
+        float grip = 1.0f;
+    };
+    std::array<TyreWear, 4> wear{};
 };
 
 // A Jolt Physics world holding static collision geometry and wheeled vehicles, all in world space

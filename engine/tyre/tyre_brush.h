@@ -156,6 +156,8 @@ struct BrushTyreInput
     std::array<double, 2> axisFrictionScale{1.0, 1.0};
     // How far the spinning tyre has grown past its unloaded radius (m): its rolling radius grows by it.
     double radiusGrowth = 0.0;
+    // The tyre's vertical rate now (N/m, its pressure's), which sizes the patch; 0 keeps the parameters'.
+    double verticalRate = 0.0;
 };
 
 struct BrushTyreOutput

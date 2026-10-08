@@ -1672,7 +1672,7 @@ void TyreSpecHoldsEveryKeyAndRoundTrips()
     float next = 1.0f;
     for (const tyre::TyreSpecField& field : tyre::TyreSpecFields())
     {
-        values[(field.thermalSection ? std::string("THERMAL_") : std::string()) + field.acKey] = next;
+        values[std::string(field.sectionPrefix) + field.acKey] = next;
         next += 0.125f;
     }
     values["SOMETHING_NEW"] = 0.1f;
@@ -1682,7 +1682,7 @@ void TyreSpecHoldsEveryKeyAndRoundTrips()
         {"THERMAL_PERFORMANCE_CURVE", {{0.0f, 0.5f}, {80.0f, 1.0f}}},
         {"ODD_CURVE", {{1.0f, 1e-7f}}}};
     const tyre::TyreSpec spec = tyre::TyreSpecFromAc("Semislicks", "SM", values, curves);
-    Require(tyre::TyreSpecFields().size() == 51 && tyre::TyreSpecCurves().size() == 2, "a field for each of the 53 keys");
+    Require(tyre::TyreSpecFields().size() == 55 && tyre::TyreSpecCurves().size() == 2, "a field for each of the 53 keys, [ADDITIONAL1]'s three and USE_LOAD");
     tyre::TyreSpec copy = spec;
     next = 1.0f;
     for (const tyre::TyreSpecField& field : tyre::TyreSpecFields())
@@ -1734,7 +1734,14 @@ void TyreLibraryStoresAndFindsTyres()
     Require(same == first && !first.uuid.empty(), "an equal tyre (but for its source) is referred to, not written again");
     tyre::TyreSpec harder = spec;
     harder.grip.dx0 = 1.2f;
+    harder.source = "a harder one";
     const VehicleTyreRef second = TyreLibrary::Store(harder, "library_test", "semislicks_front");
+    // The first tyre's source read again, more fully: updated in place, its uuid kept.
+    tyre::TyreSpec fuller = spec;
+    fuller.wear.useLoad = 1.0f;
+    Require(TyreLibrary::Store(fuller, "library_test", "semislicks_front") == first && TyreLibrary::Resolve(first) == fuller,
+            "a tyre from the same source is updated in place");
+    TyreLibrary::Store(spec, "library_test", "semislicks_front");
     Require(second.path.ends_with("library_test/semislicks_front_2.tyre.yaml"), "a different tyre gets a suffix: " + second.path);
     Require(TyreLibrary::Resolve(first) == spec && TyreLibrary::Resolve(second) == harder, "both resolve");
 
@@ -1962,10 +1969,59 @@ void ProbeCarTyreTerms()
         const float yawRate = glm::angle(glm::normalize(b.rotation * glm::conjugate(a.rotation))) / kFrame;
         std::cout << name << ": 0-100 " << to100 << " s; coast in neutral " << coastFrom << " -> " << coastTo << " km/h in 10 s; stop from " << brakeFrom
                   << " km/h in " << stop << " m; turn at " << speed * 3.6f << " km/h: " << speed * yawRate / 9.81f << " g (side slip " << lateral << " m/s)\n";
+        for (const auto& [label, telemetry] : {std::pair{"after the stop", world.GetVehicleTelemetry(car)}, std::pair{"after the turn", turnWorld.GetVehicleTelemetry(turning)}})
+        {
+            for (const size_t wheel : {size_t{0}, size_t{2}})
+            {
+                const VehicleTelemetry::TyreTemperatures& tyre = telemetry.tyres[wheel];
+                if (tyre.simulated)
+                {
+                    std::cout << "    " << label << (wheel == 0 ? ", front left: tread " : ", rear left: tread ") << tyre.tread[0] << " / " << tyre.tread[1] << " / "
+                              << tyre.tread[2] << " C, core " << tyre.core << " C, " << tyre.pressure << " psi, grip " << tyre.grip << '\n';
+                }
+            }
+        }
     };
     std::cout << "tyre probe: " << gltf << '\n';
     run(withoutTerms, "  without the tyre data's terms");
     run(withTerms, "  with them                     ");
+    VehicleSettings warming = withTerms;
+    warming.tyreTemperatures = true;
+    warming.tyreWear = true;
+    run(warming, "  with them and temperatures    ");
+
+    // Two minutes of hard driving with temperatures on: a slalom between 80 and 110 km/h, the tyres every 30 s.
+    PhysicsWorld world;
+    const std::vector<glm::vec3> vertices = {{-3000.0f, 0.0f, -3000.0f}, {-3000.0f, 0.0f, 3000.0f}, {3000.0f, 0.0f, 3000.0f}, {3000.0f, 0.0f, -3000.0f}};
+    const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+    Require(world.AddStaticMesh(vertices, indices, PhysicsWorld::kDefaultSurfaceFriction), "the ground");
+    const VehicleId car = world.AddVehicle(warming, {glm::dvec3(0.0, 0.05, 0.0), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    VehicleControls controls;
+    float time = 0.0f;
+    for (int report = 1; report <= 4; ++report)
+    {
+        for (float t = 0.0f; t < 30.0f; t += kFrame)
+        {
+            const float kmh = world.GetVehicleTelemetry(car).forwardSpeed * 3.6f;
+            controls.steering = 0.45f * std::sin(time * 2.0f * 3.14159265f * 0.35f);
+            controls.throttle = kmh < 80.0f ? 1.0f : kmh < 110.0f ? 0.7f : 0.0f;
+            controls.brake = kmh > 115.0f ? 0.8f : 0.0f;
+            world.SetVehicleControls(car, controls);
+            world.Update(kFrame);
+            time += kFrame;
+        }
+        const VehicleTelemetry telemetry = world.GetVehicleTelemetry(car);
+        std::cout << "  slalom " << report * 30 << " s at " << telemetry.forwardSpeed * 3.6f << " km/h:";
+        for (const size_t wheel : {size_t{0}, size_t{2}})
+        {
+            const VehicleTelemetry::TyreTemperatures& tyre = telemetry.tyres[wheel];
+            std::cout << (wheel == 0 ? " front left " : "; rear left ") << tyre.tread[0] << "/" << tyre.tread[1] << "/" << tyre.tread[2] << " C core " << tyre.core
+                      << " C " << tyre.pressure << " psi grip " << tyre.grip;
+            const VehicleTelemetry::TyreWear& wear = telemetry.wear[wheel];
+            std::cout << ", slid " << wear.virtualKm * 1000.0f << " m, grain " << wear.grain << " %, blister " << wear.blister << " %, wear grip " << wear.grip;
+        }
+        std::cout << '\n';
+    }
 }
 
 void ImportWritesFourWheelDriveRearSteerAndBody()

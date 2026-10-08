@@ -1,5 +1,6 @@
 #include "tyre_library.h"
 
+#include "ac_car_data.h"
 #include "asset_registry.h"
 
 #include <engine/core/log/log.h>
@@ -295,8 +296,14 @@ VehicleTyreRef Store(const tyre::TyreSpec& spec, const std::filesystem::path& fo
         std::error_code ec;
         if (std::filesystem::exists(path, ec))
         {
-            // Another tyre (an equal one would have been found above), or one that cannot be read.
-            continue;
+            // The same tyre from the same source read again (the game's data read more fully): updated in place,
+            // its uuid kept. Otherwise another tyre (an equal one would have been found above), or one that
+            // cannot be read.
+            const std::optional<tyre::TyreSpec> there = Load(path);
+            if (!there.has_value() || spec.source.empty() || there->source != spec.source)
+            {
+                continue;
+            }
         }
         Save(path, spec);
         return RefFor(path);
@@ -494,6 +501,23 @@ void WriteCarTyres(const std::filesystem::path& gltfPath, const VehicleCarSpec& 
 
 size_t AdoptGltfCarTyres(const std::filesystem::path& gltfPath, const std::string& carFolder)
 {
+    // The game's own car folder: its compounds read afresh from its data.acd (or data/).
+    std::error_code ec;
+    if (std::filesystem::is_directory(carFolder, ec))
+    {
+        std::string problem;
+        std::optional<VehicleCarSpec> game = AcCarData::ReadCarFolder(carFolder, &problem);
+        if (!game.has_value() || game->tyreCompounds.empty())
+        {
+            throw std::runtime_error("'" + carFolder + "' has no tyres to read: " + problem);
+        }
+        VehicleCarSpec spec;
+        spec.tyreCompounds = std::move(game->tyreCompounds);
+        spec.defaultTyreCompound = game->defaultTyreCompound;
+        AdoptCarTyres(spec, std::filesystem::path(carFolder).filename().string());
+        WriteCarTyres(gltfPath, spec);
+        return 2 * spec.libraryCompounds.size();
+    }
     std::ifstream in(gltfPath, std::ios::binary);
     if (!in)
     {

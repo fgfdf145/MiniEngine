@@ -713,6 +713,10 @@ void ReadTyres(const AcdArchive::Files& files, VehicleCarSpec& spec)
             data.shortName = Trim(tyres.Text(axle + suffix, "SHORT_NAME").value_or(""));
             ReadSection(files, ini, axle + suffix, "", data);
             ReadSection(files, ini, "THERMAL_" + axle + suffix, "THERMAL_", data);
+            // [ADDITIONAL1] and [VIRTUALKM] hold for every compound (PRESSURE_TEMPERATURE_GAIN, CAMBER_TEMP_SPREAD_K,
+            // BLANKETS_TEMP; USE_LOAD).
+            ReadSection(files, ini, "ADDITIONAL1", "ADDITIONAL1_", data);
+            ReadSection(files, ini, "VIRTUALKM", "VIRTUALKM_", data);
         }
         spec.tyreCompounds.push_back(std::move(compound));
     }

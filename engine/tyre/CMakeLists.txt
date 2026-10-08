@@ -5,6 +5,10 @@ add_library(engine_tyre
     tyre_magic_formula.h
     tyre_spec.cpp
     tyre_spec.h
+    tyre_thermal.cpp
+    tyre_thermal.h
+    tyre_wear.cpp
+    tyre_wear.h
     tyre_tir_file.cpp
     tyre_tir_file.h
 )

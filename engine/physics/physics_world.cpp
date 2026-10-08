@@ -45,6 +45,7 @@
 #include <memory>
 #include <mutex>
 #include <numbers>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1091,6 +1092,13 @@ struct PhysicsWorld::Impl
         // step once it has found the ground (ApplyBrushTyres), and what each did in the last step: its
         // output, the force it put on the body (world space) and the load it worked with.
         std::vector<tyre::BrushTyre> brushTyres;
+        // Their temperatures and pressure (VehicleSettings::tyreTemperatures), for the wheels whose tyre has the
+        // game's thermal data; stepped after the tyres, so a step's grip and pressure are the last step's.
+        std::array<std::optional<tyre::TyreThermalModel>, kVehicleWheelCount> thermals{};
+        // Their wear (VehicleSettings::tyreWear), for the wheels whose tyre has a WEAR_CURVE.
+        std::array<std::optional<tyre::TyreWearModel>, kVehicleWheelCount> wears{};
+        // The slip over its peak each tyre had in the last step (VehicleTyreStepTerms::slip).
+        std::array<float, kVehicleWheelCount> tyreSlips{};
         struct BrushWheel
         {
             tyre::BrushTyreOutput out;
@@ -2223,6 +2231,8 @@ struct PhysicsWorld::Impl
         // Each tyre's input first, then the tyres stepped side by side (each touches only its own state),
         // then their forces put on the body and the wheels one after another.
         std::array<tyre::BrushTyreInput, kVehicleWheelCount> inputs{};
+        // The contact's sideways speed before camber's thrust is folded into it (what the tread slides at).
+        std::array<float, kVehicleWheelCount> lateralSlides{};
         std::array<JPH::Vec3, kVehicleWheelCount> normals{}, longitudinals{}, lefts{};
         std::array<JPH::RVec3, kVehicleWheelCount> positions{};
         for (size_t index = 0; index < count; ++index)
@@ -2259,7 +2269,8 @@ struct PhysicsWorld::Impl
                 }
             }
             // What the tyre's own data adds: camber thrust, grip by camber, sliding speed and braking, rolling
-            // resistance by speed and slip, and the tyre's growth with spin.
+            // resistance by speed, slip and pressure, and the tyre's growth with spin.
+            lateralSlides[index] = static_cast<float>(in.lateralVelocity);
             VehicleTyreMotion motion;
             motion.forwardVelocity = static_cast<float>(in.forwardVelocity);
             motion.lateralVelocity = static_cast<float>(in.lateralVelocity);
@@ -2267,9 +2278,36 @@ struct PhysicsWorld::Impl
             motion.radius = wheel.GetSettings()->mRadius;
             motion.camber = static_cast<float>(in.camber);
             motion.load = static_cast<float>(in.load);
-            const VehicleTyreStepTerms terms = ComputeTyreStepTerms(vehicle.settings.tyres[index], motion);
+            const VehicleTyreSettings& tyreData = vehicle.settings.tyres[index];
+            double thermalGrip = 1.0;
+            if (const std::optional<tyre::TyreThermalModel>& thermal = vehicle.thermals[index])
+            {
+                // The temperature's grip (the performance curve) over the pressure's loss off its ideal, the
+                // pressure's rolling factor, and the vertical rate at this pressure.
+                const double pressure = thermal->Pressure();
+                const double ideal = thermal->Parameters().idealPressure;
+                thermalGrip = thermal->Performance() / (1.0 + std::abs(pressure - ideal) * tyreData.pressureGripGain);
+                motion.pressureFactor = static_cast<float>(thermal->PressureFactor());
+                if (tyreData.verticalRate > 0.0f && tyreData.pressureSpringGain != 0.0f)
+                {
+                    const double rate =
+                        std::max(tyreData.verticalRate + (pressure - thermal->Parameters().staticPressure) * tyreData.pressureSpringGain, 1000.0);
+                    in.verticalRate = rate;
+                    if (index < vehicle.corners.size())
+                    {
+                        vehicle.corners[index].tyreRate = rate;
+                    }
+                }
+            }
+            // Wear and blistering.
+            if (const std::optional<tyre::TyreWearModel>& wear = vehicle.wears[index])
+            {
+                thermalGrip *= wear->Grip();
+            }
+            const VehicleTyreStepTerms terms = ComputeTyreStepTerms(tyreData, motion);
+            vehicle.tyreSlips[index] = terms.slip;
             in.lateralVelocity = terms.lateralVelocity;
-            in.axisFrictionScale = {terms.axisFrictionScale[0], terms.axisFrictionScale[1]};
+            in.axisFrictionScale = {terms.axisFrictionScale[0] * thermalGrip, terms.axisFrictionScale[1] * thermalGrip};
             in.extraRollingResistance += terms.extraRollingResistance;
             in.radiusGrowth = terms.radiusGrowth;
         }
@@ -2312,6 +2350,65 @@ struct PhysicsWorld::Impl
             state.force = force;
             state.load = static_cast<float>(inputs[index].load);
             state.contact = true;
+        }
+        // The tyres' temperatures, from what they did in this step: the tread's sliding speed and load, its spin
+        // and camber, the road's grip and the car's speed (which cools it).
+        const float carSpeed = body.GetLinearVelocity().Length();
+        for (size_t index = 0; index < count; ++index)
+        {
+            std::optional<tyre::TyreThermalModel>& thermal = vehicle.thermals[index];
+            if (!thermal)
+            {
+                continue;
+            }
+            const auto& wheel = *static_cast<const JPH::WheelWV*>(wheels[static_cast<JPH::uint>(index)]);
+            const tyre::BrushTyreInput& in = inputs[index];
+            const VehicleTyreSettings& tyreData = vehicle.settings.tyres[index];
+            tyre::TyreThermalInput heat;
+            heat.dt = dt;
+            heat.wheelSpeed = wheel.GetAngularVelocity();
+            heat.camber = in.camber;
+            heat.carSpeed = carSpeed;
+            if (wheel.HasContact() && in.load > 0.0)
+            {
+                const double treadSpeed = heat.wheelSpeed * outputs[index].effectiveRadius;
+                heat.slideSpeed = std::hypot(static_cast<double>(lateralSlides[index]), treadSpeed - in.forwardVelocity);
+                heat.load = in.load;
+                // The lateral grip at this load before temperature and pressure (the game's static DY).
+                heat.grip = tyreData.lateralReference > 0.0f && tyreData.referenceLoad > 0.0f && tyreData.lateralLoadExponent > 0.0f
+                                ? tyreData.lateralReference * std::pow(in.load / tyreData.referenceLoad, tyreData.lateralLoadExponent - 1.0)
+                                : tyreData.lateralGrip;
+                heat.surfaceGrip = in.frictionScale;
+            }
+            thermal->Step(heat);
+        }
+        // And their wear, from the same step.
+        for (size_t index = 0; index < count; ++index)
+        {
+            std::optional<tyre::TyreWearModel>& wear = vehicle.wears[index];
+            if (!wear)
+            {
+                continue;
+            }
+            const auto& wheel = *static_cast<const JPH::WheelWV*>(wheels[static_cast<JPH::uint>(index)]);
+            const tyre::BrushTyreInput& in = inputs[index];
+            tyre::TyreWearInput rub;
+            rub.dt = dt;
+            if (wheel.HasContact() && in.load > 0.0)
+            {
+                const double treadSpeed = wheel.GetAngularVelocity() * outputs[index].effectiveRadius;
+                rub.slideSpeed = std::hypot(static_cast<double>(lateralSlides[index]), treadSpeed - in.forwardVelocity);
+                rub.contactSpeed = std::hypot(in.forwardVelocity, static_cast<double>(lateralSlides[index]));
+                rub.load = in.load;
+                rub.slip = vehicle.tyreSlips[index];
+                rub.surfaceGrip = in.frictionScale;
+            }
+            if (const std::optional<tyre::TyreThermalModel>& thermal = vehicle.thermals[index])
+            {
+                rub.temperatures = true;
+                rub.coreTemperature = thermal->CoreTemperature();
+            }
+            wear->Step(rub);
         }
     }
 
@@ -3088,6 +3185,14 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
         for (size_t index = 0; index < kVehicleWheelCount; ++index)
         {
             vehicle.brushTyres.emplace_back(BuildBrushTyreParameters(settings, index));
+            if (settings.tyreTemperatures && settings.tyres[index].thermal.surfaceTransfer > 0.0)
+            {
+                vehicle.thermals[index].emplace(settings.tyres[index].thermal, settings.tyreStartTemperature);
+            }
+            if (settings.tyreWear && !settings.tyres[index].wear.wearCurve.empty())
+            {
+                vehicle.wears[index].emplace(settings.tyres[index].wear);
+            }
         }
         // The physics engine's tyre friction off: the brush tyres push instead.
         auto* controller = static_cast<JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
@@ -3299,6 +3404,36 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
     for (const float boost : vehicle.turboBoost)
     {
         telemetry.turboBoost += boost;
+    }
+    for (size_t index = 0; index < kVehicleWheelCount; ++index)
+    {
+        const std::optional<tyre::TyreThermalModel>& thermal = vehicle.thermals[index];
+        if (!thermal)
+        {
+            continue;
+        }
+        VehicleTelemetry::TyreTemperatures& out = telemetry.tyres[index];
+        out.simulated = true;
+        // Lane 0 is the side camber to the right loads: a left wheel's inside, a right wheel's outside.
+        const std::array<double, tyre::kThermalLanes> lanes = thermal->LaneTemperatures();
+        const bool left = index % 2 == 0;
+        out.tread = {static_cast<float>(left ? lanes[0] : lanes[2]), static_cast<float>(lanes[1]), static_cast<float>(left ? lanes[2] : lanes[0])};
+        out.core = static_cast<float>(thermal->CoreTemperature());
+        out.pressure = static_cast<float>(thermal->Pressure());
+        out.grip = static_cast<float>(
+            thermal->Performance() / (1.0 + std::abs(thermal->Pressure() - thermal->Parameters().idealPressure) * vehicle.settings.tyres[index].pressureGripGain));
+    }
+    for (size_t index = 0; index < kVehicleWheelCount; ++index)
+    {
+        if (const std::optional<tyre::TyreWearModel>& wear = vehicle.wears[index])
+        {
+            VehicleTelemetry::TyreWear& out = telemetry.wear[index];
+            out.simulated = true;
+            out.virtualKm = static_cast<float>(wear->VirtualKm());
+            out.grain = static_cast<float>(wear->Grain());
+            out.blister = static_cast<float>(wear->Blister());
+            out.grip = static_cast<float>(wear->Grip());
+        }
     }
     telemetry.absActive = std::ranges::any_of(vehicle.absReleased, [](bool released)
                                               {

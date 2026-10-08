@@ -99,6 +99,7 @@ struct TyreSpec
         std::optional<float> flexGain;              // PRESSURE_FLEX_GAIN
         std::optional<float> rollingResistanceGain; // PRESSURE_RR_GAIN
         std::optional<float> footprintGain;         // PRESSURE_D_GAIN
+        std::optional<float> temperatureGain;       // [ADDITIONAL1] PRESSURE_TEMPERATURE_GAIN, psi per degree
 
         bool operator==(const Pressure&) const = default;
     } pressure;
@@ -112,13 +113,16 @@ struct TyreSpec
         std::optional<float> rollingK;             // ROLLING_K
         std::optional<float> surfaceRollingK;      // SURFACE_ROLLING_K
         std::optional<float> coolFactor;           // COOL_FACTOR
+        std::optional<float> camberSpread;         // [ADDITIONAL1] CAMBER_TEMP_SPREAD_K
+        std::optional<float> blanketsTemperature;  // [ADDITIONAL1] BLANKETS_TEMP, degrees
         std::vector<glm::vec2> performanceCurve;   // PERFORMANCE_CURVE: grip by temperature
 
         bool operator==(const Thermal&) const = default;
     } thermal;
     struct Wear
     {
-        std::vector<glm::vec2> wearCurve;  // WEAR_CURVE: grip by virtual km
+        std::vector<glm::vec2> wearCurve;  // WEAR_CURVE: grip (%) by virtual km
+        std::optional<float> useLoad;      // [VIRTUALKM] USE_LOAD: the virtual km count the load (1) or not
         std::optional<float> grainGain;    // [THERMAL_*] GRAIN_GAIN
         std::optional<float> grainGamma;   // GRAIN_GAMMA
         std::optional<float> blisterGain;  // BLISTER_GAIN
@@ -133,14 +137,16 @@ struct TyreSpec
     bool operator==(const TyreSpec&) const = default;
 };
 
-// A scalar of the table: its group and key in a .tyre.yaml, the key Assetto Corsa gives it (without the
-// "THERMAL_" of a thermal section's), whether it sits in the thermal section, and the field.
+// A scalar of the table: its group and key in a .tyre.yaml, the key Assetto Corsa gives it, the prefix the
+// kn5 import keeps its section's keys under ("" for [FRONT] / [REAR], "THERMAL_" for [THERMAL_FRONT] / ...,
+// "ADDITIONAL1_" and "VIRTUALKM_" for tyres.ini's [ADDITIONAL1] and [VIRTUALKM], which hold for every compound),
+// and the field.
 struct TyreSpecField
 {
     const char* group;
     const char* key;
     const char* acKey;
-    bool thermalSection;
+    const char* sectionPrefix;
     std::function<std::optional<float>&(TyreSpec&)> field;
 };
 // And a curve.
@@ -149,14 +155,15 @@ struct TyreSpecCurve
     const char* group;
     const char* key;
     const char* acKey;
-    bool thermalSection;
+    const char* sectionPrefix;
     std::function<std::vector<glm::vec2>&(TyreSpec&)> field;
 };
 const std::vector<TyreSpecField>& TyreSpecFields();
 const std::vector<TyreSpecCurve>& TyreSpecCurves();
 
 // The tyre from one axle of a compound as the kn5 import keeps tyres.ini (VehicleTyreData): every number
-// of its section by key, the thermal section's under "THERMAL_", and the curves its .lut files hold.
+// of its section by key, the thermal section's under "THERMAL_" and [ADDITIONAL1]'s under "ADDITIONAL1_",
+// and the curves its .lut files hold.
 TyreSpec TyreSpecFromAc(
     const std::string& name, const std::string& shortName, const std::map<std::string, float>& values,
     const std::map<std::string, std::vector<glm::vec2>>& curves);
