@@ -724,8 +724,12 @@ void VulkanRayAcceleration::UpdateTopLevel(uint32_t frameSlot, const RayScene& s
                     }
                 }
                 instance.instanceCustomIndex = index;
-                // The probes' rays cull moving instances by mask (RAY_MASK_* in ray_tracing_common.glsl).
-                instance.mask = (source.data.w & kRayInstanceDynamic) != 0u ? kRayMaskDynamic : kRayMaskStatic;
+                // The probes' rays cull moving instances by mask, shadow rays the ones that cast no
+                // shadow (RAY_MASK_* in ray_tracing_common.glsl).
+                const bool dynamic = (source.data.w & kRayInstanceDynamic) != 0u;
+                const bool noShadow = (source.data.w & kRayInstanceNoShadow) != 0u;
+                instance.mask = noShadow ? (dynamic ? kRayMaskDynamicNoShadow : kRayMaskStaticNoShadow)
+                                         : (dynamic ? kRayMaskDynamicCaster : kRayMaskStaticCaster);
                 const uint32_t material = source.data.z;
                 const bool opaque = material < opaqueMaterials.size() && opaqueMaterials[material] != 0u;
                 instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR |

@@ -1001,7 +1001,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // The casters, built here because which cascades each view's map keeps depends on them. The
     // shader samples the cascades as the map holds them, which for one Plan left waiting is its
     // previous matrix.
-    shared.shadowDrawItems = BuildShadowDrawItems(imageIndex, models);
+    shared.shadowDrawItems = BuildShadowDrawItems(imageIndex, models, packet.camera.position);
     m_cpuStages.Mark("ShadowDrawItems");
     shared.shadowCasterKey = HashShadowCasters(shared.shadowDrawItems);
     m_cpuStages.Mark("ShadowPlan");
@@ -1988,7 +1988,7 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     if (viewport)
     {
         // Unjittered, as the editor's other overlays are drawn, so the outline holds still.
-        prepared->selectionDrawItems = BuildSelectionDrawItems(packet.selectedEntity, shared.models, viewProjection);
+        prepared->selectionDrawItems = BuildSelectionDrawItems(packet.selectedEntity, shared.models, viewProjection, camera.position);
         frame.selectionDrawItems = prepared->selectionDrawItems;
         frame.selectionViewProjection = viewProjection;
         // Blender's outline is about a pixel and a half at its UI scale; here in the output's pixels,
@@ -3574,6 +3574,8 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             }
             renderSubmesh->localBoundsCenter = cpuRenderSubmesh.localBoundsCenter;
             renderSubmesh->localBoundsRadius = cpuRenderSubmesh.localBoundsRadius;
+            renderSubmesh->castShadows = cpuRenderSubmesh.castShadows;
+            renderSubmesh->drawDistance = cpuRenderSubmesh.drawDistance;
             renderSubmesh->name = cpuRenderSubmesh.name;
 
             MaterialTextureSlots slots = defaultSlots;
@@ -4158,8 +4160,11 @@ void VulkanRenderer::ApplyRenderContent(
                     for (uint32_t index = begin; index < end; ++index)
                     {
                         const RenderSubmesh& renderSubmesh = *newRenderSubmeshes[index];
-                        raySubmeshes[index] = RaySceneSubmesh{
-                            renderSubmesh.mesh, renderSubmesh.buffer, renderSubmesh.alphaMode == MaterialAlphaMode::Blend, renderSubmesh.drawSlot};
+                        // Rays see a track's nearest level of detail at every distance: a far one would
+                        // stand in the same place.
+                        const bool passThrough = renderSubmesh.alphaMode == MaterialAlphaMode::Blend || renderSubmesh.drawDistance.min > 0.0f;
+                        const uint32_t flags = (passThrough ? kRayInstanceSkip : 0u) | (renderSubmesh.castShadows ? 0u : kRayInstanceNoShadow);
+                        raySubmeshes[index] = RaySceneSubmesh{renderSubmesh.mesh, renderSubmesh.buffer, flags, renderSubmesh.drawSlot};
                         rayModels[index] = frame.transforms.GetSubmeshModelMatrix(renderSubmesh.entity, renderSubmesh.motionKey.submeshOrdinal);
                     }
                 },
@@ -4310,15 +4315,17 @@ void VulkanRenderer::AppendDrawItem(
     {
         return;
     }
+    // The view is rigid, so the view-space centre's length is the camera's distance to it.
+    const glm::vec4 viewCenter = view * glm::vec4(worldCenter, 1.0f);
+    if (!renderSubmesh.drawDistance.Contains(glm::length(glm::vec3(viewCenter))))
+    {
+        return;
+    }
     ObjectPushConstants drawConstants{};
     drawConstants.model = model;
     const MaterialPipelineKey pipelineKey{
         renderSubmesh.alphaMode,
         renderSubmesh.doubleSided};
-    const glm::vec4 viewCenter =
-        view *
-        drawConstants.model *
-        glm::vec4(renderSubmesh.localBoundsCenter, 1.0f);
     // A toon material's opaque draw is the geometry pass's like any deferred one (its forward flag
     // keeps the lighting pass off it), and the toon passes shade it; triangle.frag never does.
     const bool forwardShaded = !renderSubmesh.toon && renderSubmesh.alphaMode != MaterialAlphaMode::Blend &&
@@ -4348,7 +4355,8 @@ void VulkanRenderer::AppendDrawItem(
 std::vector<ShadowDrawItem> VulkanRenderer::BuildSelectionDrawItems(
     entt::entity selected,
     std::span<const glm::mat4> models,
-    const glm::mat4& viewProjection) const
+    const glm::mat4& viewProjection,
+    const glm::vec3& cameraPosition) const
 {
     std::vector<ShadowDrawItem> items;
     if (selected == entt::null)
@@ -4359,8 +4367,10 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildSelectionDrawItems(
     for (size_t submeshIndex = 0; submeshIndex < m_renderSubmeshes.size(); ++submeshIndex)
     {
         const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[submeshIndex];
-        // A decal is a box projected onto what is under it; its own shape is not the entity's.
-        if (renderSubmesh.entity != selected || renderSubmesh.decal)
+        // A decal is a box projected onto what is under it; its own shape is not the entity's. A level
+        // of detail the camera does not draw is not part of what is seen either.
+        if (renderSubmesh.entity != selected || renderSubmesh.decal ||
+            !WithinDrawDistance(renderSubmesh, models[submeshIndex], cameraPosition))
         {
             continue;
         }
@@ -4384,7 +4394,10 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildSelectionDrawItems(
     return items;
 }
 
-std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageIndex, std::span<const glm::mat4> models) const
+std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(
+    uint32_t imageIndex,
+    std::span<const glm::mat4> models,
+    const glm::vec3& cameraPosition) const
 {
     // Opaque casters first, then alpha-tested ones, so the pass switches pipeline once. On the task
     // system in chunks: each chunk counts its casters of either kind, which places them in the list,
@@ -4407,7 +4420,7 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
                  {
                      for (size_t submeshIndex = begin; submeshIndex < end; ++submeshIndex)
                      {
-                         const ShadowCaster caster = ClassifyShadowCaster(*m_renderSubmeshes[submeshIndex]);
+                         const ShadowCaster caster = ClassifyShadowCaster(*m_renderSubmeshes[submeshIndex], models[submeshIndex], cameraPosition);
                          if (caster == ShadowCaster::Opaque)
                          {
                              ++opaqueCounts[chunk];
@@ -4439,7 +4452,7 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
                      for (size_t submeshIndex = begin; submeshIndex < end; ++submeshIndex)
                      {
                          const RenderSubmesh& renderSubmesh = *m_renderSubmeshes[submeshIndex];
-                         const ShadowCaster caster = ClassifyShadowCaster(renderSubmesh);
+                         const ShadowCaster caster = ClassifyShadowCaster(renderSubmesh, models[submeshIndex], cameraPosition);
                          if (caster != ShadowCaster::None)
                          {
                              FillShadowDrawItem(renderSubmesh, models[submeshIndex], items[caster == ShadowCaster::Opaque ? nextOpaque++ : nextMasked++]);
@@ -4449,17 +4462,32 @@ std::vector<ShadowDrawItem> VulkanRenderer::BuildShadowDrawItems(uint32_t imageI
     return items;
 }
 
-VulkanRenderer::ShadowCaster VulkanRenderer::ClassifyShadowCaster(const RenderSubmesh& renderSubmesh)
+VulkanRenderer::ShadowCaster VulkanRenderer::ClassifyShadowCaster(
+    const RenderSubmesh& renderSubmesh,
+    const glm::mat4& model,
+    const glm::vec3& cameraPosition)
 {
     // Blend materials are glass, foliage cards and the like; a solid shadow from them would be
     // wrong more often than none, so they cast none.
-    // Transmissive surfaces let most light through; they cast none either.
+    // Transmissive surfaces let most light through; they cast none either. Nor does a submesh its
+    // model says casts none, or one the camera is too near or too far from to draw.
     if (renderSubmesh.alphaMode == MaterialAlphaMode::Blend ||
-        (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u)
+        (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u || !renderSubmesh.castShadows ||
+        !WithinDrawDistance(renderSubmesh, model, cameraPosition))
     {
         return ShadowCaster::None;
     }
     return renderSubmesh.alphaMode == MaterialAlphaMode::Mask ? ShadowCaster::Masked : ShadowCaster::Opaque;
+}
+
+bool VulkanRenderer::WithinDrawDistance(const RenderSubmesh& renderSubmesh, const glm::mat4& model, const glm::vec3& cameraPosition)
+{
+    if (!renderSubmesh.drawDistance.IsLimited())
+    {
+        return true;
+    }
+    const glm::vec3 worldCenter = glm::vec3(model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
+    return renderSubmesh.drawDistance.Contains(glm::distance(worldCenter, cameraPosition));
 }
 
 void VulkanRenderer::FillShadowDrawItem(const RenderSubmesh& renderSubmesh, const glm::mat4& model, ShadowDrawItem& item)

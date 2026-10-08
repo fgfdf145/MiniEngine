@@ -68,6 +68,9 @@ constexpr float kAcNeutralLuminance = 25500.0f;
 constexpr float kAcNeutralGain = 2.0f;
 // The glTF node extension that marks a mesh as collision only (see ModelCollisionMesh).
 constexpr const char* kCollisionExtension = "MINIENGINE_collision";
+// The glTF node extension that carries how the game draws a mesh: no shadow, and the camera distances
+// it is drawn between (see ModelSubmeshData::castShadows and drawDistance).
+constexpr const char* kMeshDrawExtension = "MINIENGINE_mesh_draw";
 // The glTF extension, on the document, that carries a car's own figures (see VehicleCarSpec).
 constexpr const char* kVehicleExtension = "MINIENGINE_vehicle";
 
@@ -924,8 +927,7 @@ class GltfBuilder
                 return std::nullopt;
             }
         }
-        if (!m_options.keepVariants && (Kn5Importer::IsRuntimeVariant(node.name) || m_lowRes.count(node.name) != 0 ||
-                                        (node.HasGeometry() && node.lodIn > 0.0f)))
+        if (!m_options.keepVariants && (Kn5Importer::IsRuntimeVariant(node.name) || m_lowRes.count(node.name) != 0))
         {
             ++m_report.droppedVariants;
             return std::nullopt;
@@ -965,6 +967,7 @@ class GltfBuilder
         else if (const std::optional<size_t> mesh = EmitMesh(node); mesh.has_value())
         {
             gltfNode["mesh"] = *mesh;
+            AddMeshDraw(node, gltfNode);
         }
 
         const size_t index = m_nodes.size();
@@ -982,6 +985,39 @@ class GltfBuilder
             m_nodes[index]["children"] = std::move(children);
         }
         return index;
+    }
+
+    // What the kn5 says about drawing a mesh beyond its geometry, as MINIENGINE_mesh_draw: castShadows
+    // false, and the camera distances it is drawn between (lodIn and lodOut, each left out where it
+    // sets no limit). The node's layer, the World Detail level from which the game draws it, is not
+    // carried: the engine draws every level, as the game at full detail does.
+    void AddMeshDraw(const Kn5Node& node, Json& gltfNode)
+    {
+        Json draw = Json::object();
+        if (!node.castShadows)
+        {
+            draw["castShadows"] = false;
+            ++m_report.shadowlessMeshes;
+        }
+        const bool hasMin = std::isfinite(node.lodIn) && node.lodIn > 0.0f;
+        const bool hasMax = std::isfinite(node.lodOut) && node.lodOut > 0.0f;
+        if (hasMin)
+        {
+            draw["minDistance"] = Round(node.lodIn, 3);
+        }
+        if (hasMax)
+        {
+            draw["maxDistance"] = Round(node.lodOut, 3);
+        }
+        if (hasMin || hasMax)
+        {
+            ++m_report.distanceLimitedMeshes;
+        }
+        if (!draw.empty())
+        {
+            gltfNode["extensions"][kMeshDrawExtension] = std::move(draw);
+            m_extensionsUsed.insert(kMeshDrawExtension);
+        }
     }
 
     void SetLowResTwins(std::set<std::string> names)
@@ -2161,8 +2197,7 @@ void SurveyNodes(
     std::vector<size_t>& materialTriangles)
 {
     bool dropped = insideDropped;
-    if (!insideDropped && (Kn5Importer::IsRuntimeVariant(node.name) || lowRes.count(node.name) != 0 ||
-                           (node.HasGeometry() && node.lodIn > 0.0f)))
+    if (!insideDropped && (Kn5Importer::IsRuntimeVariant(node.name) || lowRes.count(node.name) != 0))
     {
         ++summary.runtimeVariants;
         dropped = true;
@@ -3011,6 +3046,14 @@ Kn5ImportReport ConvertToGltf(
             sourceName,
             report.collisionMeshes,
             report.collisionTriangles);
+    }
+    if (report.shadowlessMeshes > 0 || report.distanceLimitedMeshes > 0)
+    {
+        LOG_INFO(
+            "kn5 '{}': {} meshes cast no shadow, {} are drawn only within a camera distance range (LODs)",
+            sourceName,
+            report.shadowlessMeshes,
+            report.distanceLimitedMeshes);
     }
     if (!report.skin.empty())
     {

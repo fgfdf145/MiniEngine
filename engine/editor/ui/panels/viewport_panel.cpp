@@ -38,8 +38,6 @@ constexpr float kSelectionOutlineThickness = 2.0f;
 constexpr float kLightIconRadiusPixels = 10.0f;
 constexpr float kLightIconHitHalfSizePixels = 16.0f;
 constexpr float kLightSelectionRingRadiusPixels = 14.0f;
-constexpr float kViewCubeSizePixels = 128.0f;
-constexpr float kViewCubeMarginPixels = 16.0f;
 constexpr float kOverlayTextMarginPixels = 12.0f;
 constexpr float kMinimapSizePixels = 220.0f;
 constexpr float kMinimapMarginPixels = 16.0f;
@@ -712,34 +710,6 @@ void HandleViewportSelection(
     scene.SetSelectedEntity(PickHoveredEntity(projectedCenters, uiScale));
 }
 
-void DrawViewManipulator(
-    Camera& camera,
-    ViewportMatrices& matrices,
-    const ViewportOverlayRect& viewportRect,
-    float uiScale)
-{
-    if (viewportRect.size.x <= 0.0f || viewportRect.size.y <= 0.0f || viewportRect.drawList == nullptr)
-    {
-        return;
-    }
-
-    ImGuizmo::SetDrawlist(viewportRect.drawList);
-    const glm::mat4 viewBefore = matrices.view;
-    const float cubeSize = kViewCubeSizePixels * uiScale;
-    const float cubeMargin = kViewCubeMarginPixels * uiScale;
-    ImGuizmo::ViewManipulate(
-        glm::value_ptr(matrices.view),
-        7.5f,
-        ImVec2(viewportRect.origin.x + viewportRect.size.x - cubeSize - cubeMargin, viewportRect.origin.y + cubeMargin),
-        ImVec2(cubeSize, cubeSize),
-        IM_COL32(32, 32, 32, 180));
-    if (matrices.view != viewBefore)
-    {
-        camera.SetFromViewMatrix(matrices.view);
-        matrices.view = camera.GetViewMatrix();
-    }
-}
-
 // ImGuizmo sizes its handle lines, arrows and circles in pixels; scale them from its defaults.
 void ApplyImGuizmoStyleScale(float uiScale)
 {
@@ -1397,11 +1367,6 @@ void ViewportPanel::OnGui(EditorContext& context)
             DrawFullscreenViewportHud(viewportRect, UiScale(), ImGui::GetTime() - state.fullscreenEnteredTime, state.vehicleStatus, drivingHud);
         }
         return;
-    }
-    if (viewportUi)
-    {
-        DrawViewManipulator(camera, matrices, viewportRect, UiScale());
-        RefreshViewportMatrices(camera, matrices, scene, result.viewportExtent, currentBackendType);
     }
     // View > Gizmos hides the transform gizmo and the lights' shapes; lights stay selectable.
     if (state.commands.gizmos)

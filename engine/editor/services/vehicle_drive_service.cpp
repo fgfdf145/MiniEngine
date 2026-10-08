@@ -428,6 +428,7 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     ComputeWorldModelBounds(world, entity, carWorldMin, carWorldMax);
 
     session->physics = std::make_unique<PhysicsWorld>();
+    session->physics->SetStepSeconds(state.vehicleDrive.physicsStepSeconds);
     const float lowestGeometry = AddSceneCollision(*session->physics, state.rendererWorld, world, entity, carWorldMin.y);
     const float groundY = std::min(lowestGeometry, carWorldMin.y);
     session->physics->AddStaticBox(
@@ -784,6 +785,11 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
 
     session->physics->SetVehicleControls(session->vehicle, controls);
     session->controls = controls;
+    if (session->physics->GetStepSeconds() != state.vehicleDrive.physicsStepSeconds)
+    {
+        session->physics->SetStepSeconds(state.vehicleDrive.physicsStepSeconds);
+        LOG_INFO("'{}': physics at {:.0f} Hz", session->name, 1.0f / session->physics->GetStepSeconds());
+    }
     if (!session->paused)
     {
         // At most this long on physics a frame, so a world too slow for real time slows down rather
@@ -792,13 +798,14 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         // A scripted drive runs every step, so it is the same however slowly the frames come.
         const auto stepStart = std::chrono::steady_clock::now();
         const int steps = session->physics->Update(deltaSeconds, scripted.has_value() ? 0.0f : kPhysicsBudgetSeconds);
+        const float simulatedSeconds = steps * session->physics->GetStepSeconds();
         // The odometer runs on simulated time, as the car moves.
         session->odometerMetres += std::abs(static_cast<double>(session->physics->GetVehicleTelemetry(session->vehicle).forwardSpeed)) *
-                                   steps * PhysicsWorld::kFixedStepSeconds;
+                                   simulatedSeconds;
         session->scriptedPhysicsMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stepStart).count();
         if (deltaSeconds > 0.0f)
         {
-            const float share = std::min(steps * PhysicsWorld::kFixedStepSeconds / deltaSeconds, 1.0f);
+            const float share = std::min(simulatedSeconds / deltaSeconds, 1.0f);
             const float blend = 1.0f - std::exp(-deltaSeconds / 1.0f);
             session->realTimeShare += (share - session->realTimeShare) * blend;
         }
@@ -1118,8 +1125,10 @@ float AddSceneCollision(PhysicsWorld& physics, const RendererWorld& renderWorld,
     {
         const CpuRenderSubmesh& submesh = *entry;
         // Glass, smoke, decals and the top of water are drawn over surfaces rather than being any; alpha-tested
-        // fences and foliage still count. A skinned mesh moves (a character, a driver in the car).
+        // fences and foliage still count. A skinned mesh moves (a character, a driver in the car). A far level
+        // of detail stands where its near one is.
         if (submesh.entity == exclude || !submesh.mesh || !submesh.mesh->IsValid() || submesh.decal || submesh.water || submesh.skinned ||
+            submesh.drawDistance.min > 0.0f ||
             submesh.alphaMode == MaterialAlphaMode::Blend || !scene.IsValidEntity(submesh.entity) ||
             collidesByItself.count(submesh.entity) != 0 || scene.Registry().all_of<StreamedComponent>(submesh.entity))
         {

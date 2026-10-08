@@ -26,6 +26,8 @@ namespace me
 //    roughness; ksSpecular or fresnelMaxLevel, masked by txMaps, KHR_materials_specular; a flat
 //    txDetail the paint colour; car paint's reflection KHR_materials_clearcoat;
 //  - runtime variants (*_BLUR, *_DAMAGE, the low-res half of an in-file LOD pair) dropped;
+//  - how the game draws each mesh, as MINIENGINE_mesh_draw: the ones that cast no shadow, and a
+//    track's LOD distances (lodIn, lodOut), so its far LODs take over where the game's do;
 //  - CSP-encrypted files refused: their plain section is decoys;
 //  - a track's layout: models.ini / models_<layout>.ini place several kn5 in one scene, and the
 //    import converts them all, each at its POSITION and ROTATION;
@@ -66,6 +68,10 @@ struct Kn5ImportReport
     // a track's physics meshes, which are imported as collision only (MINIENGINE_collision).
     size_t collisionMeshes = 0;
     size_t collisionTriangles = 0;
+    // Drawn meshes the game casts no shadow from, and those it draws only between two camera
+    // distances (a track's LODs and small props), as MINIENGINE_mesh_draw carries them.
+    size_t shadowlessMeshes = 0;
+    size_t distanceLimitedMeshes = 0;
     size_t triangles = 0;
     size_t images = 0;
     size_t materials = 0;
@@ -102,7 +108,7 @@ struct Kn5ModelSummary
     size_t triangles = 0;
     size_t materials = 0;
     size_t textures = 0;
-    // Subtrees the default import drops (*_BLUR, *_DAMAGE, low-res LOD twins, far LODs).
+    // Subtrees the default import drops (*_BLUR, *_DAMAGE, low-res LOD twins).
     size_t runtimeVariants = 0;
     // Meshes the game never draws, such as a track's physics surfaces: never imported, and not
     // among the meshes and triangles above.

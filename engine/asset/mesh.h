@@ -72,4 +72,24 @@ struct MeshBounds
 // Walks every vertex, so prefer the values a loader already cached
 // (ModelSubmeshData::boundsCenter and boundsRadius) over calling this on model geometry.
 MeshBounds ComputeMeshBounds(const MeshData& mesh);
+
+// The camera distances, in metres from the centre of a submesh's bounds, between which it is drawn
+// (MINIENGINE_mesh_draw's minDistance and maxDistance): a level of detail of a track, or a small prop
+// that stops being drawn far away. A max of 0 sets no limit.
+struct DrawDistanceRange
+{
+    float min = 0.0f;
+    float max = 0.0f;
+
+    bool IsLimited() const
+    {
+        return min > 0.0f || max > 0.0f;
+    }
+
+    // From min, inclusive, to max, exclusive.
+    bool Contains(float distance) const
+    {
+        return distance >= min && (max <= 0.0f || distance < max);
+    }
+};
 }

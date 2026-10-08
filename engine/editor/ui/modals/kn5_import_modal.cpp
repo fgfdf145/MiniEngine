@@ -260,7 +260,7 @@ void Kn5ImportModal::OnGui(EditorContext& context)
         ImGui::SeparatorText("Options");
         ImGui::Checkbox("Keep runtime variants", &pending.options.keepVariants);
         ImGui::TextDisabled(
-            "%zu *_BLUR, *_DAMAGE and low-res or far LOD meshes. Kept, they overlap what they replace.",
+            "%zu *_BLUR, *_DAMAGE and low-res LOD meshes. Kept, they overlap what they replace.",
             summary.runtimeVariants);
         ImGui::Checkbox("Flip V texture coordinate", &pending.options.flipUv);
         ImGui::TextDisabled("Only for mods whose textures arrive upside down.");

@@ -2172,6 +2172,31 @@ WheelNodeTag ParseWheelNodeName(const std::string& name)
 
 constexpr const char* kCollisionExtension = "MINIENGINE_collision";
 constexpr const char* kWaterExtension = "MINIENGINE_water";
+constexpr const char* kMeshDrawExtension = "MINIENGINE_mesh_draw";
+
+// A MINIENGINE_mesh_draw node's settings, given to every submesh its mesh makes: castShadows (true
+// when absent) and the distances it is drawn between, minDistance and maxDistance (no limit when
+// absent). A member of the wrong type, or a negative or non-finite distance, is ignored.
+void ApplyMeshDraw(const tinygltf::Value& draw, std::span<ModelSubmeshData> submeshes)
+{
+    const auto distance = [&draw](const char* key)
+    {
+        if (!draw.IsObject() || !draw.Has(key) || !draw.Get(key).IsNumber())
+        {
+            return 0.0f;
+        }
+        const float value = static_cast<float>(draw.Get(key).GetNumberAsDouble());
+        return std::isfinite(value) && value > 0.0f ? value : 0.0f;
+    };
+    const bool castShadows = !(draw.IsObject() && draw.Has("castShadows") && draw.Get("castShadows").IsBool() &&
+                               !draw.Get("castShadows").Get<bool>());
+    const DrawDistanceRange range{distance("minDistance"), distance("maxDistance")};
+    for (ModelSubmeshData& submesh : submeshes)
+    {
+        submesh.castShadows = castShadows;
+        submesh.drawDistance = range;
+    }
+}
 
 // A MINIENGINE_water node's triangles, in the model's space, added to the model's water surface.
 void AppendWaterMesh(const tinygltf::Model& model, const tinygltf::Mesh& mesh, const glm::mat4& worldTransform, LoadedModelData& modelData)
@@ -2554,6 +2579,10 @@ void TraverseNode(
             {
                 modelData.submeshes[index].water = true;
             }
+        }
+        if (const auto draw = node.extensions.find(kMeshDrawExtension); draw != node.extensions.end())
+        {
+            ApplyMeshDraw(draw->second, std::span<ModelSubmeshData>(modelData.submeshes).subspan(firstNewSubmesh));
         }
     }
 
@@ -3364,7 +3393,7 @@ namespace
 {
 // The extensions this loader implements. A model that requires another fails to import rather than
 // drawing wrong; one that only uses another loads, with a warning.
-constexpr std::array<std::string_view, 28> kImplementedExtensions = {
+constexpr std::array<std::string_view, 29> kImplementedExtensions = {
     "EXT_mesh_gpu_instancing",
     "EXT_meshopt_compression",
     "KHR_draco_mesh_compression",
@@ -3390,6 +3419,7 @@ constexpr std::array<std::string_view, 28> kImplementedExtensions = {
     "KHR_xmp_json_ld",
     "MINIENGINE_collision",
     "MINIENGINE_materials_detail_layers",
+    "MINIENGINE_mesh_draw",
     "MINIENGINE_toon",
     "MINIENGINE_vehicle",
     "MINIENGINE_water"};

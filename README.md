@@ -167,6 +167,7 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
 --cpus <核心>        本次运行可用的逻辑处理器：all、performance（混合架构的 P 核）或列表如 0,2,4-7；任务系统的工作线程数随之取核心数减二
 --drive <名称>      场景加载完成后像 Play 一样驾驶这个名称的模型实体
 --drive-controls <油门>,<转向>  与 --drive 一起使用：保持这组输入（-1 到 1）代替键盘和手柄，每帧固定推进 1/60 s 仿真，每仿真秒记录一次车的位置、速度、着地轮数和倾角（无人值守的试驾）
+--physics-rate <Hz>  物理固定步长的频率（每仿真秒的步数，60 到 4000，默认 1000，即 1 ms；Vehicle 面板 Tuning > Physics Rate 同一设置）
 --drive-view <视角>  与 --drive 一起使用：chase（追尾）、cockpit（车内第一人称）、bonnet（引擎盖）、bumper（车头保险杠）或 fixed（相机停在 --camera 给的位置，不跟车）
 ```
 

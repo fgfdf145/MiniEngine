@@ -1141,11 +1141,63 @@ void TestWheelMotionSeesTheModelsAxes()
 void TestUpdateRunsFixedSteps()
 {
     PhysicsWorld world;
-    Require(world.Update(PhysicsWorld::kFixedStepSeconds * 0.5f) == 0, "half a step runs none");
-    Require(world.Update(PhysicsWorld::kFixedStepSeconds * 0.6f) == 1, "the remainder carries over");
-    Require(world.Update(10.0f) == PhysicsWorld::kMaxStepsPerUpdate, "a long frame is capped");
+    Require(world.Update(PhysicsWorld::kDefaultStepSeconds * 0.5f) == 0, "half a step runs none");
+    Require(world.Update(PhysicsWorld::kDefaultStepSeconds * 0.6f) == 1, "the remainder carries over");
+    Require(world.Update(10.0f) == world.MaxStepsPerUpdate(), "a long frame is capped");
     Require(world.Update(0.0f) == 1, "the capped backlog keeps at most one step");
     Require(world.Update(0.0f) == 0, "nothing is left over");
+}
+
+void TestStepIsSettable()
+{
+    PhysicsWorld world;
+    Require(world.GetStepSeconds() == PhysicsWorld::kDefaultStepSeconds, "a new world steps at the default");
+    world.SetStepSeconds(1.0f / 500.0f);
+    Require(world.GetStepSeconds() == 1.0f / 500.0f, "the step is taken as given");
+    Require(world.Update(4.5e-3f) == 2, "and runs at its rate");
+    Require(world.MaxStepsPerUpdate() == 25, "the catch-up is a time, " + std::to_string(world.MaxStepsPerUpdate()) + " steps at 500 Hz");
+    Require(world.Update(10.0f) == 25, "a long frame is capped at it");
+    world.SetStepSeconds(1.0f);
+    Require(world.GetStepSeconds() == PhysicsWorld::kMaxStepSeconds, "a step too long is clamped");
+    world.SetStepSeconds(0.0f);
+    Require(world.GetStepSeconds() == PhysicsWorld::kMinStepSeconds, "and one too short");
+}
+
+// The same drive at other step rates (both tyre models): the car stays stable and gets about as far.
+void TestCarDrivesAtAnyStepRate()
+{
+    for (const VehicleTyreModel tyreModel : {VehicleTyreModel::PhysicsEngine, VehicleTyreModel::Brush})
+    {
+        const auto drive = [tyreModel](float rateHz)
+        {
+            PhysicsWorld world;
+            world.SetStepSeconds(1.0f / rateHz);
+            AddGroundMesh(world);
+            VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax);
+            settings.tyreModel = tyreModel;
+            const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+            Simulate(world, 1.0f);
+            VehicleControls controls;
+            controls.throttle = 1.0f;
+            world.SetVehicleControls(car, controls);
+            Simulate(world, 4.0f);
+            const PhysicsPose pose = world.GetVehiclePose(car);
+            const glm::vec3 up = pose.rotation * glm::vec3(0.0f, 1.0f, 0.0f);
+            const std::string name = std::string(tyreModel == VehicleTyreModel::Brush ? "brush" : "slip curves") + " at " +
+                                     std::to_string(static_cast<int>(rateHz)) + " Hz";
+            Require(std::isfinite(pose.position.z) && up.y > 0.99f, name + ": the car stays upright, up.y = " + std::to_string(up.y));
+            Require(std::abs(pose.position.x) < 1.0f, name + ": and straight, x = " + std::to_string(pose.position.x));
+            return world.GetVehicleTelemetry(car).forwardSpeed;
+        };
+        const float reference = drive(1000.0f);
+        for (const float rate : {333.0f, 2000.0f})
+        {
+            const float speed = drive(rate);
+            Require(std::abs(speed - reference) < 0.05f * reference,
+                    "at " + std::to_string(static_cast<int>(rate)) + " Hz the car reaches " + std::to_string(speed) + " m/s, at 1000 Hz " +
+                        std::to_string(reference));
+        }
+    }
 }
 
 // An upright two-sided quad in the XY plane, `width` wide and `height` tall, its foot at (x, foot, z):
@@ -1571,7 +1623,7 @@ void TestHardLandingIsCushioned()
     PhysicsWorld world;
     AddGroundMesh(world);
     const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f, 1.0f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
-    constexpr float kStep = PhysicsWorld::kFixedStepSeconds;
+    constexpr float kStep = PhysicsWorld::kDefaultStepSeconds;
     float lastY = world.GetVehiclePose(car).position.y;
     float lastRate = 0.0f;
     float hardest = 0.0f;
@@ -2171,7 +2223,7 @@ void TestHubsLoadTheTyresFromTheWheels()
     float bodyHeight = 0.0f;
     for (int step = 0; step < kSteps; ++step)
     {
-        world.Update(PhysicsWorld::kFixedStepSeconds);
+        world.Update(PhysicsWorld::kDefaultStepSeconds);
         const PhysicsPose pose = world.GetVehiclePose(car);
         const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
         const glm::dvec3 body = pose.position + glm::dvec3(pose.rotation * (settings.chassisCenter + settings.centerOfMassOffset));
@@ -3202,6 +3254,8 @@ int main()
         TestManualGearboxChangesWhenAsked();
         TestAutomaticGearboxHoldsThePaddlesGear();
         TestUpdateRunsFixedSteps();
+        TestStepIsSettable();
+        TestCarDrivesAtAnyStepRate();
         TestGroundCoverIsRecognised();
         TestGrassCardsStopACarUnlessTheyAreGroundCover();
         TestSurfaceFrictionSetsGrip();

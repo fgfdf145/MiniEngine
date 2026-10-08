@@ -66,6 +66,8 @@ struct EditorVehicleSettings
     VehicleHapticsSettings haptics;
     VehicleSteeringAssistSettings steeringAssist;
     bool manualGearbox = false;
+    // The physics' fixed step as a rate, steps per simulated second.
+    int physicsRateHz = static_cast<int>(1.0f / PhysicsWorld::kDefaultStepSeconds + 0.5f);
     VehiclePhysicsOverlaySettings overlay;
 };
 

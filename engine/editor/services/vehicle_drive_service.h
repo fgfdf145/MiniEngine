@@ -265,6 +265,8 @@ struct VehicleDriveState
     std::unique_ptr<VehicleDriveSession> session;
     // A sequential manual gearbox (the driver changes gear) instead of the automatic.
     bool manualGearbox = false;
+    // The physics' fixed step (PhysicsWorld::SetStepSeconds), which a car being driven takes at once.
+    float physicsStepSeconds = PhysicsWorld::kDefaultStepSeconds;
     // A test drive without a driver (--drive-controls): the car takes these controls instead of the
     // keyboard's and gamepad's, advances a fixed 1/60 s a frame however long the frame took, and logs
     // its pose once a simulated second.

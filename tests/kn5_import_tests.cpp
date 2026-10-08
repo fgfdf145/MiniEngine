@@ -362,10 +362,10 @@ void WriteDummy(ByteWriter& writer, const std::string& name, std::uint32_t child
 
 // One triangle: (x, 0, 0), (0, 1, 0), (0, 0, 1), offset by `x` so each mesh is recognisable.
 void WriteMesh(ByteWriter& writer, const std::string& name, std::uint32_t material, float x, bool skinned = false,
-               std::uint32_t children = 0, bool renderable = true, float lodIn = 0.0f)
+               std::uint32_t children = 0, bool renderable = true, float lodIn = 0.0f, float lodOut = 0.0f, bool castShadows = true)
 {
     BeginNode(writer, skinned ? 3 : 2, name, children);
-    writer.U8(1); // castShadows
+    writer.U8(castShadows ? 1 : 0);
     writer.U8(1); // visible
     writer.U8(0); // transparent
     if (skinned)
@@ -409,7 +409,7 @@ void WriteMesh(ByteWriter& writer, const std::string& name, std::uint32_t materi
     writer.U32(material);
     writer.U32(0);    // layer
     writer.F32(lodIn);
-    writer.F32(1e6f); // lodOut
+    writer.F32(lodOut); // 0 for no limit, as the game's own files have it
     if (!skinned)
     {
         writer.F32(0.0f);
@@ -746,6 +746,7 @@ void ConvertsHierarchyGeometryAndMaterials()
     Require(report.skin == "00_soul_red" && report.skinTextures == 1, "the first skin is the default");
     Require(report.droppedVariants == 3, "BODY_DAMAGE, RIM_BLUR_LF and STEER_LR are dropped");
     Require(report.meshes == 5 && report.transforms == 3, "mesh and transform counts");
+    Require(report.shadowlessMeshes == 0 && report.distanceLimitedMeshes == 0, "every mesh casts and has no LOD distance");
     Require(report.scrubbedMatrices == 1, "the NaN matrix is dropped");
 
     const LoadedModelData model = ModelLoader::LoadModel(report.gltfPath.string());
@@ -997,16 +998,21 @@ std::vector<std::uint8_t> BuildTrackKn5(
     writer.U32(1);
     WriteMaterial(writer, {materialName, "ksPerPixel", false, false, {{"ksSpecular", 0.0f}}, {{"txDiffuse", diffuse}}});
     WriteDummy(writer, meshName + "_ROOT", withCollisionMesh ? 4 : 1, kIdentity);
-    WriteMesh(writer, meshName, 0, 1.0f);
     if (withCollisionMesh)
     {
+        // The road's near LOD, drawn out to 310 m and casting no shadow, as a track's ground does.
+        WriteMesh(writer, meshName, 0, 1.0f, false, 0, true, 0.0f, 310.0f, false);
         // A physics-only surface, as tracks ship them: the game collides with it but never draws it.
         WriteMesh(writer, meshName + "_PHYSICS", 0, 7.0f, false, 0, false);
         // A pit box marker: a dummy with a unit cube of the same name under it, never drawn.
         WriteDummy(writer, "AC_PIT_0", 1, kIdentity);
         WriteMesh(writer, "AC_PIT_0", 0, 8.0f);
-        // The far LOD of the road, drawn only from 300 m out, where the near one stops.
+        // The far LOD of the road, drawn from 300 m out, a little before the near one stops.
         WriteMesh(writer, meshName + "_FAR", 0, 9.0f, false, 0, true, 300.0f);
+    }
+    else
+    {
+        WriteMesh(writer, meshName, 0, 1.0f);
     }
     return writer.Bytes();
 }
@@ -1089,7 +1095,7 @@ void ImportsAWholeTrackLayout()
     const Kn5ModelSummary summary = Kn5Importer::Inspect(layoutPath);
     Require(summary.models == 2 && summary.meshes == 3 && summary.materials == 2, "a layout is surveyed across its models");
     Require(summary.hiddenMeshes == 2, "the collision-only mesh and the marker cube are counted apart from the drawn ones");
-    Require(summary.runtimeVariants == 1, "the far LOD is a dropped variant");
+    Require(summary.runtimeVariants == 0, "a far LOD is not a dropped variant: it is drawn where the game draws it");
     Require(summary.skins.size() == 1 && summary.skins[0].name.empty(), "a track offers only its own textures");
     const Kn5ModelSummary main = Kn5Importer::Inspect(track / "ks_fixture_track.kn5");
     Require(main.models == 1 && main.layouts.size() == 1 && main.layouts[0].models == 2, "a kn5 offers the layouts placing it");
@@ -1100,12 +1106,27 @@ void ImportsAWholeTrackLayout()
     Require(imported == bundle / "ks_fixture_track_east.gltf", "a layout imports as one glTF named after it");
 
     const LoadedModelData model = ModelLoader::LoadModel(imported.string());
-    Require(model.submeshes.size() == 2, "both models of the layout load, without the collision-only mesh");
+    Require(model.submeshes.size() == 3, "both models of the layout load, without the collision-only mesh");
     Require(!HasSubmesh(model, "1ROAD_PHYSICS"), "a mesh the game never renders is not imported");
     Require(!HasSubmesh(model, "AC_PIT_0"), "a track marker's cube is not imported");
-    Require(!HasSubmesh(model, "1ROAD_FAR"), "a far LOD is not imported beside the near one");
     const ModelSubmeshData& road = FindSubmesh(model, "1ROAD");
+    const ModelSubmeshData& roadFar = FindSubmesh(model, "1ROAD_FAR");
     const ModelSubmeshData& tree = FindSubmesh(model, "TREE");
+
+    // How the game draws each mesh (MINIENGINE_mesh_draw): the near LOD casts no shadow and stops at
+    // its lodOut, the far one takes over from its lodIn with no end, and the trees set neither.
+    Require(!road.castShadows, "the road casts no shadow, as its kn5 says");
+    RequireNear(road.drawDistance.min, 0.0f, 0.0f, "the near LOD is drawn from the camera");
+    RequireNear(road.drawDistance.max, 310.0f, 1e-4f, "out to its lodOut");
+    Require(roadFar.castShadows, "the far LOD casts a shadow");
+    RequireNear(roadFar.drawDistance.min, 300.0f, 1e-4f, "the far LOD is drawn from its lodIn");
+    RequireNear(roadFar.drawDistance.max, 0.0f, 0.0f, "with no end");
+    Require(road.drawDistance.Contains(305.0f) && roadFar.drawDistance.Contains(305.0f), "the two overlap where the game's do");
+    Require(!road.drawDistance.Contains(310.0f) && roadFar.drawDistance.Contains(5000.0f), "and the far one alone remains beyond");
+    Require(tree.castShadows && !tree.drawDistance.IsLimited(), "a mesh with no LOD and a shadow carries no draw settings");
+    const Kn5ImportReport single = Kn5Importer::ConvertToGltf(track / "ks_fixture_track.kn5", scope.Path() / "single");
+    Require(single.shadowlessMeshes == 1 && single.distanceLimitedMeshes == 2, "the report counts the road's settings and both LODs");
+    Require(single.meshes == 2 && single.droppedVariants == 0, "the far LOD is imported beside the near one");
     // Each mesh keeps the material of its own kn5, though both files index theirs from 0.
     Require(model.materials[road.materialIndex].name == "asphalt", "the main model's material");
     Require(model.materials[tree.materialIndex].name == "trees", "the second model's material, offset past the first's");

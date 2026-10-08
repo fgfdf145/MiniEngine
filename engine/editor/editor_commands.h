@@ -62,10 +62,10 @@ struct EditorCommandState
     // assists) along its bottom, and the minimap moves to the top right.
     bool drivingHud = true;
     // The scene's map at a corner of the viewport (the bottom left, the top right under the driving HUD).
-    bool minimap = false;
-    // Everything the editor draws over the viewport's picture: the help text, the view manipulator, the
-    // minimap, the driving HUD and the car's physics overlays. Off leaves the picture clean except for
-    // the gizmos and the selection, which View > Gizmos switches, and a recording's indicator.
+    bool minimap = true;
+    // Everything the editor draws over the viewport's picture: the help text, the minimap, the driving
+    // HUD and the car's physics overlays. Off leaves the picture clean except for the gizmos and the
+    // selection, which View > Gizmos switches, and a recording's indicator.
     bool viewportUi = true;
     // The viewport fills the whole screen, borderless, with every panel, menu and toolbar hidden.
     // The editor UI turns the window fullscreen and back.

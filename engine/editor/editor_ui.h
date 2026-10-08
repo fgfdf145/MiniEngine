@@ -178,6 +178,8 @@ struct EditorUiFrameResult
     VehicleHapticsSettings vehicleHaptics;
     VehicleSteeringAssistSettings vehicleSteeringAssist;
     bool vehicleManualGearbox = false;
+    // The Vehicle panel's physics rate as a fixed step (seconds), which a car being driven takes at once.
+    float vehiclePhysicsStepSeconds = PhysicsWorld::kDefaultStepSeconds;
     // The Suspension Rigs window's settings for the live rig, taken while it runs. Unset when the
     // window has never been opened: the rig then keeps what it has.
     std::optional<VehicleRigExcitation> vehicleRigExcitation;
@@ -216,6 +218,11 @@ class EditorUiController
     VehicleCameraSettings& EditVehicleCamera()
     {
         return m_state.vehicle.camera;
+    }
+    // The Vehicle panel's physics rate (steps per second), likewise.
+    int& EditVehiclePhysicsRate()
+    {
+        return m_state.vehicle.physicsRateHz;
     }
     EditorUiFrameResult Draw(
         Camera& camera,

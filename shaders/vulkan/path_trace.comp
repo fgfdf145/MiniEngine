@@ -137,7 +137,7 @@ float DirectionalVisibility(vec3 origin, vec3 toLight)
     float phi = 2.0 * PI * Random();
     vec3 direction = normalize(toLight * cosTheta + (tangent * cos(phi) + bitangent * sin(phi)) * sinTheta);
     RayHit hit;
-    return TraceSceneRayMasked(origin, direction, 0.0, PT_MAX_DISTANCE, true, NextRayId(), RAY_MASK_VISIBILITY, hit) ? 0.0 : 1.0;
+    return TraceSceneRayMasked(origin, direction, 0.0, PT_MAX_DISTANCE, true, NextRayId(), RAY_MASK_SHADOW, hit) ? 0.0 : 1.0;
 }
 
 // One shadow ray toward a point on a local light's source, as the lighting pass traces them
@@ -174,7 +174,7 @@ float LocalVisibility(SceneLightData light, vec3 position, vec3 faceNormal)
         return 1.0;
     }
     RayHit hit;
-    return TraceSceneRayMasked(origin, toTarget / distance, 0.0, reach, true, NextRayId(), RAY_MASK_VISIBILITY, hit) ? 0.0 : 1.0;
+    return TraceSceneRayMasked(origin, toTarget / distance, 0.0, reach, true, NextRayId(), RAY_MASK_SHADOW, hit) ? 0.0 : 1.0;
 }
 
 // Next event estimation at a path's surface: the light every directional light and one resampled

@@ -514,7 +514,7 @@ void TestEditorCommands()
 
     Require(Run(registry, "tool.rotate") && state.transformTool == TransformTool::Rotate, "the rotate tool is a choice of its own");
     Require(Run(registry, "view.gizmos") && !state.gizmos, "gizmos toggle off");
-    Require(!state.minimap && Run(registry, "view.minimap") && state.minimap, "the minimap starts off and toggles on");
+    Require(state.minimap && Run(registry, "view.minimap") && !state.minimap, "the minimap starts on and toggles off");
     Require(state.viewportUi && Run(registry, "view.viewport_ui") && !state.viewportUi, "the viewport UI starts on and toggles off");
 
     // Play controls.
