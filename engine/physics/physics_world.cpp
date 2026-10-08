@@ -12,6 +12,7 @@
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Geometry/AABox.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
@@ -24,6 +25,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/AABBTree/TriangleCodec/TriangleCodecIndexed8BitPackSOA4Flags.h> // after MeshShape.h: it needs its types
 #include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
@@ -72,6 +74,61 @@ constexpr JPH::uint kCount = 2;
 // hits it, but a wheel's cylinder cast would take its face for ground and climb it.
 constexpr float kMinWheelSurfaceNormalY = 0.34f;
 constexpr uint64_t kWheelsIgnoreBody = 1; // JPH::Body::GetUserData of a wall
+
+// A mesh shape stores its vertices in 21 bits an axis across the mesh's bounds (a millimetre on a 2 km
+// map) and leaves out the triangles whose corners then meet, but not those whose corners then lie in a
+// line, or nearly. Such a triangle has no normal: the physics engine's sum for it comes out zero and
+// normalizes to NaN, a floating-point exception in its contact code on its own threads (BeamNG's logs
+// at 30 km/h) and a contact normal of NaN in the engine's. Imported meshes have them where they fill a seam. They are
+// quantized here as the physics engine does it and dropped; the bounds of what is left are taken again.
+void DropTrianglesFlatOnceStored(const JPH::VertexList& vertices, JPH::IndexedTriangleList& triangles)
+{
+    using Codec = JPH::TriangleCodecIndexed8BitPackSOA4Flags;
+    constexpr double kMinStoredHeight = 2.0; // quantization steps
+    for (int pass = 0; pass < 4 && !triangles.empty(); ++pass)
+    {
+        JPH::AABox bounds;
+        for (const JPH::IndexedTriangle& triangle : triangles)
+        {
+            for (const JPH::uint32 index : triangle.mIdx)
+            {
+                bounds.Encapsulate(JPH::Vec3(vertices[index]));
+            }
+        }
+        const JPH::Vec3 scale = JPH::Vec3::sReplicate(static_cast<float>(Codec::COMPONENT_MASK)) / JPH::Vec3::sMax(bounds.GetSize(), JPH::Vec3::sReplicate(1.0e-20f));
+        const auto quantize = [&](JPH::uint32 index)
+        {
+            const JPH::UVec4 q = ((JPH::Vec3(vertices[index]) - bounds.mMin) * scale + JPH::Vec3::sReplicate(0.5f)).ToInt();
+            return std::array<int64_t, 3>{q.GetX(), q.GetY(), q.GetZ()};
+        };
+        const size_t before = triangles.size();
+        const auto flat = std::remove_if(
+            triangles.begin(),
+            triangles.end(),
+            [&](const JPH::IndexedTriangle& triangle)
+            {
+                const std::array<int64_t, 3> a = quantize(triangle.mIdx[0]);
+                const std::array<int64_t, 3> b = quantize(triangle.mIdx[1]);
+                const std::array<int64_t, 3> c = quantize(triangle.mIdx[2]);
+                const std::array<int64_t, 3> u = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+                const std::array<int64_t, 3> v = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+                const std::array<int64_t, 3> w = {c[0] - b[0], c[1] - b[1], c[2] - b[2]};
+                const auto lengthSq = [](const std::array<int64_t, 3>& e) { return double(e[0]) * double(e[0]) + double(e[1]) * double(e[1]) + double(e[2]) * double(e[2]); };
+                const double x = double(u[1]) * double(v[2]) - double(u[2]) * double(v[1]);
+                const double y = double(u[2]) * double(v[0]) - double(u[0]) * double(v[2]);
+                const double z = double(u[0]) * double(v[1]) - double(u[1]) * double(v[0]);
+                // |u x v| is the longest edge times the height: under kMinStoredHeight steps it is a sliver
+                // whose normal the decoded floats may not keep either.
+                const double longestSq = std::max({lengthSq(u), lengthSq(v), lengthSq(w)});
+                return x * x + y * y + z * z < kMinStoredHeight * kMinStoredHeight * longestSq;
+            });
+        triangles.erase(flat, triangles.end());
+        if (triangles.size() == before)
+        {
+            break;
+        }
+    }
+}
 
 // What a vehicle's wheels collide with: everything but the vehicle itself and the walls.
 class WheelBodyFilter final : public JPH::BodyFilter
@@ -167,10 +224,30 @@ class VehicleCollisionTesterDisc final : public JPH::VehicleCollisionTesterCastC
         {
             return false;
         }
-        // The disc against the plane the cylinder found.
-        if (!TouchPlane(constraint, wheelIndex, origin, direction, outContactPosition, outContactNormal, outSuspensionLength))
+        // The disc against the plane the cylinder found. The disc is the cylinder's middle, so it can
+        // never meet the ground before the cylinder does: a shorter length means the plane is not the
+        // ground's. At the crest of a bump the cast touches the edge but may report the steep side's
+        // normal (BeamNG's 4 cm impact bumps, 55 degrees), and that side's plane, carried on past the
+        // edge, stood 39 cm up in front of the wheel: the length went to nothing and the physics
+        // engine's rigid stop threw the R34 up at 5 m/s from 18 km/h. Then the cylinder's own contact
+        // stays, pushed along the wheel's own normal there: from the edge toward the axle.
+        const JPH::RVec3 castPosition = outContactPosition;
+        const JPH::Vec3 castNormal = outContactNormal;
+        const float castLength = outSuspensionLength;
+        const bool onPlane = TouchPlane(constraint, wheelIndex, origin, direction, outContactPosition, outContactNormal, outSuspensionLength);
+        if (onPlane ? outSuspensionLength < castLength - kDiscLengthTolerance : castNormal.Dot(direction) > -1.0e-6f)
+        {
+            outContactPosition = castPosition;
+            outSuspensionLength = castLength;
+            outContactNormal = WheelNormalAt(constraint, wheelIndex, direction, origin + direction * castLength, castPosition, castNormal);
+        }
+        else if (!onPlane)
         {
             return false;
+        }
+        else
+        {
+            outSuspensionLength = std::max(outSuspensionLength, castLength);
         }
         // Past what the wheel can give (a kerb taller than the travel and the tyre take) its stop, rigid
         // or the rim's stiff spring, pushes along the contact's normal. On a kerb's edge that normal
@@ -183,8 +260,10 @@ class VehicleCollisionTesterDisc final : public JPH::VehicleCollisionTesterCastC
                                      : constraint.GetWheel(wheelIndex)->GetSettings()->mSuspensionMinLength;
         if (outSuspensionLength < faceLength && outBody != nullptr)
         {
+            // Only a face standing straighter than the contact's normal: the kerb's top, not the side
+            // of a bump the cast came down on.
             const JPH::Vec3 face = outBody->GetWorldSpaceSurfaceNormal(outSubShape, outContactPosition);
-            if (face.Dot(direction) < 0.0f)
+            if (face.Dot(direction) < std::min(outContactNormal.Dot(direction), 0.0f))
             {
                 outContactNormal = face;
             }
@@ -203,7 +282,25 @@ class VehicleCollisionTesterDisc final : public JPH::VehicleCollisionTesterCastC
     }
 
   private:
+    // How much shorter than the cylinder's the disc's length may come out from rounding alone (m).
+    static constexpr float kDiscLengthTolerance = 1.0e-4f;
+
     std::array<float, kVehicleWheelCount> m_faceLengths{};
+
+    // The wheel's own surface normal where it meets `contact` with its centre at `center`: from the
+    // contact toward the axle, square to it (a round wheel on an edge pushes along its radius).
+    // `fallback` when the contact lies on the axle's line or the normal would not face the mount (up
+    // `direction`, the suspension's).
+    static JPH::Vec3 WheelNormalAt(const JPH::VehicleConstraint& constraint, JPH::uint wheelIndex, JPH::Vec3Arg direction, JPH::RVec3Arg center, JPH::RVec3Arg contact,
+                                   JPH::Vec3Arg fallback)
+    {
+        const JPH::RMat44 wheel = constraint.GetWheelWorldTransform(wheelIndex, JPH::Vec3::sAxisY(), JPH::Vec3::sAxisX());
+        const JPH::Vec3 axle = wheel.GetAxisY().Normalized();
+        const JPH::Vec3 toCenter(center - contact);
+        const JPH::Vec3 radial = toCenter - axle * toCenter.Dot(axle);
+        const float length = radial.Length();
+        return length > 1.0e-4f && radial.Dot(direction) < -0.1f * length ? radial / length : fallback;
+    }
 
     // Moves the wheel along its suspension until the disc's lowest point toward the plane (through
     // `contact`, facing `normal`) lies on it; false when that is past full droop or the plane faces away.
@@ -2741,6 +2838,7 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
     const float bodyFriction = std::max(friction, 0.0f);
     const auto addBody = [&](JPH::IndexedTriangleList list, uint64_t userData) -> size_t
     {
+        DropTrianglesFlatOnceStored(joltVertices, list);
         if (list.empty())
         {
             return 0;

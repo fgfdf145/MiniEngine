@@ -1711,6 +1711,67 @@ void TestWheelMountsATallKerbWithoutLeaping()
     Require(crossing.endKmh > 45.0f, "the car drives on over the kerb");
 }
 
+// BeamNG's impact bumps (Grid Map v2, the game's own triangles): blocks 2.1 m across, 4 cm high, their
+// sides rising over 2.8 cm (55 degrees) to an 11 cm top, laid on the road without sharing its vertices,
+// one under each side of the car in turn (the left 2.93 m after the right, every 4 m). At a crest the
+// wheel's cylinder cast touched the top edge but reported the steep side's normal; the disc placed against
+// that side's plane, carried on past the edge, met it 39 cm up, the suspension length went to nothing and
+// the physics engine's rigid stop threw the car up (the R34 at 5 m/s from 18 km/h, rolled at 90).
+void TestWheelsRideOverSharpImpactBumps()
+{
+    std::vector<glm::vec3> vertices;
+    std::vector<uint32_t> indices;
+    for (float z = 0.0f; z < 30.0f; z += 4.0f)
+    {
+        for (const auto& [x0, z0] : {std::pair{-0.2f, z}, {-1.9f, z + 2.93f}})
+        {
+            const float x1 = x0 + 2.1f;
+            const uint32_t first = static_cast<uint32_t>(vertices.size());
+            vertices.insert(vertices.end(), {
+                                                {x0, 0.0f, z0}, {x1, 0.0f, z0}, {x1, 0.0f, z0 + 0.1663f}, {x0, 0.0f, z0 + 0.1663f},
+                                                {x0 + 0.02f, 0.04f, z0 + 0.0282f}, {x1 - 0.02f, 0.04f, z0 + 0.0282f}, {x1 - 0.02f, 0.04f, z0 + 0.1382f},
+                                                {x0 + 0.02f, 0.04f, z0 + 0.1382f},
+                                            });
+            for (const uint32_t index : {0u, 1u, 5u, 0u, 5u, 4u, 4u, 5u, 6u, 4u, 6u, 7u, 7u, 6u, 2u, 7u, 2u, 3u, 0u, 4u, 7u, 0u, 7u, 3u, 1u, 2u, 6u, 1u, 6u, 5u})
+            {
+                indices.push_back(first + index);
+            }
+        }
+    }
+    PhysicsWorld world;
+    AddUpwardMesh(world, {{-50.0f, 0.0f, -300.0f}, {50.0f, 0.0f, -300.0f}, {50.0f, 0.0f, 100.0f}, {-50.0f, 0.0f, 100.0f}}, {0, 1, 2, 0, 2, 3});
+    AddUpwardMesh(world, vertices, indices);
+    const VehicleId car = world.AddVehicle(GtrSettings(), {glm::vec3(0.0f, 0.0f, -20.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    for (const float kmh : {15.0f, 30.0f, 60.0f})
+    {
+        world.ResetVehicle(car, {glm::vec3(0.0f, 0.0f, -40.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 1.0f);
+        constexpr float kFrame = 1.0f / 60.0f;
+        VehicleControls controls;
+        float fastestRise = 0.0f;
+        float slowestKmh = 1000.0f;
+        double lastY = world.GetVehiclePose(car).position.y;
+        for (float time = 0.0f; time < 30.0f && world.GetVehiclePose(car).position.z < 32.0f; time += kFrame)
+        {
+            const float speed = world.GetVehicleTelemetry(car).forwardSpeed * 3.6f;
+            controls.throttle = std::clamp((kmh - speed) * 0.2f, -1.0f, 1.0f);
+            world.SetVehicleControls(car, controls);
+            world.Update(kFrame);
+            const PhysicsPose pose = world.GetVehiclePose(car);
+            if (pose.position.z > -1.0f)
+            {
+                fastestRise = std::max(fastestRise, static_cast<float>(pose.position.y - lastY) / kFrame);
+                slowestKmh = std::min(slowestKmh, world.GetVehicleTelemetry(car).forwardSpeed * 3.6f);
+            }
+            lastY = pose.position.y;
+        }
+        std::cout << "GT-R over 4 cm impact bumps at " << kmh << " km/h: body rose at up to " << fastestRise << " m/s, slowest " << slowestKmh
+                  << " km/h, reached z " << world.GetVehiclePose(car).position.z << "\n";
+        Require(world.GetVehiclePose(car).position.z > 32.0f, "the car drives over the bumps");
+        Require(fastestRise < 0.5f, "the bumps do not throw the car");
+    }
+}
+
 // Ground as generated heightfields and imported tracks often come: every 0.5 m cell a quad with its own
 // four vertices, none shared with its neighbours: flat up to z = -40, then gentle waves (2 cm, 7.5 m long).
 void AddGroundOfSeparateCells(PhysicsWorld& world)
@@ -3124,6 +3185,7 @@ int main()
         TestUnsprungCarTakesABump();
         TestSplitterRidesOverARoadSpike();
         TestWheelMountsATallKerbWithoutLeaping();
+        TestWheelsRideOverSharpImpactBumps();
         TestSplitterGlidesOverTheSeamsOfSeparateCells();
         TestCarDataPlacesTheCentreOfMass();
         TestRodLengthRestsWhereTheModelDrawsTheWheels();
