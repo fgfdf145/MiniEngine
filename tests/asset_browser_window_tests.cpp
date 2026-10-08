@@ -1,7 +1,8 @@
 // The Assets window at three widths, drawn without a GPU: the toolbar and the breadcrumb wrap
 // instead of running past the right edge, the tiles fill each row, and the preview panel wraps
 // a long path. With MINIENGINE_UI_SNAPSHOT_DIR set the picture is written there as a PNG.
-// Then tiles dragged onto folders, "..", and a clashing name, with the mouse driven frame by frame.
+// Then tiles dragged onto folders, "..", and a clashing name, folders that spring open under a
+// resting drag, and the folder tree, with the mouse driven frame by frame.
 
 #include <engine/asset/asset_manager.h>
 #include <engine/asset/asset_registry.h>
@@ -18,6 +19,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -220,43 +222,97 @@ ImVec2 TileCentre(int index)
                   list->ContentRegionRect.Min.y + static_cast<float>(row) * (100.0f + style.ItemSpacing.y) + 50.0f);
 }
 
-// Presses on tile `from`, drags it over tile `to` and lets go there; returns what the browser
-// reported over the whole drag.
-std::vector<AssetManagerResult::RenamedAsset> DragTile(AssetManager& manager, int from, int to,
-                                                       const char* hoverSnapshot = nullptr)
+// The middle of row `row` in the "Drag" window's folder tree.
+ImVec2 TreeRow(int row)
+{
+    ImGuiWindow* tree = FindChild("Drag", "##asset_tree");
+    Require(tree != nullptr, "the drag window shows the folder tree");
+    // Near the row's right end: nested rows have their expand arrow further left.
+    return ImVec2(tree->ContentRegionRect.Max.x - 20.0f,
+                  tree->ContentRegionRect.Min.y + static_cast<float>(row) * ImGui::GetTextLineHeightWithSpacing() +
+                      ImGui::GetTextLineHeight() * 0.5f);
+}
+
+// Empty space at the bottom of the tile list.
+ImVec2 EmptyListSpot()
+{
+    ImGuiWindow* list = FindChild("Drag", "##asset_list");
+    Require(list != nullptr, "the drag window has a tile list");
+    return ImVec2(list->ContentRegionRect.GetCenter().x, list->ContentRegionRect.Max.y - 10.0f);
+}
+
+// Where a drag goes next, looked up once the mouse heads there (the layout can change on the
+// way), and how many frames it rests there.
+struct Waypoint
+{
+    std::function<ImVec2()> where;
+    int restFrames = 1;
+    const char* snapshot = nullptr; // taken at the end of the rest
+};
+
+// Presses at `from`, drags through the waypoints and lets go at the last; returns what the
+// browser reported over the whole drag.
+std::vector<AssetManagerResult::RenamedAsset> Drag(AssetManager& manager, const std::function<ImVec2()>& from,
+                                                   const std::vector<Waypoint>& waypoints)
 {
     const ImVec2 away(-100.0f, -100.0f);
     for (int frame = 0; frame < 3; ++frame)
     {
         DrawBrowserFrame(manager, away, false);
     }
-    const ImVec2 start = TileCentre(from);
-    const ImVec2 end = TileCentre(to);
     std::vector<AssetManagerResult::RenamedAsset> renamed;
     const auto collect = [&](const AssetManagerResult& result)
     {
         renamed.insert(renamed.end(), result.renamedAssets.begin(), result.renamedAssets.end());
     };
-    collect(DrawBrowserFrame(manager, start, false));
-    collect(DrawBrowserFrame(manager, start, true));
-    constexpr int kSteps = 6;
-    for (int step = 1; step <= kSteps; ++step)
+    ImVec2 mouse = from();
+    collect(DrawBrowserFrame(manager, mouse, false));
+    collect(DrawBrowserFrame(manager, mouse, true));
+    for (const Waypoint& waypoint : waypoints)
     {
-        const float t = static_cast<float>(step) / static_cast<float>(kSteps);
-        collect(DrawBrowserFrame(manager, ImVec2(start.x + (end.x - start.x) * t, start.y + (end.y - start.y) * t), true));
+        const ImVec2 start = mouse;
+        const ImVec2 end = waypoint.where();
+        constexpr int kSteps = 6;
+        for (int step = 1; step <= kSteps; ++step)
+        {
+            const float t = static_cast<float>(step) / static_cast<float>(kSteps);
+            mouse = ImVec2(start.x + (end.x - start.x) * t, start.y + (end.y - start.y) * t);
+            collect(DrawBrowserFrame(manager, mouse, true));
+        }
+        for (int frame = 0; frame < waypoint.restFrames; ++frame)
+        {
+            collect(DrawBrowserFrame(manager, mouse, true));
+        }
+        if (waypoint.snapshot != nullptr)
+        {
+            SnapshotIfAsked(waypoint.snapshot);
+        }
     }
-    collect(DrawBrowserFrame(manager, end, true));
-    if (hoverSnapshot != nullptr)
-    {
-        SnapshotIfAsked(hoverSnapshot);
-    }
-    collect(DrawBrowserFrame(manager, end, false));
+    collect(DrawBrowserFrame(manager, mouse, false));
     for (int frame = 0; frame < 2; ++frame)
     {
         collect(DrawBrowserFrame(manager, away, false));
     }
     return renamed;
 }
+
+// Drags tile `from` onto tile `to`, resting there only briefly: no folder springs open.
+std::vector<AssetManagerResult::RenamedAsset> DragTile(AssetManager& manager, int from, int to,
+                                                       const char* hoverSnapshot = nullptr)
+{
+    return Drag(manager, [from] { return TileCentre(from); }, {Waypoint{[to] { return TileCentre(to); }, 1, hoverSnapshot}});
+}
+
+void Click(AssetManager& manager, ImVec2 where)
+{
+    DrawBrowserFrame(manager, where, false);
+    DrawBrowserFrame(manager, where, true);
+    DrawBrowserFrame(manager, where, false);
+    DrawBrowserFrame(manager, ImVec2(-100.0f, -100.0f), false);
+}
+
+// A drag at rest opens a folder after 0.7 s; frames here are 1/60 s.
+constexpr int kSpringFrames = 50;
 
 void TestDraggingMovesFolders()
 {
@@ -312,9 +368,81 @@ void TestDraggingMovesFolders()
     renamed = DragTile(manager, 4, 1);
     SnapshotIfAsked("asset_browser_move_confirm.png");
     Require(renamed.empty() && std::filesystem::exists(root / "scene.gltf"), "the move waits for the confirmation");
-    Require(ImGui::FindWindowByName("Move Referenced Assets?") != nullptr &&
-                ImGui::FindWindowByName("Move Referenced Assets?")->Active,
-            "the confirmation is open");
+    ImGuiWindow* modal = ImGui::FindWindowByName("Move Referenced Assets?");
+    Require(modal != nullptr && modal->Active, "the confirmation is open");
+
+    // "Move Anyway", the first button on the modal's last row, goes ahead.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    Click(manager, ImVec2(modal->Pos.x + style.WindowPadding.x + 20.0f,
+                          modal->Pos.y + modal->Size.y - style.WindowPadding.y - ImGui::GetFrameHeight() * 0.5f));
+    Require(std::filesystem::exists(root / "bravo" / "scene.gltf") && !std::filesystem::exists(root / "scene.gltf"),
+            "confirming moved the .gltf");
+    Require(!modal->Active, "the confirmation closed");
+
+    std::filesystem::remove_all(root.parent_path());
+}
+
+bool SameFolder(const std::filesystem::path& a, const std::filesystem::path& b)
+{
+    std::error_code ec;
+    return std::filesystem::equivalent(a, b, ec);
+}
+
+void TestSpringLoadingAndTheFolderTree()
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "miniengine_asset_browser_tree_test" / "assets";
+    std::filesystem::remove_all(root.parent_path());
+    Touch(root / "alpha" / "a.png");
+    std::filesystem::create_directories(root / "bravo" / "deep");
+    std::filesystem::create_directories(root / "charlie");
+    AssetRegistry::Initialize(root);
+
+    AssetManager manager(root);
+    DrawBrowserFrame(manager, ImVec2(-100.0f, -100.0f), false);
+
+    // Resting on bravo opens it; the drag carries on (its preview too, though alpha's tile is
+    // gone) and drops into bravo through the list's empty space.
+    std::vector<AssetManagerResult::RenamedAsset> renamed = Drag(
+        manager, []
+        { return TileCentre(0); },
+        {Waypoint{[]
+                  { return TileCentre(1); },
+                  kSpringFrames},
+         Waypoint{EmptyListSpot, 2, "asset_browser_spring.png"}});
+    Require(SameFolder(manager.GetCurrentDirectory(), root / "bravo"), "resting on bravo opened it");
+    Require(renamed.size() == 1 && std::filesystem::exists(root / "bravo" / "alpha" / "a.png"),
+            "the drag dropped into the folder it sprang into");
+
+    // Tree rows: assets, bravo, charlie. Clicking a row shows that folder.
+    Click(manager, TreeRow(2));
+    Require(SameFolder(manager.GetCurrentDirectory(), root / "charlie"), "clicking charlie in the tree shows it");
+
+    // Dragging charlie in the tree and resting on bravo expands bravo (rows: assets, bravo,
+    // alpha, deep, charlie); dropping on deep moves charlie there, and the list follows it.
+    renamed = Drag(
+        manager, []
+        { return TreeRow(2); },
+        {Waypoint{[]
+                  { return TreeRow(1); },
+                  kSpringFrames},
+         Waypoint{[]
+                  { return TreeRow(3); },
+                  2}});
+    Require(renamed.size() == 1 && std::filesystem::exists(root / "bravo" / "deep" / "charlie"),
+            "charlie moved onto the folder bravo expanded to show");
+    Require(SameFolder(manager.GetCurrentDirectory(), root / "bravo" / "deep" / "charlie"),
+            "the list kept showing charlie where it went");
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        DrawBrowserFrame(manager, ImVec2(-100.0f, -100.0f), false);
+    }
+    SnapshotIfAsked("asset_browser_tree.png");
+    // Revealed in the tree: assets, bravo, alpha, deep, charlie. Its row is the one selected.
+    Click(manager, TreeRow(3));
+    Require(SameFolder(manager.GetCurrentDirectory(), root / "bravo" / "deep"), "deep is the tree's fourth row");
+    Click(manager, TreeRow(4));
+    Require(SameFolder(manager.GetCurrentDirectory(), root / "bravo" / "deep" / "charlie"),
+            "the tree opened deep to show where charlie went");
 
     std::filesystem::remove_all(root.parent_path());
 }
@@ -340,6 +468,7 @@ int main()
     {
         TestTheWindowFollowsItsWidth();
         TestDraggingMovesFolders();
+        TestSpringLoadingAndTheFolderTree();
         std::cout << "asset browser window tests passed\n";
     }
     catch (const std::exception& error)

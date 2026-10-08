@@ -16,11 +16,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string_view>
 #include <system_error>
 #include <unordered_set>
@@ -190,6 +192,26 @@ float TileHeight()
     return 100.0f * UiScale(); // icon area + ~2 lines of label
 }
 
+float MinTreeWidth()
+{
+    return 120.0f * UiScale();
+}
+
+float DefaultTreeWidth()
+{
+    return 180.0f * UiScale();
+}
+
+// The widest the folder tree may get in a browser `width` wide: the tiles keep room for three
+// columns. Under MinTreeWidth() there is no room for the tree at all.
+float MaxTreeWidth(float width)
+{
+    return width - 3.0f * MinTileWidth() - ImGui::GetStyle().ItemSpacing.x;
+}
+
+// How long a drag rests on a folder before it opens (Unreal and Explorer wait about as long).
+constexpr double kSpringLoadSeconds = 0.7;
+
 // Whether an item `width` wide still fits on the current line after the last item.
 bool FitsOnLine(float width, float rightEdge)
 {
@@ -222,6 +244,7 @@ AssetManager::AssetManager(std::filesystem::path assetsRoot)
 void AssetManager::Refresh()
 {
     m_needsScan = true;
+    m_treeChildren.clear();
 }
 
 void AssetManager::NavigateTo(const std::filesystem::path& dir)
@@ -231,6 +254,7 @@ void AssetManager::NavigateTo(const std::filesystem::path& dir)
     m_anchorIdx = -1;
     m_renamingIndex = -1;
     m_needsScan = true;
+    m_treeRevealPending = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,10 +292,35 @@ AssetManagerResult AssetManager::Draw()
         ImGui::PopTextWrapPos();
     }
     ImGui::Separator();
-    DrawBreadcrumb();
-    ImGui::Separator();
-    DrawEntryList(result);
-    DrawPreviewPanel(result);
+
+    m_springHovered = false;
+    // The folder tree on the left, as long as the tiles keep room for three columns next to it.
+    const float maxTreeWidth = MaxTreeWidth(ImGui::GetContentRegionAvail().x);
+    if (m_showTree && maxTreeWidth >= MinTreeWidth())
+    {
+        ImGui::SetNextWindowSizeConstraints(ImVec2(MinTreeWidth(), 0.0f), ImVec2(maxTreeWidth, FLT_MAX));
+        // ResizeX: the user drags its right edge; ImGui keeps the width in imgui.ini.
+        if (ImGui::BeginChild("##asset_tree", ImVec2(DefaultTreeWidth(), 0.0f), ImGuiChildFlags_ResizeX))
+        {
+            DrawFolderTree();
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+    }
+    if (ImGui::BeginChild("##asset_main", ImVec2(0.0f, 0.0f)))
+    {
+        DrawBreadcrumb();
+        ImGui::Separator();
+        DrawEntryList(result);
+        DrawPreviewPanel(result);
+    }
+    ImGui::EndChild();
+    if (!m_springHovered)
+    {
+        m_springPath.clear();
+    }
+    KeepDragAlive();
+
     DrawDeleteConfirmModal(result);
     DrawRenameConfirmModal();
     DrawMoveConfirmModal();
@@ -300,6 +349,8 @@ void AssetManager::ScanCurrentDir()
         {
             // The folder went away (deleted or renamed outside the editor): show the root instead.
             m_currentDir = m_root;
+            m_treeRevealPending = true;
+            m_treeChildren.clear();
             ScanCurrentDir();
         }
         else
@@ -536,7 +587,8 @@ unsigned int AssetManager::TypeColorU32(AssetType t)
 
 void AssetManager::DrawToolbar(AssetManagerResult& result)
 {
-    const float rightEdge = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float rightEdge = ImGui::GetCursorScreenPos().x + width;
     if (WrappingButton(ICON_PH_FILE_ARROW_DOWN " Import Model", rightEdge, true))
     {
         result.wantsImportModel = true;
@@ -546,7 +598,7 @@ void AssetManager::DrawToolbar(AssetManagerResult& result)
     {
         // Also pick up files changed outside the editor (new/copied/moved assets).
         AssetRegistry::RescanAssetTree();
-        m_needsScan = true;
+        Refresh();
     }
 
     if (WrappingButton(ICON_PH_FOLDER_PLUS " New Folder", rightEdge, false))
@@ -558,6 +610,25 @@ void AssetManager::DrawToolbar(AssetManagerResult& result)
     if (WrappingButton(ICON_PH_HOUSE " Assets Root", rightEdge, false))
     {
         NavigateTo(m_root);
+    }
+
+    // The folder tree's switch, offered only while the window has room for the tree.
+    if (MaxTreeWidth(width) >= MinTreeWidth())
+    {
+        if (m_showTree)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        }
+        const bool toggleTree = WrappingButton(ICON_PH_SIDEBAR_SIMPLE " Folders", rightEdge, false);
+        if (m_showTree)
+        {
+            ImGui::PopStyleColor();
+        }
+        if (toggleTree)
+        {
+            m_showTree = !m_showTree;
+            m_treeRevealPending = true;
+        }
     }
 }
 
@@ -612,7 +683,10 @@ void AssetManager::DrawBreadcrumb()
                 NavigateTo(segments[i]);
             }
             ImGui::PopStyleColor();
-            DrawMoveDropTarget(segments[i]);
+            if (DrawMoveDropTarget(segments[i], true))
+            {
+                NavigateTo(segments[i]);
+            }
         }
     }
 }
@@ -683,6 +757,9 @@ void AssetManager::DrawEntryList(AssetManagerResult& result)
         }
     }
     ImGui::EndChild();
+    // The list's empty space (and its file tiles) stand for the folder it shows, so a drag
+    // that sprang into a folder can be dropped there. Folder tiles, being smaller, win.
+    DrawMoveDropTarget(m_currentDir, false);
 }
 
 void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResult& result)
@@ -769,9 +846,10 @@ void AssetManager::DrawEntryTile(const Entry& entry, int index, AssetManagerResu
             }
 
             DrawEntryDragSource(entry, index, result);
-            if (entry.isDir)
+            // Resting the drag on a folder opens it; the list rescans next frame.
+            if (entry.isDir && DrawMoveDropTarget(entry.path, true))
             {
-                DrawMoveDropTarget(entry.path);
+                NavigateTo(entry.path);
             }
 
             // Right-click context menu
@@ -1137,6 +1215,107 @@ void AssetManager::DrawEntryContextMenu(const Entry& entry, int index, AssetMana
 }
 
 // ---------------------------------------------------------------------------
+// Folder tree
+
+void AssetManager::DrawFolderTree()
+{
+    // Taken for this draw: a drop or click in the tree asks again for the next one.
+    m_treeRevealing = m_treeRevealPending;
+    m_treeRevealPending = false;
+    DrawFolderTreeNode(m_root, "assets", true);
+}
+
+const std::vector<std::filesystem::path>& AssetManager::TreeChildren(const std::filesystem::path& dir)
+{
+    const auto [it, inserted] = m_treeChildren.try_emplace(dir.lexically_normal().string());
+    if (inserted)
+    {
+        std::error_code ec;
+        for (std::filesystem::directory_iterator entry(dir, ec), end; !ec && entry != end; entry.increment(ec))
+        {
+            std::error_code typeEc;
+            if (entry->is_directory(typeEc))
+            {
+                it->second.push_back(entry->path());
+            }
+        }
+        std::sort(it->second.begin(), it->second.end(), [](const std::filesystem::path& a, const std::filesystem::path& b)
+                  {
+                      return a.filename().string() < b.filename().string();
+                  });
+    }
+    return it->second;
+}
+
+void AssetManager::DrawFolderTreeNode(const std::filesystem::path& dir, const std::string& name, bool isRoot)
+{
+    // A copy: a drop further down this frame can rebuild the listings.
+    const std::vector<std::filesystem::path> children = TreeChildren(dir);
+    const bool isCurrent = IsSamePath(dir, m_currentDir);
+    const std::string key = dir.lexically_normal().string();
+
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
+                               ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen |
+                               ImGuiTreeNodeFlags_NavLeftJumpsToParent;
+    if (children.empty())
+    {
+        flags |= ImGuiTreeNodeFlags_Leaf;
+    }
+    if (isCurrent)
+    {
+        flags |= ImGuiTreeNodeFlags_Selected;
+    }
+    if (isRoot)
+    {
+        ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+    }
+    // Opened to reveal the folder the list shows, or by a drag resting on it.
+    const bool reveal = m_treeRevealing && !isCurrent && AssetPaths::IsSameOrInside(m_currentDir, dir);
+    if (m_treeOpenRequests.erase(key) > 0 || reveal)
+    {
+        ImGui::SetNextItemOpen(true);
+    }
+    // The label is drawn after the node so its icon can take the folder colour.
+    const bool open = ImGui::TreeNodeEx(name.c_str(), flags, "%s", "");
+    if (isCurrent && m_treeRevealing && !ImGui::IsItemVisible())
+    {
+        ImGui::SetScrollHereY(0.5f);
+    }
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen() && !isCurrent)
+    {
+        NavigateTo(dir);
+    }
+    if (!isRoot && ImGui::BeginDragDropSource())
+    {
+        m_draggedPaths.assign(1, dir.string());
+        SubmitDragPayload(dir, AssetType::Dir);
+        ImGui::EndDragDropSource();
+    }
+    // Resting a drag on a folder with subfolders expands it.
+    if (DrawMoveDropTarget(dir, !children.empty()))
+    {
+        m_treeOpenRequests.insert(key);
+    }
+
+    ImGui::SameLine();
+    PushTypeColor(AssetType::Dir);
+    ImGui::TextUnformatted(open && !children.empty() ? ICON_PH_FOLDER_OPEN : ICON_PH_FOLDER);
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    ImGui::TextUnformatted(name.c_str());
+
+    if (open)
+    {
+        ImGui::TreePush(name.c_str());
+        for (const std::filesystem::path& child : children)
+        {
+            DrawFolderTreeNode(child, child.filename().string(), false);
+        }
+        ImGui::TreePop();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Drag to move
 
 void AssetManager::DrawEntryDragSource(const Entry& entry, int index, AssetManagerResult& result)
@@ -1165,63 +1344,132 @@ void AssetManager::DrawEntryDragSource(const Entry& entry, int index, AssetManag
         m_draggedPaths.push_back(entry.path.string());
     }
 
-    const std::string pathStr = entry.path.string();
+    SubmitDragPayload(entry.path, entry.type);
     if (entry.type == AssetType::Model)
     {
-        ImGui::SetDragDropPayload(kModelPayload, pathStr.c_str(), pathStr.size() + 1);
-        result.draggedModelPath = pathStr;
-    }
-    else
-    {
-        ImGui::SetDragDropPayload(kEntryPayload, pathStr.c_str(), pathStr.size() + 1);
-    }
-    PushTypeColor(entry.type);
-    ImGui::TextUnformatted(TypeIcon(entry.type));
-    ImGui::PopStyleColor();
-    ImGui::SameLine();
-    if (m_draggedPaths.size() > 1)
-    {
-        ImGui::Text("%s and %zu more", entry.name.c_str(), m_draggedPaths.size() - 1);
-    }
-    else
-    {
-        ImGui::TextUnformatted(entry.name.c_str());
+        result.draggedModelPath = entry.path.string();
     }
     ImGui::EndDragDropSource();
 }
 
-void AssetManager::DrawMoveDropTarget(const std::filesystem::path& destination)
+void AssetManager::SubmitDragPayload(const std::filesystem::path& primary, AssetType type)
 {
-    // Only a drag that started in this browser: its payload names one of the dragged paths.
-    const ImGuiPayload* drag = ImGui::GetDragDropPayload();
-    if (drag == nullptr || !(drag->IsDataType(kModelPayload) || drag->IsDataType(kEntryPayload)) ||
-        std::find(m_draggedPaths.begin(), m_draggedPaths.end(), PayloadString(*drag)) == m_draggedPaths.end())
+    m_dragPrimaryPath = primary;
+    m_dragPrimaryType = type;
+    m_dragSubmittedFrame = ImGui::GetFrameCount();
+
+    const std::string pathStr = primary.string();
+    ImGui::SetDragDropPayload(type == AssetType::Model ? kModelPayload : kEntryPayload, pathStr.c_str(), pathStr.size() + 1);
+
+    PushTypeColor(type);
+    ImGui::TextUnformatted(TypeIcon(type));
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    const std::string name = primary.filename().string();
+    if (m_draggedPaths.size() > 1)
+    {
+        ImGui::Text("%s and %zu more", name.c_str(), m_draggedPaths.size() - 1);
+    }
+    else
+    {
+        ImGui::TextUnformatted(name.c_str());
+    }
+}
+
+void AssetManager::KeepDragAlive()
+{
+    // ImGui keeps an orphaned payload while the button is held but previews it as "...".
+    if (m_dragSubmittedFrame == ImGui::GetFrameCount() || !ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
+        !IsOwnDrag(ImGui::GetDragDropPayload()))
     {
         return;
     }
-    // A folder never goes into itself or below itself: such a folder is no target at all.
+    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceExtern))
+    {
+        SubmitDragPayload(m_dragPrimaryPath, m_dragPrimaryType);
+        ImGui::EndDragDropSource();
+    }
+}
+
+bool AssetManager::IsOwnDrag(const ImGuiPayload* payload) const
+{
+    // A drag started in this browser names one of the paths it carries.
+    return payload != nullptr && (payload->IsDataType(kModelPayload) || payload->IsDataType(kEntryPayload)) &&
+           std::find(m_draggedPaths.begin(), m_draggedPaths.end(), PayloadString(*payload)) != m_draggedPaths.end();
+}
+
+bool AssetManager::DrawMoveDropTarget(const std::filesystem::path& destination, bool springLoaded)
+{
+    if (!IsOwnDrag(ImGui::GetDragDropPayload()))
+    {
+        return false;
+    }
+    // A folder never goes into itself or below itself, and the folder everything already
+    // sits in has nothing to receive: neither is a target at all.
+    bool allThere = true;
     for (const std::string& dragged : m_draggedPaths)
     {
         if (AssetPaths::IsSameOrInside(destination, dragged))
         {
-            return;
+            return false;
         }
+        allThere = allThere && IsSamePath(std::filesystem::path(dragged).parent_path(), destination);
+    }
+    if (allThere && !springLoaded)
+    {
+        return false;
     }
 
+    bool springOpen = false;
     if (ImGui::BeginDragDropTarget())
     {
-        const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kModelPayload);
-        if (payload == nullptr)
+        const ImGuiPayload* payload = nullptr;
+        if (!allThere)
         {
-            payload = ImGui::AcceptDragDropPayload(kEntryPayload);
+            payload = ImGui::AcceptDragDropPayload(kModelPayload);
+            if (payload == nullptr)
+            {
+                payload = ImGui::AcceptDragDropPayload(kEntryPayload);
+            }
         }
         if (payload != nullptr)
         {
             RequestMove(m_draggedPaths, destination);
             m_draggedPaths.clear();
+            m_springPath.clear();
+        }
+        else if (springLoaded)
+        {
+            // Spring-loaded: resting here long enough opens the folder. A bar along the
+            // target's bottom edge fills up meanwhile.
+            const std::string key = destination.lexically_normal().string();
+            const double now = ImGui::GetTime();
+            if (m_springPath != key)
+            {
+                m_springPath = key;
+                m_springStart = now;
+            }
+            m_springHovered = true;
+            const double progress = (now - m_springStart) / kSpringLoadSeconds;
+            if (progress >= 1.0)
+            {
+                springOpen = true;
+                m_springStart = std::numeric_limits<double>::infinity(); // once per rest
+            }
+            else if (progress >= 0.0)
+            {
+                const ImVec2 min = ImGui::GetItemRectMin();
+                const ImVec2 max = ImGui::GetItemRectMax();
+                const float barHeight = 3.0f * UiScale();
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    ImVec2(min.x, max.y - barHeight),
+                    ImVec2(min.x + (max.x - min.x) * static_cast<float>(progress), max.y),
+                    ImGui::GetColorU32(ImGuiCol_DragDropTarget));
+            }
         }
         ImGui::EndDragDropTarget();
     }
+    return springOpen;
 }
 
 void AssetManager::RequestMove(const std::vector<std::string>& sourcePaths, const std::filesystem::path& destination)
@@ -1316,12 +1564,20 @@ void AssetManager::PerformMove(const PendingMove& move)
         const std::filesystem::path source(sourceString);
         std::error_code ec;
         const bool isDir = std::filesystem::is_directory(source, ec);
-        if (!MoveOnDisk(source, destination / source.filename(), isDir, ec))
+        const std::filesystem::path target = destination / source.filename();
+        if (!MoveOnDisk(source, target, isDir, ec))
         {
             m_statusError = "Could not move '" + source.filename().string() + "': " + ec.message();
         }
+        else if (const std::optional<std::filesystem::path> rebased = AssetPaths::Rebase(m_currentDir, source, target))
+        {
+            // The folder being shown moved (dragged in the tree): keep showing it.
+            m_currentDir = *rebased;
+            m_treeRevealPending = true;
+        }
     }
     m_needsScan = true;
+    m_treeChildren.clear();
 }
 
 void AssetManager::DrawMoveConfirmModal()
@@ -1482,6 +1738,7 @@ void AssetManager::PerformRename(const PendingRename& rename)
     std::error_code ec;
     MoveOnDisk(source, source.parent_path() / rename.newName, rename.isDir, ec);
     m_needsScan = true;
+    m_treeChildren.clear();
 }
 
 bool AssetManager::MoveOnDisk(
@@ -1537,6 +1794,7 @@ void AssetManager::CreateNewFolder()
     m_statusError.clear();
     m_pendingRenameName = target.filename().string();
     m_needsScan = true;
+    m_treeChildren.clear();
 }
 
 void AssetManager::BuildPendingDeleteWarnings()

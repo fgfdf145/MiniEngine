@@ -4,8 +4,11 @@
 #include <optional>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+struct ImGuiPayload;
 
 namespace me
 {
@@ -84,7 +87,8 @@ class AssetManager
         bool isDir = false;
     };
 
-    // Tiles dragged onto a folder (a folder tile, "..", or a breadcrumb segment) move there.
+    // Tiles or tree folders dragged onto a folder (a folder tile, "..", a breadcrumb segment, a
+    // tree row, or the list's empty space for the folder it shows) move there.
     // Like a rename, a move that breaks path references is staged until the user confirms it.
     struct PendingMove
     {
@@ -115,9 +119,22 @@ class AssetManager
     void CancelRename();
     void CreateNewFolder();
 
+    // The folder tree on the left (Unreal's sources panel): expand, browse, drag and drop.
+    void DrawFolderTree();
+    void DrawFolderTreeNode(const std::filesystem::path& dir, const std::string& name, bool isRoot);
+    // A folder's subfolders by name, listed once until the tree is invalidated.
+    const std::vector<std::filesystem::path>& TreeChildren(const std::filesystem::path& dir);
+
     void DrawEntryDragSource(const Entry& entry, int index, AssetManagerResult& result);
+    // The payload and preview of the drag in progress; m_draggedPaths says what it carries.
+    void SubmitDragPayload(const std::filesystem::path& primary, AssetType type);
+    // Keeps the drag's preview up once its source is no longer drawn, e.g. after a
+    // spring-loaded folder opened mid-drag.
+    void KeepDragAlive();
+    bool IsOwnDrag(const ImGuiPayload* payload) const;
     // Makes the last item a drop target that moves the dragged tiles into `destination`.
-    void DrawMoveDropTarget(const std::filesystem::path& destination);
+    // Spring-loaded targets return true once the drag has rested on them long enough to open.
+    bool DrawMoveDropTarget(const std::filesystem::path& destination, bool springLoaded);
     void RequestMove(const std::vector<std::string>& sourcePaths, const std::filesystem::path& destination);
     void PerformMove(const PendingMove& move);
     void DrawMoveConfirmModal();
@@ -175,8 +192,23 @@ class AssetManager
     // What the drag started in this browser carries: the dragged tile, or the whole selection
     // when the tile was part of it.
     std::vector<std::string> m_draggedPaths;
+    std::filesystem::path m_dragPrimaryPath; // the tile or tree folder the drag started on
+    AssetType m_dragPrimaryType = AssetType::Other;
+    int m_dragSubmittedFrame = -1;
+    // Spring-loaded folders: the target the drag rests on and since when (ImGui time).
+    std::string m_springPath;
+    double m_springStart = 0.0;
+    bool m_springHovered = false;
     std::optional<PendingMove> m_pendingMove;
     std::vector<std::string> m_pendingMoveWarnings;
     bool m_openMoveModal = false;
+
+    // Folder tree. Its listings survive navigation and are dropped when the folders change
+    // (Refresh, rename, move, new folder). The current folder is revealed after navigating.
+    bool m_showTree = true;
+    std::unordered_map<std::string, std::vector<std::filesystem::path>> m_treeChildren;
+    std::unordered_set<std::string> m_treeOpenRequests; // expanded on the next draw
+    bool m_treeRevealPending = true;
+    bool m_treeRevealing = false; // m_treeRevealPending as the current tree draw took it
 };
 }
