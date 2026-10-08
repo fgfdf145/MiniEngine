@@ -66,6 +66,9 @@ struct DisplaySettings
     // the UI white, so the scene's midtones are as bright as in SDR on this desktop and only the
     // highlights go further. 250 is GT7's absolute scale.
     float paperWhiteNits = 0.0f;
+    // Starts frames at even intervals under HDR output (frame_pacing.h): without it the HDR swapchain
+    // presents in bursts while the GPU is saturated.
+    bool hdrFramePacing = true;
 };
 
 // What the calibration screen shows this frame (never saved).

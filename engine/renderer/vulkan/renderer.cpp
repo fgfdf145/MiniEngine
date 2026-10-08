@@ -917,6 +917,16 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     SyncSceneTargets(packet.viewportExtent, packet.renderDebug);
     SyncCaptureViews(packet.captureViews);
 
+    // HDR presentation stalls in batches while the GPU is saturated (see FramePacer): start frames
+    // at even intervals just above the GPU's frame time instead.
+    if (packet.display.hdr && packet.renderDebug.display.hdrFramePacing)
+    {
+        WaitUntil(m_framePacer.Next(std::chrono::steady_clock::now(), m_gpuTimer->GetAverageFrameMs()));
+    }
+    else
+    {
+        m_framePacer.Reset();
+    }
     uint32_t imageIndex = 0;
     const auto waitStart = std::chrono::steady_clock::now();
     const VkResult acquireResult = m_commandContext->AcquireNextImage(m_swapchain->GetHandle(), imageIndex);
@@ -1570,11 +1580,15 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         }
     }
 
+    const auto presentStart = std::chrono::steady_clock::now();
     const VkResult presentResult = m_commandContext->Present(m_device->GetPresentQueue(), m_swapchain->GetHandle(), imageIndex);
     m_cpuStages.Mark("Present");
     if (m_frameTimesFile.is_open())
     {
-        m_frameTimesFile << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << '\n';
+        // When the present returned (us), then the acquire's wait and the present call itself (ms).
+        const auto presentEnd = std::chrono::steady_clock::now();
+        m_frameTimesFile << std::chrono::duration_cast<std::chrono::microseconds>(presentEnd.time_since_epoch()).count() << ' ' << waitMs << ' '
+                         << std::chrono::duration<double, std::milli>(presentEnd - presentStart).count() << '\n';
     }
     if (acquireResult == VK_SUBOPTIMAL_KHR || presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
     {

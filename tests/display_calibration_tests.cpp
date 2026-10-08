@@ -1,4 +1,5 @@
 #include <engine/renderer/display_calibration.h>
+#include <engine/renderer/frame_pacing.h>
 #include <engine/renderer/spirv_patch.h>
 
 #include <glm/glm.hpp>
@@ -217,6 +218,30 @@ void HdrFollowsTheOsOnAuto()
     Require(!WantsHdrOutput(settings, hdrOn, false), "SDR stays SDR");
 }
 
+// Frames start an interval apart (the GPU's time x kHeadroom), keep the rhythm through a slightly late
+// frame, restart it after a whole interval late, and are not held while the GPU time is unknown.
+void PacerKeepsAnEvenRhythm()
+{
+    using Clock = FramePacer::Clock;
+    using std::chrono::microseconds;
+    FramePacer pacer;
+    const Clock::time_point t0{};
+    const auto ms = [](double value)
+    {
+        return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(value));
+    };
+    Require(pacer.Next(t0, 8.0) == t0, "the first frame starts at once");
+    const Clock::time_point second = pacer.Next(t0 + ms(1.0), 8.0);
+    Require(std::chrono::abs(second - (t0 + ms(8.64))) < microseconds(2), "the next one an interval later");
+    const Clock::time_point third = pacer.Next(t0 + ms(9.5), 8.0);
+    Require(std::chrono::abs(third - (t0 + ms(17.28))) < microseconds(2), "the rhythm holds");
+    const Clock::time_point late = pacer.Next(t0 + ms(18.0), 8.0);
+    Require(std::chrono::abs(late - (t0 + ms(25.92))) < microseconds(2), "a frame a little late keeps the rhythm");
+    const Clock::time_point lost = pacer.Next(t0 + ms(60.0), 8.0);
+    Require(lost == t0 + ms(60.0), "a whole interval late restarts it");
+    Require(pacer.Next(t0 + ms(61.0), 0.0) == t0 + ms(61.0), "no GPU time, no pacing");
+}
+
 // A hand-made module: OpDecorate %7 SpecId 0, OpTypeFloat %6 32, OpSpecConstant %6 %7 203.0, and an
 // unrelated OpConstant 203.0 that must stay.
 void SpecConstantIsPatched()
@@ -251,6 +276,7 @@ int main()
         ResolveUsesCalibrationThenReport();
         HdrFollowsTheOsOnAuto();
         SpecConstantIsPatched();
+        PacerKeepsAnEvenRhythm();
     }
     catch (const std::exception& error)
     {

@@ -30,6 +30,8 @@ add_library(engine_render_core
     display_calibration.h
     exposure.cpp
     exposure.h
+    frame_pacing.cpp
+    frame_pacing.h
     light_clusters.cpp
     light_clusters.h
     local_shadows.cpp

@@ -70,6 +70,7 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("display", "sdr_black", display.sdrBlack);
     visit("display", "ui_white_nits", display.uiWhiteNits);
     visit("display", "paper_white_nits", display.paperWhiteNits);
+    visit("display", "hdr_frame_pacing", display.hdrFramePacing);
     visit("", "toon_exposure_ev", settings.toonExposureEv);
     visit("", "khronos_reference", settings.khronosReference);
     visit("", "render_scale", settings.renderScale);

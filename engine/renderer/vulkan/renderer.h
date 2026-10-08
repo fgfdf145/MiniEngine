@@ -58,6 +58,7 @@
 #include <engine/renderer/temporal_history.h>
 #include <engine/renderer/motion_history.h>
 #include <engine/renderer/path_tracing.h>
+#include <engine/renderer/frame_pacing.h>
 #include <engine/platform/display/display_hdr.h>
 #include <engine/renderer/local_shadows.h>
 #include <engine/renderer/render_features.h>
@@ -663,6 +664,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // MINIENGINE_FRAME_TIMES=<file>: each present's time in microseconds, one per line (render thread),
     // to measure frame pacing.
     std::ofstream m_frameTimesFile;
+    // Even frame starts under HDR output (render thread).
+    FramePacer m_framePacer;
     platform::display::DisplayHdrInfo m_displayInfo;
     DisplayReport m_displayReport;
     // The HDR output the current swapchain was created for, and the UI white ImGui's HDR shader was

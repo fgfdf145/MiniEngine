@@ -506,6 +506,8 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
                 display.hdrRequested ? ": the display offers no HDR10 format" : display.report.hdrEnabled ? " (Windows is in HDR)" : "");
         }
     }
+    // The HDR swapchain presents in bursts while the GPU is saturated; this starts frames evenly.
+    ImGui::Checkbox("Even frame pacing (HDR)", &debug.display.hdrFramePacing);
     if (ImGui::Button(ICON_PH_MONITOR " Calibrate Display..."))
     {
         context.windows.Open<DisplayCalibrationWindow>();
