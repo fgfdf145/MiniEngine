@@ -11,6 +11,11 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shobjidl.h>
+#include <tlhelp32.h>
+
+#include <cstdlib>
+#include <unordered_map>
 #endif
 
 #ifdef __APPLE__
@@ -98,6 +103,173 @@ void ApplyPlatformWindowHints()
     }
 #endif
 #endif
+}
+
+#if defined(_WIN32)
+namespace
+{
+const char* VirtualDesktopRequest()
+{
+    const char* request = std::getenv("MINIENGINE_VIRTUAL_DESKTOP");
+    return request != nullptr && request[0] != '\0' ? request : nullptr;
+}
+
+std::string GuidString(const GUID& guid)
+{
+    wchar_t wide[64] = {};
+    StringFromGUID2(guid, wide, 64);
+    std::string narrow;
+    for (const wchar_t* c = wide; *c != L'\0'; ++c)
+    {
+        narrow.push_back(static_cast<char>(*c));
+    }
+    return narrow;
+}
+
+bool ParseGuid(const std::string& text, GUID& guid)
+{
+    std::string braced = text;
+    if (braced.front() != '{')
+    {
+        braced = "{" + braced + "}";
+    }
+    const std::wstring wide(braced.begin(), braced.end());
+    return SUCCEEDED(CLSIDFromString(wide.c_str(), &guid));
+}
+
+struct ProcessWindowSearch
+{
+    DWORD processId = 0;
+    IVirtualDesktopManager* manager = nullptr;
+    GUID desktop = GUID_NULL;
+};
+
+BOOL CALLBACK FindProcessWindowDesktop(HWND hwnd, LPARAM param)
+{
+    auto* search = reinterpret_cast<ProcessWindowSearch*>(param);
+    DWORD processId = 0;
+    GetWindowThreadProcessId(hwnd, &processId);
+    if (processId != search->processId || !IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) != nullptr)
+    {
+        return TRUE;
+    }
+    GUID desktop = GUID_NULL;
+    if (SUCCEEDED(search->manager->GetWindowDesktopId(hwnd, &desktop)) && desktop != GUID_NULL)
+    {
+        search->desktop = desktop;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+// The desktop of the first visible top-level window owned by this process's parent, grandparent
+// and so on: the terminal, IDE or agent app that started the engine.
+GUID LauncherDesktop(IVirtualDesktopManager* manager)
+{
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+    {
+        return GUID_NULL;
+    }
+    std::unordered_map<DWORD, DWORD> parentOf;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry))
+    {
+        parentOf[entry.th32ProcessID] = entry.th32ParentProcessID;
+    }
+    CloseHandle(snapshot);
+
+    DWORD processId = GetCurrentProcessId();
+    // The depth bound also stops a cycle made by a reused parent id.
+    for (int depth = 0; depth < 16; ++depth)
+    {
+        const auto parent = parentOf.find(processId);
+        if (parent == parentOf.end() || parent->second == 0)
+        {
+            break;
+        }
+        processId = parent->second;
+        ProcessWindowSearch search{processId, manager};
+        EnumWindows(FindProcessWindowDesktop, reinterpret_cast<LPARAM>(&search));
+        if (search.desktop != GUID_NULL)
+        {
+            return search.desktop;
+        }
+    }
+    return GUID_NULL;
+}
+
+void MoveToRequestedDesktop(HWND hwnd, const std::string& request)
+{
+    const HRESULT comInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IVirtualDesktopManager* manager = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_VirtualDesktopManager, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&manager))))
+    {
+        LOG_WARN("Virtual desktop: IVirtualDesktopManager is unavailable");
+    }
+    else
+    {
+        GUID desktop = GUID_NULL;
+        if (request == "launcher")
+        {
+            desktop = LauncherDesktop(manager);
+        }
+        else if (!ParseGuid(request, desktop))
+        {
+            LOG_WARN("Virtual desktop: '{}' is neither 'launcher' nor a desktop GUID", request);
+        }
+
+        if (desktop == GUID_NULL)
+        {
+            LOG_WARN("Virtual desktop: no desktop found for '{}'; the window opens on the current one", request);
+        }
+        else if (const HRESULT moved = manager->MoveWindowToDesktop(hwnd, desktop); FAILED(moved))
+        {
+            LOG_WARN("Virtual desktop: moving the window to {} failed (0x{:08X})",
+                GuidString(desktop),
+                static_cast<unsigned>(moved));
+        }
+        else
+        {
+            LOG_INFO("Virtual desktop: window opened on {} ({})", GuidString(desktop), request);
+        }
+        manager->Release();
+    }
+    if (SUCCEEDED(comInit))
+    {
+        CoUninitialize();
+    }
+}
+}
+#endif
+
+bool HasVirtualDesktopRequest()
+{
+#if defined(_WIN32)
+    return VirtualDesktopRequest() != nullptr;
+#else
+    return false;
+#endif
+}
+
+void ShowOnRequestedVirtualDesktop(SDL_Window* window, bool keepHidden)
+{
+#if defined(_WIN32)
+    const char* request = VirtualDesktopRequest();
+    auto* hwnd = static_cast<HWND>(
+        SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    if (request != nullptr && hwnd != nullptr)
+    {
+        MoveToRequestedDesktop(hwnd, request);
+    }
+#endif
+    if (!keepHidden)
+    {
+        // Shown without activation: activating a window on another desktop switches the user there.
+        SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
+        SDL_ShowWindow(window);
+    }
 }
 }
 }
