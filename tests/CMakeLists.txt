@@ -1682,6 +1682,10 @@ target_link_libraries(miniengine_video_recorder_tests
     PRIVATE
         engine_core
 )
+# stb_image's SSE path under a precompiled header and GCC -O0, as texture_compression.cpp.
+if(NOT MSVC)
+    set_source_files_properties(video_recorder_tests.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()
 # stb_image decodes the frames back.
 target_include_directories(miniengine_video_recorder_tests PRIVATE "${Stb_INCLUDE_DIR}")
 

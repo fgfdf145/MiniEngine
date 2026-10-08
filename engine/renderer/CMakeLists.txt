@@ -453,5 +453,13 @@ if(MINIENGINE_DLSS_FOUND)
     target_link_libraries(engine_renderer PRIVATE miniengine_ngx)
 endif()
 target_include_directories(engine_renderer PRIVATE "${Stb_INCLUDE_DIR}")
+# A static NVRHI leaves vulkan.hpp's dispatcher to the program (nvrhi_device.cpp); a shared one owns it.
+if(MINIENGINE_NVRHI_STATIC)
+    set_source_files_properties(vulkan/nvrhi_device.cpp
+        PROPERTIES
+            COMPILE_DEFINITIONS "MINIENGINE_NVRHI_STATIC=1"
+            SKIP_PRECOMPILE_HEADERS ON
+    )
+endif()
 
 add_dependencies(engine_renderer engine_renderer_shaders)

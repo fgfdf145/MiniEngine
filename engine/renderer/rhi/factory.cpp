@@ -104,13 +104,13 @@ std::optional<std::string> GetRenderBackendRuntimeError(RenderBackendType backen
 
 RenderBackendType GetPreferredRenderBackendType()
 {
-    if (IsRenderBackendSupported(RenderBackendType::Vulkan) &&
-        !GetRenderBackendRuntimeError(RenderBackendType::Vulkan).has_value())
+    const std::optional<std::string> runtimeError = GetRenderBackendRuntimeError(RenderBackendType::Vulkan);
+    if (!runtimeError.has_value())
     {
         return RenderBackendType::Vulkan;
     }
 
-    throw std::runtime_error("Vulkan backend is not available at runtime");
+    throw std::runtime_error("Vulkan backend is not available at runtime: " + *runtimeError);
 }
 
 std::unique_ptr<IRenderBackend> CreateRenderBackend(

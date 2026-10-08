@@ -123,9 +123,18 @@ find_package(nvrhi CONFIG REQUIRED)
 # <windows.h> (min and max macros) in every file that sees the engine's Vulkan headers. Nothing
 # outside NVRHI needs the Win32 surface types.
 set_property(TARGET nvrhi PROPERTY INTERFACE_COMPILE_DEFINITIONS "")
-set(MINIENGINE_NVRHI_TARGETS nvrhi)
+# The backend before the common library: GNU ld resolves a static library's references only from
+# the libraries after it.
+set(MINIENGINE_NVRHI_TARGETS)
 if(TARGET nvrhi_vk)
     list(APPEND MINIENGINE_NVRHI_TARGETS nvrhi_vk)
+endif()
+list(APPEND MINIENGINE_NVRHI_TARGETS nvrhi)
+get_target_property(_miniengine_nvrhi_type nvrhi TYPE)
+if(_miniengine_nvrhi_type STREQUAL "STATIC_LIBRARY")
+    set(MINIENGINE_NVRHI_STATIC 1)
+else()
+    set(MINIENGINE_NVRHI_STATIC 0)
 endif()
 find_package(imgui CONFIG REQUIRED)
 find_package(imguizmo CONFIG REQUIRED)

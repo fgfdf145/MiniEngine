@@ -37,7 +37,13 @@ class TaskSystem
         uint32_t externalThreads = 1;
     };
 
-    static void Initialize(const Settings& settings = {});
+    static void Initialize(const Settings& settings);
+    // With the default settings. Not a default argument: GCC and Clang read Settings' member
+    // initializers only once TaskSystem is complete, and a default argument is not past that point.
+    static void Initialize()
+    {
+        Initialize(Settings{});
+    }
     // Waits for the tasks in flight, then stops the workers. Nothing may add tasks afterwards.
     static void Shutdown();
     static bool IsRunning();

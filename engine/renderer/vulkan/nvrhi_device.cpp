@@ -7,6 +7,15 @@
 
 #include <nvrhi/validation.h>
 
+#if MINIENGINE_NVRHI_STATIC
+// A static NVRHI (the Linux and macOS triplets) leaves vulkan.hpp's dynamic dispatcher to the program:
+// its storage is here, and the constructor initialises it before createDevice. A shared NVRHI (the
+// Windows triplets) owns both.
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
+#include <vulkan/vulkan.hpp>
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
+#endif
+
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -70,6 +79,9 @@ NvrhiDevice::NvrhiDevice(const VulkanInstance& instance, const VulkanDevice& dev
     desc.numDeviceExtensions = deviceExtensions.size();
     desc.bufferDeviceAddressSupported = device.BufferDeviceAddressEnabled();
 
+#if MINIENGINE_NVRHI_STATIC
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(instance.GetHandle(), vkGetInstanceProcAddr, device.GetHandle());
+#endif
     m_vulkanDevice = nvrhi::vulkan::createDevice(desc);
     if (!m_vulkanDevice)
     {

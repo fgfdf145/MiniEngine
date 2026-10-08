@@ -130,3 +130,8 @@ set_source_files_properties(texture_loader.cpp
         COMPILE_DEFINITIONS "MINIENGINE_HAS_KTX=${_miniengine_has_ktx}"
         SKIP_PRECOMPILE_HEADERS ON
 )
+# Under a precompiled header GCC's -O0 build takes the SSE intrinsics stb_image_resize2 calls with
+# run-time arguments (_mm_prefetch's hint) as functions rather than macros, and rejects them.
+if(NOT MSVC)
+    set_source_files_properties(texture_compression.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()

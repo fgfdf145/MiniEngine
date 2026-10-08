@@ -7,8 +7,12 @@ Runs each case three times: A twice (the noise floor) and B once, then compares 
   AB_MODE=exe: A is a baseline build in out/baseline_src (a git worktree of the commit before the
                change, built with the same preset), B the current build.
 usage: python tools/render_ab/ab.py [case names...]   (all cases when none given)
-env: AB_EXE (default the Debug app), AB_FRAMES (default 90), AB_ASSETS (default the main checkout's
-     assets), AB_OUT (default out/render_ab)
+env: AB_PRESET (default vs2026-x64; a single-config preset such as linux-debug has no Debug folder),
+     AB_EXE (default the preset's Debug app), AB_FRAMES (default 90), AB_SIZE (default 1280x720),
+     AB_ASSETS (default the main checkout's assets), AB_OUT (default out/render_ab)
+The fixture_* cases need only the repository's render scenes (tests/fixtures/render_scenes, installed
+into AB_ASSETS by scripts/install-render-scenes.sh), so they run where the R34 and Yuki do not exist,
+for example on lavapipe at a small AB_SIZE.
 Test scenes (tools/render_ab/scenes) have the atmosphere's ground plane off: on the rolling road it
 z-fights the road and the TAA jitter phase moves the patches from run to run.
 """
@@ -25,20 +29,26 @@ from PIL import Image
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 OUT = os.environ.get("AB_OUT") or os.path.join(ROOT, "out", "render_ab")
 SCENES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenes")
-EXE = os.environ.get("AB_EXE", os.path.join(ROOT, "out", "build", "vs2026-x64", "app", "Debug", "miniengine_app.exe"))
+PRESET = os.environ.get("AB_PRESET", "vs2026-x64")
+# The Visual Studio generator puts each configuration in a folder of its own; Ninja presets do not.
+APP = os.path.join("app", "Debug", "miniengine_app.exe") if PRESET.startswith("vs") else os.path.join(
+    "app", "miniengine_app.exe" if os.name == "nt" else "miniengine_app")
+EXE = os.environ.get("AB_EXE", os.path.join(ROOT, "out", "build", PRESET, APP))
 ASSETS = os.environ.get("AB_ASSETS", "C:/Project/MiniEngine/assets")
 FRAMES = int(os.environ.get("AB_FRAMES", "90"))
+SIZE = [int(v) for v in os.environ.get("AB_SIZE", "1280x720").split("x")]
+FIXTURES = os.path.join(ROOT, "tests", "fixtures", "render_scenes", "scenes")
 SHADERS = {
     "glsl": os.environ.get("AB_REF_SPV") or os.path.join(ROOT, "out", "slang", "ref_spv"),
-    "slang": os.path.join(ROOT, "out", "build", "vs2026-x64", "shaders"),
+    "slang": os.path.join(ROOT, "out", "build", PRESET, "shaders"),
 }
-# AB_MODE=exe: A is the frozen baseline build (out/baseline_src, the last commit before the NVRHI work)
-# with its own shaders, B the current build.
-BASELINE = os.path.join(ROOT, "out", "baseline_src", "out", "build", "vs2026-x64")
+# AB_MODE=exe: A is the frozen baseline build (out/baseline_src, a worktree of the commit before the
+# change, built with the same preset) with its own shaders, B the current build.
+BASELINE = os.path.join(ROOT, "out", "baseline_src", "out", "build", PRESET)
 EXES = {
     "glsl": (EXE, SHADERS["glsl"]),
     "slang": (EXE, SHADERS["slang"]),
-    "base": (os.path.join(BASELINE, "app", "Debug", "miniengine_app.exe"), os.path.join(BASELINE, "shaders")),
+    "base": (os.path.join(BASELINE, APP), os.path.join(BASELINE, "shaders")),
     "cur": (EXE, SHADERS["slang"]),
 }
 MODE = os.environ.get("AB_MODE", "shaders")
@@ -87,6 +97,22 @@ CASES = {
     "emissive_pt": ("emissive_test.yaml", EMISSIVE_CAMERA, 5.0, PT_ON, []),
     "emissive_restir": ("emissive_test.yaml", EMISSIVE_CAMERA, 5.0, PT_RESTIR, []),
 }
+# The repository's own render scenes (absolute paths: os.path.join keeps them as they are).
+CORNELL_CAMERA = {"position": [0.0, 0.0, -4.0], "yaw": -90.0, "pitch": 0.0}
+SPHERES_CAMERA = {"position": [0.0, 0.6, 3.0], "yaw": -90.0, "pitch": -8.0}
+TRACK_CAMERA = {"position": [0.0, 1.6, 30.0], "yaw": -90.0, "pitch": -3.0}
+CASES.update({
+    "fixture_cornell_rt": (os.path.join(FIXTURES, "cornell_box.yaml"), CORNELL_CAMERA, 9.0, RT_ON, []),
+    "fixture_cornell_raster": (os.path.join(FIXTURES, "cornell_box.yaml"), CORNELL_CAMERA, 9.0, RT_OFF, []),
+    "fixture_cornell_ddgi": (os.path.join(FIXTURES, "cornell_box.yaml"), CORNELL_CAMERA, 9.0, DDGI, []),
+    "fixture_spheres_sun": (os.path.join(FIXTURES, "smooth_spheres_sun.yaml"), SPHERES_CAMERA, 12.0, RT_ON, []),
+    "fixture_spheres_lamp": (os.path.join(FIXTURES, "smooth_spheres_lamp_sized.yaml"), SPHERES_CAMERA, 6.0, RT_OFF, []),
+    "fixture_area_light": (os.path.join(FIXTURES, "area_light_floor.yaml"), MATERIALS_CAMERA, 6.0, RT_OFF, []),
+    "fixture_iridescence": (os.path.join(FIXTURES, "iridescence.yaml"), SPHERES_CAMERA, 12.0, RT_OFF, []),
+    "fixture_texture_transforms": (os.path.join(FIXTURES, "texture_transforms_unlit.yaml"), SPHERES_CAMERA, 12.0, RT_OFF, []),
+    "fixture_track_rt": (os.path.join(FIXTURES, "ddgi_track.yaml"), TRACK_CAMERA, 12.0, RT_ON, []),
+    "fixture_track_pt": (os.path.join(FIXTURES, "ddgi_track.yaml"), TRACK_CAMERA, 12.0, PT_ON, []),
+})
 for _view in (1, 2, 4, 5, 7, 13, 14, 15, 17, 18):
     CASES[f"road_view{_view}"] = ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {"gbuffer_view": _view, **NO_DDGI}, [])
 
@@ -95,7 +121,7 @@ def write_state(case, scene, camera, ev, render, path):
     lines = [
         "version: 1",
         f"scene: {os.path.join(SCENES, scene).replace(os.sep, '/')}",
-        "viewport_size: [1280, 720]",
+        f"viewport_size: [{SIZE[0]}, {SIZE[1]}]",
         "camera:",
         f"  position: [{camera['position'][0]}, {camera['position'][1]}, {camera['position'][2]}]",
         f"  yaw_degrees: {camera['yaw']}",
