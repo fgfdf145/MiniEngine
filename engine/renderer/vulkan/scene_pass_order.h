@@ -21,6 +21,9 @@ enum class ScenePassId
     AoResolve,
     SsrTrace,
     SsrResolve,
+    // The forward-shaded surfaces' layer the path tracer traces too (path_trace_layer_pass.h): the
+    // nearest one's depth and G-buffer.
+    PathTraceLayer,
     // The path traced indirect light (path_trace_pass.h), which the lighting pass reads in path
     // tracing mode in place of the ambient terms.
     PathTrace,

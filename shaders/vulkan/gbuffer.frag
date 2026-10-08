@@ -13,6 +13,26 @@ layout(constant_id = 0) const bool kAlphaMask = false;
 // A deferred decal (MaterialPipelineSetConfig::decal): the outputs carry the base colour's alpha,
 // which the pipeline blends albedo, metallic, roughness and emission by; it writes nothing else.
 layout(constant_id = 2) const bool kDecal = false;
+// The draw is a Blend item (MaterialAlphaMode::Blend).
+layout(constant_id = 3) const bool kBlendItem = false;
+
+// Compiled twice more for the path traced layer of the forward-shaded surfaces
+// (VulkanPathTraceLayerPass, docs/design/2026-10-08-path-tracing-missing-effects-design.md):
+// PATH_TRACE_LAYER_PASS 1 (path_trace_layer_depth.frag.spv) writes the fragment's depth alone, where a
+// MAX blend keeps the nearest; 2 (path_trace_layer_surface.frag.spv) writes the G-buffer of the
+// fragment at that depth alone (albedo, normals, surface, motion), for the path tracer to trace from.
+#ifndef PATH_TRACE_LAYER_PASS
+#define PATH_TRACE_LAYER_PASS 0
+#endif
+#if PATH_TRACE_LAYER_PASS != 0
+// What a Blend surface must cover of a pixel to be its layer: below this its own light hardly shows
+// over what is behind it, which keeps the layer then.
+const float PATH_TRACE_LAYER_MIN_ALPHA = 0.05;
+#endif
+#if PATH_TRACE_LAYER_PASS == 2
+// The nearest forward-shaded surface's depth (the depth pass's result), set 0 binding 29.
+layout(set = 0, binding = 29) uniform sampler2D pathTraceLayerDepth;
+#endif
 
 layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
 layout(set = 1, binding = 1) uniform sampler2D normalTexture;
@@ -44,14 +64,19 @@ layout(location = 10) in vec3 fragObjectPosition;
 
 // Locations match VulkanGeometryPass::kAttachments. All five are vec4 so no attachment receives
 // fewer components than it has; channels the encoding table marks unused are written as stated.
+// The layer's depth pass writes location 0 alone (the depth), its surface pass 0, 1, 2 and 4.
 layout(location = 0) out vec4 outAlbedo;   // GB0 R8G8B8A8_SRGB: rgb albedo, a = 1
+#if PATH_TRACE_LAYER_PASS != 1
 layout(location = 1) out vec4 outNormal;   // GB1 R16G16B16A16_SFLOAT: rg shading normal, ba geometric normal, both octahedral
 layout(location = 2) out vec4 outSurface;  // GB2 R8G8B8A8_UNORM: metallic, roughness, occlusion, a = shading model
-layout(location = 3) out vec4 outEmissive; // GB3 B10G11R11_UFLOAT: rgb emissive
 layout(location = 4) out vec4 outVelocity; // R16G16B16A16_SFLOAT: rg current uv - previous uv, ba the coat's normal (octahedral)
+#endif
+#if PATH_TRACE_LAYER_PASS == 0
+layout(location = 3) out vec4 outEmissive; // GB3 B10G11R11_UFLOAT: rgb emissive
 layout(location = 5) out vec4 outSpecular; // GB5 R8G8B8A8_UNORM: rgb sqrt(dielectric F0), a dielectric F90
 layout(location = 6) out vec4 outCoat;     // GB6 R8G8B8A8_UNORM: coat factor, coat roughness, anisotropy angle, anisotropy strength
 layout(location = 7) out vec4 outSheen;    // GB7 R8G8B8A8_UNORM: sheen colour, sheen roughness
+#endif
 
 void main()
 {
@@ -72,6 +97,11 @@ void main()
 
     if (kAlphaMask && albedo.a < material.alphaCutoff)
         discard;
+#if PATH_TRACE_LAYER_PASS == 1
+    if (kBlendItem && albedo.a < PATH_TRACE_LAYER_MIN_ALPHA)
+        discard;
+    outAlbedo = vec4(gl_FragCoord.z);
+#else
 
     // ---- Normal -----------------------------------------------------------
     // A back face is only rasterized by a double-sided pipeline, and it is seen from the side the
@@ -128,11 +158,19 @@ void main()
     // The geometric normal rides along for the shadow lookup's normal offset (see ShadeSurface).
     // It is already face-flipped, so the lighting pass uses it as decoded.
     outNormal = vec4(EncodeNormalOctahedral(N), EncodeNormalOctahedral(geoNormal));
+#if PATH_TRACE_LAYER_PASS == 2
+    // The layer is traced as a plain base: the forward pass multiplies the light back by the full
+    // material's lobes, and the shading model's other flags would send the path tracer to images the
+    // layer does not have.
+    outSurface = vec4(metallic, roughness, ao, EncodeShadingFlags(layers.flags & SHADING_FLAG_UNLIT));
+#else
     outSurface = vec4(metallic, roughness, ao, EncodeShadingFlags(layers.flags));
+#endif
     // Each layer target holds its layer where the flags say so and zeros elsewhere; the lighting
     // pass reads only the flagged ones.
     // The coat's roughness is filtered from the floor the lighting pass would give it; with the
     // filter off it is stored as the material has it, as before.
+#if PATH_TRACE_LAYER_PASS == 0
     float coatRoughness = ubo.specularAntiAliasing.x > 0.5
                               ? FilterRoughnessForSpecularAA(clamp(layers.coatRoughness, 0.04, 1.0), coatNormalVariation)
                               : layers.coatRoughness;
@@ -160,10 +198,17 @@ void main()
         outSurface.a = albedo.a;
         outEmissive.a = albedo.a;
     }
+#endif
 
     // uv = ndc * 0.5 + 0.5 with the Y flip inside the projection, so half the NDC difference is
     // the motion in UV units. A consumer finds the previous position at uv - velocity.
     vec2 currNdc = fragCurrClip.xy / fragCurrClip.w;
     vec2 prevNdc = fragPrevClip.xy / fragPrevClip.w;
     outVelocity = vec4((currNdc - prevNdc) * 0.5, HasShadingFlag(layers.flags, SHADING_FLAG_COAT_NORMAL) ? EncodeNormalOctahedral(layers.coatNormal) : vec2(0.0));
+#if PATH_TRACE_LAYER_PASS == 2
+    // Only the fragment at the depth the depth pass kept, decided last, after every derivative.
+    if ((kBlendItem && albedo.a < PATH_TRACE_LAYER_MIN_ALPHA) || texelFetch(pathTraceLayerDepth, ivec2(gl_FragCoord.xy), 0).r != gl_FragCoord.z)
+        discard;
+#endif
+#endif
 }

@@ -304,6 +304,16 @@ void LightingEpochCountsChanges()
     Require(watch.Epoch() == 1u, "the epoch wraps at 256, as the probes record it");
 }
 
+// A sunlit afternoon scrubbed to moonlight clears the probes; a sun that dims as it sets does not.
+void LightingJumpsClearTheProbes()
+{
+    Require(DdgiLightingJumped(120000.0f, 0.25f), "sunlight to moonlight is a jump");
+    Require(DdgiLightingJumped(0.25f, 120000.0f), "and back");
+    Require(!DdgiLightingJumped(120000.0f, 119400.0f), "an epoch of a setting sun is not");
+    Require(!DdgiLightingJumped(100.0f, 60.0f) && DdgiLightingJumped(100.0f, 40.0f), "the threshold is a factor of two");
+    Require(DdgiLightingJumped(0.0f, 1.0f) && !DdgiLightingJumped(0.0f, 0.0f), "from darkness any light is a jump, darkness to darkness none");
+}
+
 // Fills every level so nothing is stale, and returns the last frame's schedule.
 std::vector<uint32_t> Fill(DdgiProbeScheduler& scheduler, std::span<const DdgiLevel> levels)
 {
@@ -420,6 +430,7 @@ int main()
         RotationsAreRotations();
         MovingInstancesAreSkippedUntilTheySettle();
         LightingEpochCountsChanges();
+        LightingJumpsClearTheProbes();
         ConvergedLevelsRefreshLess();
         LightingWatchReportsChanges();
         ChangedProbesComeBackSoon();

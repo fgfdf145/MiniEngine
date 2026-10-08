@@ -593,7 +593,7 @@ bool TraceRay(const RayScene& scene, const Ray& ray, RayHit& hit, bool anyHit, c
         for (uint32_t instanceIndex = node.first; instanceIndex < node.first + node.count; ++instanceIndex)
         {
             const RayInstance& instance = scene.instances[instanceIndex];
-            if ((instance.data.w & (kRayInstanceSkip | kRayInstanceDynamic)) != 0u)
+            if ((instance.data.w & (kRayInstanceSkip | kRayInstanceDynamic | kRayInstanceBlend)) != 0u)
             {
                 continue;
             }

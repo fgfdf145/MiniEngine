@@ -53,11 +53,14 @@ struct RayMaterialSource
     // Its metallic and roughness maps, which hit shading reads with the two above.
     TextureDescriptorBinding metallic;
     TextureDescriptorBinding roughness;
+    // Its normal map, which the path tracer's hit shading reads; none when it has no map of its own
+    // (the ray material then says so, kRayMaterialNormalMap).
+    TextureDescriptorBinding normal;
 };
 
 // The textures hit shading samples per draw slot, in this order, in the ray texture table
 // (RAY_TEXTURE_* in shaders/vulkan/ray_hit_common.glsl).
-inline constexpr uint32_t kRayTexturesPerSlot = 4;
+inline constexpr uint32_t kRayTexturesPerSlot = 5;
 
 // The scene as compute shaders trace it (shaders/vulkan/ray_tracing_common.glsl): the meshes'
 // hierarchies (ray_tracing_bvh.h), built on a worker thread when content changes; each submesh's ray

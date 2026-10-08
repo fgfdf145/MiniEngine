@@ -24,18 +24,26 @@
 // instance's mesh index sits above RAY_INSTANCE_MESH_SHIFT.
 #define RAY_INSTANCE_SKIP 1u
 #define RAY_INSTANCE_DYNAMIC 2u
+#define RAY_INSTANCE_BLEND 4u
 #define RAY_INSTANCE_MESH_SHIFT 4u
 
 // Which instances a ray sees, matching kRayMask* in ray_acceleration.h (the top level's instance
 // masks). The probes' rays leave moving instances out, so a passing car leaves no trail in their
-// light; the per-pixel visibility rays (shadows, occlusion, reflections) see everything traceable.
+// light; the per-pixel visibility rays (shadows, occlusion, reflections) see everything traceable but
+// the Blend surfaces (decals, glass), which only the path tracer's rays meet.
 #define RAY_MASK_STATIC 1u
 #define RAY_MASK_DYNAMIC 2u
+#define RAY_MASK_BLEND 4u
 #define RAY_MASK_PROBE RAY_MASK_STATIC
 #define RAY_MASK_VISIBILITY (RAY_MASK_STATIC | RAY_MASK_DYNAMIC)
+#define RAY_MASK_PATH (RAY_MASK_VISIBILITY | RAY_MASK_BLEND)
 
 // Ray material flags (RayMaterial.emissionFlags.w as uint bits), matching ray_scene.cpp.
 #define RAY_MATERIAL_DOUBLE_SIDED 1u
+#define RAY_MATERIAL_ALPHA_MASK 2u
+#define RAY_MATERIAL_ALPHA_BLEND 4u
+#define RAY_MATERIAL_TRANSMISSION 8u
+#define RAY_MATERIAL_NORMAL_MAP 16u
 
 struct BvhNode
 {
@@ -163,6 +171,10 @@ float RayHash(uint a, uint b)
     return float(word) * (1.0 / 4294967296.0);
 }
 
+// Set by the path tracer for its own rays, which refract through a transmissive surface themselves:
+// they meet it whole, where every other ray passes through the share its transmission says.
+bool rayMeetsTransmission = false;
+
 #ifdef RAY_TEXTURED_ALPHA
 // In ray_hit_common.glsl, which a shader defining RAY_TEXTURED_ALPHA includes after this file.
 bool AcceptTexturedHit(uint instance, uint triangle, vec2 barycentrics, uint rayId);
@@ -177,6 +189,11 @@ bool rayTexturedAlpha = true;
 // RAY_TEXTURED_ALPHA an alpha-tested surface reads its texture instead (AcceptTexturedHit).
 bool AcceptHit(uint instance, uint triangle, vec2 barycentrics, uint rayId)
 {
+    if (rayMeetsTransmission &&
+        (floatBitsToUint(rayMaterials[rayInstances[instance].data.z].emissionFlags.w) & RAY_MATERIAL_TRANSMISSION) != 0u)
+    {
+        return true;
+    }
 #ifdef RAY_TEXTURED_ALPHA
     if (rayTexturedAlpha)
     {
@@ -238,7 +255,8 @@ bool TraceSceneRayMasked(vec3 origin, vec3 direction, float tMin, float tMax, bo
 // transformed ray is the right one for every mesh entry popped. rayMask as for the ray query variant.
 bool TraceSceneRayMasked(vec3 origin, vec3 direction, float tMin, float tMax, bool anyHit, uint rayId, uint rayMask, out RayHit hit)
 {
-    uint skipFlags = RAY_INSTANCE_SKIP | ((rayMask & RAY_MASK_DYNAMIC) != 0u ? 0u : RAY_INSTANCE_DYNAMIC);
+    uint skipFlags = RAY_INSTANCE_SKIP | ((rayMask & RAY_MASK_DYNAMIC) != 0u ? 0u : RAY_INSTANCE_DYNAMIC) |
+                     ((rayMask & RAY_MASK_BLEND) != 0u ? 0u : RAY_INSTANCE_BLEND);
     hit.t = tMax;
     hit.instance = 0u;
     hit.triangle = 0u;

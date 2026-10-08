@@ -297,6 +297,12 @@ struct PathTracingSettings
     int maxFrames = 2048;
     // The edge-aware spatial filter after it, which fades out as a still image converges.
     bool denoise = true;
+    // Glass and the other surfaces the forward pass shades (Blend, transmission) path traced as well:
+    // the nearest one over each pixel takes traced light in place of the probes and the sky, and the
+    // paths meet them (VulkanPathTraceLayerPass).
+    bool forwardSurfaces = true;
+    // The paths' rays pass through the air (aerial perspective) and the height fog, as the camera's do.
+    bool rayMedia = true;
     // ReSTIR PT Enhanced instead of the plain path tracer: direct and indirect light resampled across
     // neighbours and frames (best with DLSS ray reconstruction, as the paper is evaluated).
     bool restir = false;

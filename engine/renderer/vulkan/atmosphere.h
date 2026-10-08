@@ -59,6 +59,8 @@ class VulkanAtmosphere
 
     TextureDescriptorBinding GetTransmittanceBinding() const;
     TextureDescriptorBinding GetSkyViewBinding() const;
+    // The multiple-scattering LUT, in GENERAL: the path tracer integrates the air along its rays with it.
+    TextureDescriptorBinding GetMultiScatteringBinding() const;
     // The volumetric clouds' noise (cloud_noise.comp), built on the first Record; REPEAT sampler.
     TextureDescriptorBinding GetCloudShapeNoiseBinding() const;
     TextureDescriptorBinding GetCloudDetailNoiseBinding() const;

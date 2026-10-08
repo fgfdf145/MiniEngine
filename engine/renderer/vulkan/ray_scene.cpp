@@ -33,6 +33,12 @@ struct RayMaterialConstants
 constexpr uint32_t kRayMaterialDoubleSided = 1u;
 // Alpha tested: hit shading's textured coverage test applies (ray_hit_common.glsl).
 constexpr uint32_t kRayMaterialAlphaMask = 2u;
+// Alpha blended: the textured coverage test takes the alpha as the share of rays it stops.
+constexpr uint32_t kRayMaterialAlphaBlend = 4u;
+// KHR_materials_transmission: the path tracer's rays meet it and refract through it themselves.
+constexpr uint32_t kRayMaterialTransmission = 8u;
+// It has a normal map of its own in the ray texture table (RAY_TEXTURE_NORMAL).
+constexpr uint32_t kRayMaterialNormalMap = 16u;
 
 // One mesh's buffers as hit shading reads them (RayMeshGeometry in ray_hit_common.glsl): the vertex
 // and index buffers' device addresses.
@@ -45,7 +51,8 @@ static_assert(sizeof(RayMeshGeometry) == 16, "RayMeshGeometry must match ray_hit
 // Hit shading reads vertices as floats at these offsets (RAY_VERTEX_* in ray_hit_common.glsl).
 static_assert(sizeof(Vertex) == 20 * sizeof(float), "RAY_VERTEX_FLOATS in ray_hit_common.glsl must match Vertex");
 static_assert(offsetof(Vertex, color) == 3 * sizeof(float) && offsetof(Vertex, texCoord) == 6 * sizeof(float) &&
-                  offsetof(Vertex, normal) == 8 * sizeof(float) && offsetof(Vertex, texCoord1) == 15 * sizeof(float),
+                  offsetof(Vertex, normal) == 8 * sizeof(float) && offsetof(Vertex, tangent) == 11 * sizeof(float) &&
+                  offsetof(Vertex, texCoord1) == 15 * sizeof(float),
               "RAY_VERTEX_* offsets in ray_hit_common.glsl must match Vertex");
 
 // Matches RayMaterial in ray_tracing_common.glsl: albedo and coverage, emission and flags.
@@ -554,7 +561,7 @@ void VulkanRayScene::SetContent(
             for (size_t index = 0; index < build.submeshMeshes.size() && index < models.size(); ++index)
             {
                 inputs.push_back(RayInstanceInput{
-                    build.submeshMeshes[index], models[index], slots[index], build.blend[index] != 0 ? kRayInstanceSkip : 0u});
+                    build.submeshMeshes[index], models[index], slots[index], build.blend[index] != 0 ? kRayInstanceBlend : 0u});
             }
             if (inputs.size() == build.submeshMeshes.size())
             {
@@ -722,13 +729,11 @@ void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::ma
     for (uint32_t index = 0; index < static_cast<uint32_t>(m_submeshMeshes.size()); ++index)
     {
         const uint32_t current = m_installedToCurrent[index];
-        // Blend surfaces are decals laid over others (New Sponza's dirt) or glass: thin layers that
-        // add little to the light between surfaces, and that a coverage decision per ray turns into
-        // noise on everything they lie on. Rays pass through them. So do submeshes streamed out since
-        // this content installed.
+        // Blend surfaces are seen by the path tracer's rays alone (kRayInstanceBlend). Submeshes
+        // streamed out since this content installed by none.
         const bool blend = index < m_installedBlend.size() && m_installedBlend[index] != 0;
         const bool moving = current != kNoSubmesh && current < movingInstances.size() && movingInstances[current] != 0;
-        const uint32_t flags = blend || current == kNoSubmesh ? kRayInstanceSkip : moving ? kRayInstanceDynamic : 0u;
+        const uint32_t flags = current == kNoSubmesh ? kRayInstanceSkip : (blend ? kRayInstanceBlend : 0u) | (moving ? kRayInstanceDynamic : 0u);
         if (current != kNoSubmesh)
         {
             m_installedModels[index] = models[current];
@@ -792,7 +797,9 @@ void VulkanRayScene::Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, b
             constants.params = glm::uvec4(
                 index,
                 static_cast<uint32_t>(submesh.alphaMode),
-                (submesh.doubleSided ? kRayMaterialDoubleSided : 0u) | (submesh.alphaMode == MaterialAlphaMode::Mask ? kRayMaterialAlphaMask : 0u),
+                (submesh.doubleSided ? kRayMaterialDoubleSided : 0u) | (submesh.alphaMode == MaterialAlphaMode::Mask ? kRayMaterialAlphaMask : 0u) |
+                    (submesh.alphaMode == MaterialAlphaMode::Blend ? kRayMaterialAlphaBlend : 0u) | (transmission > 0.0f ? kRayMaterialTransmission : 0u) |
+                    (submesh.normal.imageView != VK_NULL_HANDLE ? kRayMaterialNormalMap : 0u),
                 transmissionBits);
             vkCmdBindDescriptorSets(
                 commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_materialPipelineLayout, 0, 1, &m_materialSlots[index].set, 0, nullptr);
@@ -902,8 +909,8 @@ void VulkanRayScene::WriteTextureSlot(
     // The order of kRayTexturesPerSlot (RAY_TEXTURE_* in ray_hit_common.glsl).
     using Bindings = std::array<TextureDescriptorBinding, kRayTexturesPerSlot>;
     const Bindings bindings = source != nullptr
-                                  ? Bindings{source->baseColor, source->metallic, source->roughness, source->emissive}
-                                  : Bindings{m_defaultTexture, m_defaultTexture, m_defaultTexture, m_defaultTexture};
+                                  ? Bindings{source->baseColor, source->metallic, source->roughness, source->emissive, source->normal}
+                                  : Bindings{m_defaultTexture, m_defaultTexture, m_defaultTexture, m_defaultTexture, m_defaultTexture};
     // infos was reserved for every write, so the pointers taken below stay valid.
     const size_t first = infos.size();
     for (uint32_t index = 0; index < kRayTexturesPerSlot; ++index)

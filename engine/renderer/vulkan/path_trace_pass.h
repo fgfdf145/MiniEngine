@@ -2,6 +2,7 @@
 
 #include "compute_pass_util.h"
 #include "scene_pass.h"
+#include "uniform_buffer.h"
 
 #include <cstdint>
 #include <vector>
@@ -9,6 +10,7 @@
 namespace me
 {
 
+class VulkanPathTraceLayerPass;
 class VulkanRayScene;
 
 // GPU path tracing (docs/design/2026-10-07-path-tracing-design.md): the indirect light at every opaque
@@ -25,6 +27,13 @@ class VulkanRayScene;
 // With accumulation and denoising off, or while DLSS ray reconstruction denoises, the trace writes
 // the two targets itself. The pass owns its intermediate images (raw paths, three history pairs) and
 // makes them on the first path traced frame, so they cost nothing until path tracing is used.
+//
+// The same five dispatches then trace the forward-shaded surfaces' layer
+// (docs/design/2026-10-08-path-tracing-missing-effects-design.md): from VulkanPathTraceLayerPass's
+// G-buffer instead of the scene's, into histories and a result pair of its own, which the forward
+// pass samples (set 0 bindings 30 and 31) and which rest in SHADER_READ_ONLY_OPTIMAL between frames.
+// It runs with either path tracer, ReSTIR PT included, and always denoises itself: ray reconstruction
+// never sees it. The raw pair is the two's shared scratch.
 class VulkanPathTracePass : public IScenePass
 {
   public:
@@ -34,7 +43,8 @@ class VulkanPathTracePass : public IScenePass
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
-        const VulkanRayScene& rayScene);
+        const VulkanRayScene& rayScene,
+        TextureDescriptorBinding multiScattering);
     ~VulkanPathTracePass() override;
 
     VulkanPathTracePass(const VulkanPathTracePass&) = delete;
@@ -54,16 +64,38 @@ class VulkanPathTracePass : public IScenePass
     // do not exist yet; true when it made them, and their history must be reset. Recording before
     // this for a path traced frame records nothing.
     bool Prepare(const SceneRenderTargets& targets);
+    // The same for the forward-shaded surfaces' layer, read from the layer pass's images (which must
+    // exist); true when it made them: the caller resets the layer's history, moves the result pair to
+    // its resting layout (RecordLayerInitialTransition) and points set 0 at it.
+    bool PrepareLayer(const SceneRenderTargets& targets, const VulkanPathTraceLayerPass& layer);
+    bool IsLayerReady() const;
+    void RecordLayerInitialTransition(VkCommandBuffer commandBuffer) const;
+    // The layer's traced light through the diffuse and the specular lobes, nearest, for set 0.
+    TextureDescriptorBinding GetLayerDiffuseBinding() const;
+    TextureDescriptorBinding GetLayerSpecularBinding() const;
 
   private:
+    // The trace, and the temporal and filter dispatches the settings ask for, with one of the sets.
+    void RecordPaths(
+        VkCommandBuffer commandBuffer,
+        const ScenePassFrameContext& frame,
+        VkDescriptorSet passSet,
+        bool accumulate,
+        bool denoise,
+        bool historyValid,
+        float historyScale) const;
+    void CreateRaw(VkExtent2D extent);
     void WriteDescriptorSets(const SceneRenderTargets& targets);
+    void WriteLayerDescriptorSets(const VulkanPathTraceLayerPass& layer);
     void DestroyImages();
     void DestroyHandles();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     VkSampler m_nearestSampler = VK_NULL_HANDLE;
-    // One set for all three shaders (path_trace_common.glsl's bindings 0-17).
+    // The atmosphere's multiple-scattering LUT (binding 18), for the air along the paths.
+    TextureDescriptorBinding m_multiScattering;
+    // One set for all three shaders (path_trace_common.glsl's bindings 0-18).
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     // Frame set, ray set, this pass's set, ray texture table (the trace); frame set and this pass's set
@@ -76,11 +108,21 @@ class VulkanPathTracePass : public IScenePass
     // The raw paths (0 diffuse, 1 specular), rewritten every frame; and the accumulations of the two
     // channels and the surfaces they were made on, ping-ponged.
     HistoryImagePair m_raw;
+    bool m_rawReady = false;
     HistoryImagePair m_diffuseHistory;
     HistoryImagePair m_specularHistory;
     HistoryImagePair m_surfaceHistory;
     bool m_imagesReady = false;
     // Indexed by transient copy * 2 + history read index; written once the images exist.
     std::vector<VkDescriptorSet> m_descriptorSets;
+    // The layer's: its accumulations, its result (0 diffuse, 1 specular), its two sets (by history
+    // read index).
+    HistoryImagePair m_layerDiffuseHistory;
+    HistoryImagePair m_layerSpecularHistory;
+    HistoryImagePair m_layerSurfaceHistory;
+    HistoryImagePair m_layerResult;
+    bool m_layerReady = false;
+    mutable bool m_layerInitialized = false;
+    std::vector<VkDescriptorSet> m_layerDescriptorSets;
 };
 }

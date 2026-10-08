@@ -377,6 +377,14 @@ bool DdgiLightingWatch::Update(std::span<const glm::vec4> lighting)
     return changed;
 }
 
+bool DdgiLightingJumped(float previous, float current)
+{
+    const float floor = 1e-6f;
+    const float before = std::max(previous, floor);
+    const float after = std::max(current, floor);
+    return after > before * kDdgiLightingJump || after * kDdgiLightingJump < before;
+}
+
 bool DdgiLightingWatch::Changed() const
 {
     return m_changed;

@@ -47,6 +47,12 @@ struct MaterialPipelineSetConfig
     // alpha into albedo (rgb), GB2's metallic and roughness and emission, every other channel
     // masked, depth tested (nearer or equal) but not written.
     bool decal = false;
+    // gbuffer.frag's two path traced layer variants (PATH_TRACE_LAYER_PASS), against
+    // VulkanPathTraceLayerPass's render passes: 1 writes the fragment's depth, kept by a MAX blend on
+    // every variant, depth tested (nearer or equal) against the scene's but not written; 2 writes the
+    // G-buffer of the fragment at that depth, with no depth attachment. Constant 3, kBlendItem, says
+    // which variants draw Blend items, for every set.
+    int32_t layerPass = 0;
 };
 
 class VulkanPipelineSet

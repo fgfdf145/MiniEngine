@@ -95,12 +95,17 @@ struct RayInstance
 
 static_assert(sizeof(RayInstance) == 64, "RayInstance must stay four vec4 to match the shader");
 
-// Instances with this flag are skipped by every ray: Blend surfaces, and a moved instance's old leaf
-// in the full build (IncrementalTopLevel).
+// Instances with this flag are skipped by every ray: a moved instance's old leaf in the full build
+// (IncrementalTopLevel), and submeshes streamed out.
 inline constexpr uint32_t kRayInstanceSkip = 1u;
 // Moving instances (see the DDGI design): the probes' rays leave them out, so a passing car leaves no
 // trail in the probes' light; the per-pixel visibility rays (shadows, occlusion, reflections) see them.
 inline constexpr uint32_t kRayInstanceDynamic = 2u;
+// Blend surfaces: decals laid over others (New Sponza's dirt) and glass, thin layers that add little
+// to the light between surfaces, and that a coverage decision per ray turns into noise on everything
+// they lie on. Only the path tracer's own rays see them (RAY_MASK_PATH), each by its coverage; every
+// other ray, and TraceRay here, passes through.
+inline constexpr uint32_t kRayInstanceBlend = 4u;
 // RayInstance::data.w holds the mesh index above this many flag bits.
 inline constexpr uint32_t kRayInstanceMeshShift = 4u;
 inline constexpr uint32_t kRayInstanceFlagMask = (1u << kRayInstanceMeshShift) - 1u;
@@ -194,7 +199,8 @@ struct RayHit
 using RayHitFilter = std::function<bool(const RayHit&)>;
 
 // The nearest accepted hit, or none. anyHit stops at the first accepted one (shadow rays). Moving
-// instances (kRayInstanceDynamic) are left out as the probe rays leave them out.
+// instances (kRayInstanceDynamic) are left out as the probe rays leave them out, and Blend ones
+// (kRayInstanceBlend) as every ray but the path tracer's.
 bool TraceRay(const RayScene& scene, const Ray& ray, RayHit& hit, bool anyHit = false, const RayHitFilter& filter = {});
 
 // Moller-Trumbore against one triangle; t in (tMin, tMax).

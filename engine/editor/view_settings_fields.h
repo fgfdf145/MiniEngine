@@ -35,6 +35,8 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("path_tracing", "motion_frames", settings.pathTracing.motionFrames);
     visit("path_tracing", "max_frames", settings.pathTracing.maxFrames);
     visit("path_tracing", "denoise", settings.pathTracing.denoise);
+    visit("path_tracing", "forward_surfaces", settings.pathTracing.forwardSurfaces);
+    visit("path_tracing", "ray_media", settings.pathTracing.rayMedia);
     visit("path_tracing", "restir", settings.pathTracing.restir);
     RestirPtSettings& restirPt = settings.pathTracing.restirPt;
     visit("restir_pt", "temporal_reuse", restirPt.temporalReuse);

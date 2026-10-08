@@ -24,8 +24,11 @@
 // difference beyond four standard deviations of their spread (and a tenth of the mean) as a change.
 // So does a lighting epoch other than the one the probe recorded (the sun or the sky changed). Either
 // way the update keeps half of what the probe held and the count of averaged updates starts over at 1,
-// so the next ones keep 2/3, 3/4 and so on up to the hysteresis. The CPU learns of it through the
-// feedback buffer and updates the probe and its neighbours again soon (DdgiProbeScheduler).
+// so the next ones keep 2/3, 3/4 and so on up to the hysteresis; a change by more than
+// RESTART_RATIO either way keeps nothing: the n-th update after it still holds 1 / (n + 1) of the old
+// light, and from a sunlit afternoon to moonlight (some 10^5 times darker) that was thousands of
+// updates of daylight in a night scene. The CPU learns of it through the feedback buffer and updates
+// the probe and its neighbours again soon (DdgiProbeScheduler).
 
 #include "scene_common.glsl"
 #include "ddgi_common.glsl"
@@ -73,6 +76,8 @@ const float VISIBILITY_SHARPNESS = 50.0;
 const float CHANGE_SIGMAS = 4.0;
 const float CHANGE_RELATIVE = 0.1;
 const int CHANGE_MIN_UPDATES = 4;
+// A change by more than this factor either way starts the probe's average over from the new light.
+const float RESTART_RATIO = 2.0;
 // Within this many spacings of a surface a probe lights it: the farthest point of the cells it is a
 // corner of is sqrt(3) spacings away, plus its relocation of at most 0.45 spacing along each axis.
 const float EMPTY_DISTANCE = 2.5;
@@ -209,11 +214,13 @@ void main()
         float sigma = sqrt(max(stats.y - stats.x * stats.x, 0.0));
         bool changed = !fresh && (newLighting || (updateCount >= CHANGE_MIN_UPDATES &&
                                                   abs(luminance - stats.x) > CHANGE_SIGMAS * sigma + CHANGE_RELATIVE * stats.x + 1e-6));
+        bool restart = false;
         if (changed)
         {
             updateCount = 1;
+            restart = luminance > RESTART_RATIO * stats.x || luminance * RESTART_RATIO < stats.x;
         }
-        float hysteresis = fresh ? 0.0 : min(constants.hysteresis, float(updateCount) / float(updateCount + 1));
+        float hysteresis = fresh || restart ? 0.0 : min(constants.hysteresis, float(updateCount) / float(updateCount + 1));
         if (fresh)
         {
             stats.xy = vec2(luminance, luminance * luminance);

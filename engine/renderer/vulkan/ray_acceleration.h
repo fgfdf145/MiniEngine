@@ -23,6 +23,8 @@ struct RayTracingFunctions;
 // rays trace kRayMaskStatic only, the per-pixel visibility rays both.
 inline constexpr uint8_t kRayMaskStatic = 0x1;
 inline constexpr uint8_t kRayMaskDynamic = 0x2;
+// Blend surfaces (kRayInstanceBlend), moving or not: only the path tracer's rays name it.
+inline constexpr uint8_t kRayMaskBlend = 0x4;
 
 // One mesh's bottom-level acceleration structure, shared by every content that holds the mesh and
 // freed with the last of them. Made on the ray scene's worker, built on the GPU by the

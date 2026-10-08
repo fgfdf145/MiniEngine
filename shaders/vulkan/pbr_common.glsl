@@ -1369,7 +1369,18 @@ vec3 ShadeSurface(
     {
         // The lobes carry the sheen's and the coat's attenuation of the base already.
         PathTraceLobes lobes = PathTraceLobesOf(N, V, albedo, metallic, roughness, specular, coat, sheen);
-        color += pathTracedDiffuse * lobes.diffuse + pathTracedSpecular * (lobes.specular + lobes.coat);
+        vec3 diffuse = pathTracedDiffuse * lobes.diffuse;
+        if (Transmits(specular))
+        {
+            // A forward-shaded transmissive surface: the light from behind it takes the share of the
+            // diffuse its transmission says, as in EvaluateSkyAmbient (the back's irradiance for
+            // diffuse transmission from the probes, which the paths do not trace).
+            vec3 dielectric = EvaluateBaseSpecularAlbedos(SampleEnvironmentBrdf(roughness, max(dot(N, V), 0.0)), albedo, metallic, specular).dielectric;
+            vec3 front = pathTracedDiffuse * albedo * (1.0 - metallic) * (vec3(1.0) - dielectric);
+            front = MixDiffuseTransmittedAmbient(front, SceneDiffuseAmbient(worldPosition, -N, V) * ao, metallic, dielectric, specular);
+            diffuse = MixTransmittedAmbient(front, metallic, dielectric, specular) * lobes.baseScale;
+        }
+        color += diffuse + pathTracedSpecular * (lobes.specular + lobes.coat);
     }
     return color;
 }

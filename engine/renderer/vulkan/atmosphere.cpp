@@ -124,6 +124,11 @@ TextureDescriptorBinding VulkanAtmosphere::GetSkyViewBinding() const
     return TextureDescriptorBinding{m_images[kSkyView].view, m_sampler};
 }
 
+TextureDescriptorBinding VulkanAtmosphere::GetMultiScatteringBinding() const
+{
+    return TextureDescriptorBinding{m_images[kMultiScattering].view, m_sampler};
+}
+
 TextureDescriptorBinding VulkanAtmosphere::GetAerialPerspectiveBinding(const View& view) const
 {
     return TextureDescriptorBinding{view.m_aerialPerspective.view, m_sampler};
