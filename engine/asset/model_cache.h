@@ -37,6 +37,10 @@ void UpdateMaterials(const std::string& path, const std::vector<ModelImportedMat
 // materials.
 bool UpdateMaterial(const std::string& path, size_t index, const ModelImportedMaterialInfo& material);
 
+// Replaces the car data of the cached model (a car's tyres refitted and saved). False when the path is
+// not cached.
+bool UpdateCarSpec(const std::string& path, const VehicleCarSpec& spec);
+
 // Removes the cached entry for `path`. If `path` is a directory, every cached
 // model under it is removed as well. Call before deleting assets on disk so
 // stale data is not served for a re-imported file at the same path.

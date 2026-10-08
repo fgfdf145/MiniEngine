@@ -4,6 +4,7 @@
 #include "model_post_process.h"
 #include "model_tyre.h"
 #include "texture_loader.h"
+#include "tyre_library.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
@@ -2958,6 +2959,39 @@ std::optional<VehicleCarSpec> ReadCarSpec(const tinygltf::Model& model)
     {
         spec.defaultTyreCompound = static_cast<int>(*index);
     }
+    // The car's tyres in the shared library: {"compounds": [{"name", "front", "rear"}], "wheels": [4 refs]}.
+    if (extension.Has("tyres") && extension.Get("tyres").IsObject())
+    {
+        const tinygltf::Value& tyres = extension.Get("tyres");
+        const auto ref = [](const tinygltf::Value& object, const char* key)
+        {
+            VehicleTyreRef out;
+            if (object.IsObject() && object.Has(key) && object.Get(key).IsObject())
+            {
+                out.uuid = VehicleText(object.Get(key), "uuid");
+                out.path = VehicleText(object.Get(key), "path");
+            }
+            return out;
+        };
+        if (tyres.Has("compounds") && tyres.Get("compounds").IsArray())
+        {
+            const tinygltf::Value& compounds = tyres.Get("compounds");
+            for (size_t index = 0; index < compounds.ArrayLen(); ++index)
+            {
+                const tinygltf::Value& value = compounds.Get(static_cast<int>(index));
+                spec.libraryCompounds.push_back(VehicleTyreCompoundRefs{VehicleText(value, "name"), ref(value, "front"), ref(value, "rear")});
+            }
+        }
+        if (tyres.Has("wheels") && tyres.Get("wheels").IsArray())
+        {
+            const tinygltf::Value& wheels = tyres.Get("wheels");
+            for (size_t index = 0; index < std::min<size_t>(wheels.ArrayLen(), kVehicleWheelCount); ++index)
+            {
+                const tinygltf::Value& value = wheels.Get(static_cast<int>(index));
+                spec.wheelTyreRefs[index] = VehicleTyreRef{VehicleText(value, "uuid"), VehicleText(value, "path")};
+            }
+        }
+    }
     if (extension.Has("turbos") && extension.Get("turbos").IsArray())
     {
         const tinygltf::Value& turbos = extension.Get("turbos");
@@ -3362,6 +3396,14 @@ LoadedModelData BuildLoadedModelData(
 
     modelData.skeleton = BuildSkeleton(tinyModel, modelData);
     modelData.carSpec = ReadCarSpec(tinyModel);
+    if (modelData.carSpec.has_value())
+    {
+        // The wheels' tyres from the shared library, else the car's own default compound.
+        if (const int fallbacks = TyreLibrary::ResolveWheelTyres(*modelData.carSpec); fallbacks > 0)
+        {
+            LOG_WARN("'{}': {} wheel tyre(s) not found in the tyre library; the car's own default compound is used", modelPath.string(), fallbacks);
+        }
+    }
     modelData.wheelRig = BuildWheelRig(wheelScan, modelData.submeshes);
     PrepareModelTyres(modelData);
     if (std::any_of(modelData.submeshes.begin(), modelData.submeshes.end(), [](const ModelSubmeshData& submesh)

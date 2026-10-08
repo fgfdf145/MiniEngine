@@ -88,7 +88,7 @@ RenameableName SplitRenameableName(const std::string& name, bool isDirectory)
     }
 
     // Suffixes that span two dots and carry meaning as a whole.
-    for (const std::string_view compound : {std::string_view(".material.yaml"), std::string_view(".miniengine_asset.yaml")})
+    for (const std::string_view compound : {std::string_view(".material.yaml"), std::string_view(".tyre.yaml"), std::string_view(".miniengine_asset.yaml")})
     {
         if (name.size() > compound.size() && name.ends_with(compound))
         {

@@ -319,8 +319,10 @@ suspension::CarModel BuildCarModel(const VehicleCarSpec& dryspec, const std::str
         corner.friction = setup.friction;
         corner.antiRollBarRate = setup.antiRollBarRate;
         corner.hubMass = axle.hubMass;
-        corner.tyreRate = axle.tyreRate;
-        corner.tyreDamping = axle.tyreDamping;
+        // The wheel's own tyre's spring and damper; a car imported before the tyre library has its axle's.
+        const VehicleTyreSettings& tyre = settings.tyres[index];
+        corner.tyreRate = tyre.verticalRate > 0.0f ? tyre.verticalRate : axle.tyreRate;
+        corner.tyreDamping = tyre.verticalRate > 0.0f ? tyre.verticalDamping : axle.tyreDamping;
         const double halfTrack = 0.5 * axle.track;
         corner.position = suspension::Vec3(front ? car.wheelbase : 0.0, index % 2 == 0 ? halfTrack : -halfTrack, 0.0);
         if (axle.type == VehicleSuspensionType::SolidAxle && index % 2 == 0)

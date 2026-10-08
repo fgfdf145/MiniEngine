@@ -782,8 +782,8 @@ void TestWheelStateReportsTyrePhysics()
     AddGroundMesh(world);
     VehicleSettings tuning;
     tuning.massKg = 1400.0f;
-    tuning.frontTyres = {1.4f, 1.6f, 0.1f, 6.0f, 0.0f, 0.0f};
-    tuning.rearTyres = tuning.frontTyres;
+    SetAxleTyres(tuning, true, {1.4f, 1.6f, 0.1f, 6.0f, 0.0f, 0.0f});
+    SetAxleTyres(tuning, false, tuning.tyres[0]);
     const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning);
     const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
     Simulate(world, 3.0f);
@@ -917,16 +917,16 @@ void TestCarDataGivesDifferentialAndTyreSensitivity()
     RequireNear(settings.limitedSlipLock, 0.5f, 1e-6f, "the lock under power");
     RequireNear(settings.limitedSlipCoast, 0.3f, 1e-6f, "on the overrun");
     RequireNear(settings.limitedSlipPreload, 10.0f, 1e-6f, "and the preload");
-    RequireNear(settings.frontTyres.longitudinalLoadExponent, 0.9f, 1e-6f, "the front tyres' load sensitivity along the wheel");
-    RequireNear(settings.frontTyres.lateralLoadExponent, 0.84f, 1e-6f, "and across it");
-    RequireNear(settings.rearTyres.longitudinalLoadExponent, 0.8f, 1e-6f, "the rear's, the one given for both");
-    RequireNear(settings.rearTyres.lateralLoadExponent, 0.8f, 1e-6f, "the rear's across");
+    RequireNear(settings.tyres[0].longitudinalLoadExponent, 0.9f, 1e-6f, "the front tyres' load sensitivity along the wheel");
+    RequireNear(settings.tyres[0].lateralLoadExponent, 0.84f, 1e-6f, "and across it");
+    RequireNear(settings.tyres[2].longitudinalLoadExponent, 0.8f, 1e-6f, "the rear's, the one given for both");
+    RequireNear(settings.tyres[2].lateralLoadExponent, 0.8f, 1e-6f, "the rear's across");
     // The brush tyre's build from the same compound: the pressure from psi.
-    RequireNear(settings.frontTyres.rimRadius, 0.254f, 1e-6f, "the rim's radius");
-    RequireNear(settings.frontTyres.inflationPressure, 28.0f * 6894.757f, 1.0f, "the inflation pressure in pascals");
-    RequireNear(settings.frontTyres.relaxationLength, 0.0757f, 1e-6f, "the relaxation length");
-    RequireNear(settings.frontTyres.longitudinalStiffnessRatio, 1.04f, 1e-6f, "the tread's fore-aft stiffness ratio");
-    Require(settings.rearTyres.relaxationLength == 0.0f && settings.rearTyres.inflationPressure == 0.0f, "none given: the brush tyre's defaults");
+    RequireNear(settings.tyres[0].rimRadius, 0.254f, 1e-6f, "the rim's radius");
+    RequireNear(settings.tyres[0].inflationPressure, 28.0f * 6894.757f, 1.0f, "the inflation pressure in pascals");
+    RequireNear(settings.tyres[0].relaxationLength, 0.0757f, 1e-6f, "the relaxation length");
+    RequireNear(settings.tyres[0].longitudinalStiffnessRatio, 1.04f, 1e-6f, "the tread's fore-aft stiffness ratio");
+    Require(settings.tyres[2].relaxationLength == 0.0f && settings.tyres[2].inflationPressure == 0.0f, "none given: the brush tyre's defaults");
     Require(ApplyCarSpec(VehicleSettings{}, VehicleCarSpec{}).limitedSlipPreload < 0.0f, "no data: the default preload");
 
     // The gearbox's and clutch's figures, and the electronics: the game's traction control replaces ours.
@@ -2367,7 +2367,7 @@ void TestCarSpecReplacesWhatItKnows()
     Require(applied.shiftUpRpm == 0.0f && applied.shiftDownRpm == 0.0f, "the shift points follow the revs");
     Require(applied.gearSwitchSeconds == 0.03f && applied.clutchReleaseSeconds == 0.1f && applied.engineInertia == 0.137f,
             "the clutch and the engine's inertia");
-    Require(applied.frontTyres.longitudinalGrip == 1.314f && applied.rearTyres.inertia == 1.97f && applied.rearTyres.postPeakShare == 0.86f,
+    Require(applied.tyres[0].longitudinalGrip == 1.314f && applied.tyres[2].inertia == 1.97f && applied.tyres[2].postPeakShare == 0.86f,
             "the tyres");
     Require(applied.maxSteerAngleDegrees == 26.7f, "the steering lock");
     Require(applied.maxBrakeTorque == 800.0f && applied.frontBrakeShare == 0.65f && applied.maxHandBrakeTorque == 1000.0f, "the brakes");
@@ -2730,8 +2730,10 @@ void TestAutomaticBrakesDoNotLockTheWheels()
     heavy.massKg = car.massKg * 2.0f;
     RequireNear(ComputeBrakeTorquePerWheel(heavy), torque * 2.0f, 1e-3f, "a car twice as heavy needs brakes twice as strong");
     VehicleSettings grippy = car;
-    grippy.frontTyres.longitudinalGrip = 2.2f;
-    grippy.rearTyres.longitudinalGrip = 2.2f;
+    for (VehicleTyreSettings& tyre : grippy.tyres)
+    {
+        tyre.longitudinalGrip = 2.2f;
+    }
     Require(ComputeBrakeTorquePerWheel(grippy) > torque * 1.8f, "and tyres twice as grippy hold twice the torque");
     VehicleSettings tuned = car;
     tuned.maxBrakeTorque = 321.0f;

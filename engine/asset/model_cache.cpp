@@ -117,6 +117,19 @@ bool UpdateMaterial(const std::string& path, size_t index, const ModelImportedMa
     return true;
 }
 
+bool UpdateCarSpec(const std::string& path, const VehicleCarSpec& spec)
+{
+    const std::string key = NormalizeKey(path);
+    std::lock_guard<std::mutex> lock(s_modelCacheMutex);
+    const auto it = s_modelCache.find(key);
+    if (it == s_modelCache.end() || !it->second.data)
+    {
+        return false;
+    }
+    it->second.data->carSpec = spec;
+    return true;
+}
+
 void Invalidate(const std::string& path)
 {
     const std::string key = NormalizeKey(path);

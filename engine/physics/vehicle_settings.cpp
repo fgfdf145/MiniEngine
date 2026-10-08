@@ -52,8 +52,8 @@ float ComputeBrakeTorquePerWheel(const VehicleSettings& settings)
     // Sharing the brakes by load gives the fronts more of the torque than the fixed split does, and they
     // lock first: the total is held a little lower so that the car keeps its steering.
     const float gripUsed = settings.dynamicBrakeBias ? 0.66f : 0.75f;
-    const float front = settings.frontTyres.longitudinalGrip;
-    const float rear = settings.rearTyres.longitudinalGrip;
+    const float front = 0.5f * (settings.tyres[0].longitudinalGrip + settings.tyres[1].longitudinalGrip);
+    const float rear = 0.5f * (settings.tyres[2].longitudinalGrip + settings.tyres[3].longitudinalGrip);
     const float grip = front > 0.0f && rear > 0.0f ? 0.5f * (front + rear) : std::max(front, rear) > 0.0f ? std::max(front, rear) : kDefaultGrip;
     return gripUsed * grip * std::max(settings.massKg, 1.0f) * kGravity * std::max(settings.wheelRadius, 0.01f) * 0.25f;
 }
@@ -336,6 +336,60 @@ std::vector<glm::vec2> AddTorqueCurves(const std::vector<glm::vec2>& a, const st
     return sum;
 }
 
+float StaticTyreLoad(const VehicleCarSpec& dryspec, bool front)
+{
+    if (!dryspec.massKg.has_value() || *dryspec.massKg <= 0.0f)
+    {
+        return 0.0f;
+    }
+    // As the kn5 import took it: the share of CG_LOCATION, or half.
+    const float frontWeight = dryspec.frontWeightShare.value_or(0.5f);
+    return *dryspec.massKg * kGravity * (front ? frontWeight : 1.0f - frontWeight) * 0.5f;
+}
+
+VehicleTyreSettings TyreSettingsFromSpec(const tyre::TyreSpec& spec, float staticLoadNewtons)
+{
+    VehicleTyreSettings settings;
+    settings.longitudinalGrip = tyre::LongitudinalGripAtLoad(spec, staticLoadNewtons);
+    settings.lateralGrip = tyre::LateralGripAtLoad(spec, staticLoadNewtons);
+    if (const float limitAngle = spec.slip.frictionLimitAngleDegrees.value_or(0.0f); limitAngle > 0.0f)
+    {
+        settings.peakSlipAngleDegrees = limitAngle;
+        // A brush tyre reaches its longitudinal peak at about the slip the lateral one does.
+        settings.peakSlipRatio = std::tan(limitAngle * std::numbers::pi_v<float> / 180.0f);
+    }
+    if (const float falloff = spec.slip.falloffLevel.value_or(0.0f); falloff > 0.0f && falloff <= 1.0f)
+    {
+        settings.postPeakShare = falloff;
+    }
+    settings.inertia = spec.size.angularInertia.value_or(0.0f);
+    // How the grip falls with load: LS_EXPX along the wheel, LS_EXPY across it (the peak force grows as the
+    // load to that power); one alone stands for both.
+    const float x = spec.grip.longitudinalLoadExponent.value_or(0.0f);
+    const float y = spec.grip.lateralLoadExponent.value_or(0.0f);
+    if (x > 0.0f || y > 0.0f)
+    {
+        settings.longitudinalLoadExponent = std::min(x > 0.0f ? x : y, 1.0f);
+        settings.lateralLoadExponent = std::min(y > 0.0f ? y : x, 1.0f);
+    }
+    // The brush tyre's build: RIM_RADIUS, PRESSURE_STATIC (psi), RELAXATION_LENGTH and CX_MULT.
+    const auto positive = [](const std::optional<float>& value) { return std::max(value.value_or(0.0f), 0.0f); };
+    constexpr float kPascalsPerPsi = 6894.757f;
+    settings.rimRadius = positive(spec.size.rimRadius);
+    settings.inflationPressure = positive(spec.pressure.staticPsi) * kPascalsPerPsi;
+    settings.relaxationLength = positive(spec.slip.relaxationLength);
+    settings.longitudinalStiffnessRatio = positive(spec.slip.longitudinalStiffnessRatio);
+    settings.verticalRate = positive(spec.vertical.rate);
+    settings.verticalDamping = positive(spec.vertical.damping);
+    return settings;
+}
+
+void SetAxleTyres(VehicleSettings& settings, bool front, const VehicleTyreSettings& tyres)
+{
+    settings.tyres[front ? 0 : 2] = tyres;
+    settings.tyres[front ? 1 : 3] = tyres;
+}
+
 VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& dryspec)
 {
     const VehicleCarSpec spec = WithStartingFuel(dryspec);
@@ -468,54 +522,23 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
         }
         settings.linearDamping = 0.0f;
     }
-    if (spec.frontTyres.has_value())
+    // The tyres by wheel: the ones the model loader resolved (the library's), the default compound's for a
+    // spec read straight from the game's data, else the figures an import before the library wrote per axle.
     {
-        settings.frontTyres = *spec.frontTyres;
-    }
-    if (spec.rearTyres.has_value())
-    {
-        settings.rearTyres = *spec.rearTyres;
-    }
-    // How the tyres' grip falls with load, from the compound they start on: the game's LS_EXPX and LS_EXPY
-    // (the peak force grows as the load to that power), their mean for the brush tyre's one coefficient, as
-    // its grip is the mean of DX and DY.
-    if (spec.defaultTyreCompound.has_value() && *spec.defaultTyreCompound >= 0 && static_cast<size_t>(*spec.defaultTyreCompound) < spec.tyreCompounds.size())
-    {
-        const VehicleTyreCompound& compound = spec.tyreCompounds[static_cast<size_t>(*spec.defaultTyreCompound)];
-        // LS_EXPX along the wheel, LS_EXPY across it; one alone stands for both.
-        const auto exponents = [](const VehicleTyreData& tyre, VehicleTyreSettings& out)
+        const std::array<std::optional<tyre::TyreSpec>, kVehicleWheelCount> compound = DefaultWheelTyres(dryspec);
+        for (size_t index = 0; index < kVehicleWheelCount; ++index)
         {
-            const auto read = [&](const char* key)
+            const bool front = index < 2;
+            const std::optional<tyre::TyreSpec>& fitted = dryspec.wheelTyres[index].has_value() ? dryspec.wheelTyres[index] : compound[index];
+            if (fitted.has_value())
             {
-                const auto found = tyre.values.find(key);
-                return found != tyre.values.end() ? found->second : 0.0f;
-            };
-            const float x = read("LS_EXPX");
-            const float y = read("LS_EXPY");
-            if (x > 0.0f || y > 0.0f)
-            {
-                out.longitudinalLoadExponent = std::min(x > 0.0f ? x : y, 1.0f);
-                out.lateralLoadExponent = std::min(y > 0.0f ? y : x, 1.0f);
+                settings.tyres[index] = TyreSettingsFromSpec(*fitted, StaticTyreLoad(dryspec, front));
             }
-        };
-        exponents(compound.front, settings.frontTyres);
-        exponents(compound.rear, settings.rearTyres);
-        // The brush tyre's build: RIM_RADIUS, PRESSURE_STATIC (psi), RELAXATION_LENGTH and CX_MULT.
-        const auto build = [](const VehicleTyreData& tyre, VehicleTyreSettings& out)
-        {
-            const auto read = [&](const char* key)
+            else if (const std::optional<VehicleTyreSettings>& axle = front ? spec.frontTyres : spec.rearTyres; axle.has_value())
             {
-                const auto found = tyre.values.find(key);
-                return found != tyre.values.end() ? std::max(found->second, 0.0f) : 0.0f;
-            };
-            constexpr float kPascalsPerPsi = 6894.757f;
-            out.rimRadius = read("RIM_RADIUS");
-            out.inflationPressure = read("PRESSURE_STATIC") * kPascalsPerPsi;
-            out.relaxationLength = read("RELAXATION_LENGTH");
-            out.longitudinalStiffnessRatio = read("CX_MULT");
-        };
-        build(compound.front, settings.frontTyres);
-        build(compound.rear, settings.rearTyres);
+                settings.tyres[index] = *axle;
+            }
+        }
     }
 
     if (spec.maxSteerAngleDegrees.has_value() && *spec.maxSteerAngleDegrees > 0.0f)

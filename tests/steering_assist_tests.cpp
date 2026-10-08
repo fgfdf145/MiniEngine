@@ -210,7 +210,7 @@ StepSteer RunStepSteer(const VehicleSettings& car, const VehicleSteeringAssistSe
     input.request = 1.0f;
     input.maxSteerDegrees = car.maxSteerAngleDegrees;
     input.wheelbase = car.frontAxleZ - car.rearAxleZ;
-    input.peakSlipDegrees = car.frontTyres.peakSlipAngleDegrees;
+    input.peakSlipDegrees = car.tyres[0].peakSlipAngleDegrees;
     VehicleSteeringAssistState state;
     StepSteer result;
     int counted = 0;
@@ -256,9 +256,9 @@ void SlipLimitHoldsTheFrontTyresAtTheirPeak()
     const StepSteer before = RunStepSteer(car, open, 60.0f);
     const StepSteer after = RunStepSteer(car, closed, 60.0f);
     std::cout << "GT-R full stick at 60 km/h, without -> with the slip limit: front slip " << before.frontSlip << " -> " << after.frontSlip << " deg (peak "
-              << car.frontTyres.peakSlipAngleDegrees << "), lateral " << before.lateralG << " -> " << after.lateralG << " g, speed lost " << before.speedLost << " -> "
+              << car.tyres[0].peakSlipAngleDegrees << "), lateral " << before.lateralG << " -> " << after.lateralG << " g, speed lost " << before.speedLost << " -> "
               << after.speedLost << " km/h, telemetry against the tyres within " << after.travelError << " deg\n";
-    const float peak = car.frontTyres.peakSlipAngleDegrees;
+    const float peak = car.tyres[0].peakSlipAngleDegrees;
     Require(after.travelError < 1.0f, "the front axle's travel and the wheels' angle give the tyres' slip");
     Require(before.frontSlip > 1.25f * peak, "without the limit the front tyres are well past their peak");
     Require(after.frontSlip < closed.slipLimitShare * peak + 0.5f, "with it they stay at the share of the peak");

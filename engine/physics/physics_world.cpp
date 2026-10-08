@@ -542,7 +542,7 @@ float RollingResistanceTorque(float wheelSpeed, float torque, float inertia, flo
 // less the rim's) less what stays pinched between them.
 float RimDeflection(const VehicleSettings& settings, size_t wheelIndex)
 {
-    const VehicleTyreSettings& tyres = wheelIndex < 2 ? settings.frontTyres : settings.rearTyres;
+    const VehicleTyreSettings& tyres = settings.tyres[wheelIndex];
     const float radius = GetVehicleWheelMount(settings, wheelIndex).radius;
     if (tyres.rimRadius <= 0.0f || tyres.rimRadius >= radius)
     {
@@ -573,6 +573,19 @@ float MultibodyDesignLength(const VehicleSettings& settings)
     const float bump = std::max(MultibodyBumpTravel(settings.frontSuspension), MultibodyBumpTravel(settings.rearSuspension));
     const float tyre = std::max({TyreDeflectionRoom(settings, 0), TyreDeflectionRoom(settings, 2), kDefaultRimDeflection});
     return bump + 0.05f + tyre;
+}
+
+// A wheel's tyre spring and damper: its tyre's, or for a car imported before the tyre library its axle's.
+float TyreVerticalRate(const VehicleSettings& settings, size_t index)
+{
+    const VehicleSuspensionAxle& axle = index < 2 ? settings.frontSuspension : settings.rearSuspension;
+    return settings.tyres[index].verticalRate > 0.0f ? settings.tyres[index].verticalRate : axle.tyreRate;
+}
+
+float TyreVerticalDamping(const VehicleSettings& settings, size_t index)
+{
+    const VehicleSuspensionAxle& axle = index < 2 ? settings.frontSuspension : settings.rearSuspension;
+    return settings.tyres[index].verticalRate > 0.0f ? settings.tyres[index].verticalDamping : std::max(axle.tyreDamping, 0.0f);
 }
 
 // The axle's wheels are masses of their own on tyre springs (the data gives hub mass and tyre rate):
@@ -654,15 +667,14 @@ float StaticWheelLoad(const VehicleSettings& settings, bool front)
     return static_cast<float>((body + SeparateHubMass(settings, front ? 0 : 2)) * 9.81);
 }
 
-// A wheel's brush tyre from its axle's tyre figures: the peak grip along and across the wheel at the load
+// A wheel's brush tyre from its tyre's figures: the peak grip along and across the wheel at the load
 // it carries standing still (a road tyre's 1.1 without data; one alone stands for both), the slip angle of
 // the lateral peak (7 degrees without) and the slip ratio of the longitudinal one, the share of grip left
-// well past the peak, the wheel's size and the axle's tyre rate.
+// well past the peak, the wheel's size and its tyre rate.
 tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settings, size_t index)
 {
     const bool front = index < 2;
-    const VehicleTyreSettings& tyres = front ? settings.frontTyres : settings.rearTyres;
-    const VehicleSuspensionAxle& axle = front ? settings.frontSuspension : settings.rearSuspension;
+    const VehicleTyreSettings& tyres = settings.tyres[index];
     const VehicleWheelGeometry mount = GetVehicleWheelMount(settings, index);
     const double lateralGrip = tyres.lateralGrip > 0.0f ? tyres.lateralGrip : (tyres.longitudinalGrip > 0.0f ? tyres.longitudinalGrip : 1.1);
     const double longitudinalGrip = tyres.longitudinalGrip > 0.0f ? tyres.longitudinalGrip : lateralGrip;
@@ -676,7 +688,7 @@ tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settin
     figures.radius = std::max(mount.radius, 0.05f);
     figures.sectionWidth = std::max(mount.width, 0.05f);
     figures.rimRadius = tyres.rimRadius;
-    figures.verticalRate = axle.tyreRate;
+    figures.verticalRate = TyreVerticalRate(settings, index);
     figures.inflationPressure = tyres.inflationPressure;
     figures.relaxationLength = tyres.relaxationLength;
     figures.longitudinalStiffnessRatio = tyres.longitudinalStiffnessRatio;
@@ -740,7 +752,7 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
         // The axles share the four wheels' total by the front's share, so an even 0.5 leaves each
         // wheel at the brake torque.
         const float axleShare = std::clamp(front ? settings.frontBrakeShare : 1.0f - settings.frontBrakeShare, 0.0f, 1.0f);
-        ApplyTyres(*wheel, front ? settings.frontTyres : settings.rearTyres);
+        ApplyTyres(*wheel, settings.tyres[index]);
         wheel->mMaxBrakeTorque = ComputeBrakeTorquePerWheel(settings) * 2.0f * axleShare;
         wheel->mMaxHandBrakeTorque = front ? 0.0f : std::max(settings.maxHandBrakeTorque, 0.0f);
         if (multibody)
@@ -1111,8 +1123,8 @@ struct PhysicsWorld::Impl
             corner.front = front;
             corner.unsprung = unsprung;
             corner.hubMass = axle.hubMass;
-            corner.tyreRate = axle.tyreRate;
-            corner.tyreDamping = std::max(axle.tyreDamping, 0.0f);
+            corner.tyreRate = TyreVerticalRate(settings, index);
+            corner.tyreDamping = TyreVerticalDamping(settings, index);
             corner.bumpTravel = setup.bumpTravel;
             corner.droopTravel = setup.droopTravel;
             corner.endStopRate = kEndStopTyreRates * corner.tyreRate;

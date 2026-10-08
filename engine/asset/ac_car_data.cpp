@@ -661,24 +661,6 @@ void ReadSection(
     }
 }
 
-// The friction coefficient of a tyre at a wheel load along one direction: the reference friction at the
-// reference load scaled by the load raised to the sensitivity exponent less one, or the file's plain
-// coefficients without those.
-float GripAtLoad(const VehicleTyreData& tyre, const char* reference, const char* exponent, const char* base, const char* slope, float loadNewtons)
-{
-    const auto value = [&](const char* key) -> float
-    {
-        const auto found = tyre.values.find(key);
-        return found == tyre.values.end() ? 0.0f : found->second;
-    };
-    const float referenceLoad = value("FZ0");
-    if (value(reference) > 0.0f && referenceLoad > 0.0f && value(exponent) > 0.0f && loadNewtons > 0.0f)
-    {
-        return value(reference) * std::pow(loadNewtons / referenceLoad, value(exponent) - 1.0f);
-    }
-    return value(base) + value(slope);
-}
-
 // The physics engine's tyre from a compound's axle at the load one wheel carries at rest.
 VehicleTyreSettings TyreSettingsFor(const VehicleTyreData& tyre, float staticLoadNewtons)
 {
@@ -688,8 +670,9 @@ VehicleTyreSettings TyreSettingsFor(const VehicleTyreData& tyre, float staticLoa
         return found == tyre.values.end() ? 0.0f : found->second;
     };
     VehicleTyreSettings settings;
-    settings.longitudinalGrip = GripAtLoad(tyre, "DX_REF", "LS_EXPX", "DX0", "DX1", staticLoadNewtons);
-    settings.lateralGrip = GripAtLoad(tyre, "DY_REF", "LS_EXPY", "DY0", "DY1", staticLoadNewtons);
+    const tyre::TyreSpec spec = tyre::TyreSpecFromAc(tyre.name, tyre.shortName, tyre.values, tyre.curves);
+    settings.longitudinalGrip = tyre::LongitudinalGripAtLoad(spec, staticLoadNewtons);
+    settings.lateralGrip = tyre::LateralGripAtLoad(spec, staticLoadNewtons);
     const float limitAngle = value("FRICTION_LIMIT_ANGLE");
     if (limitAngle > 0.0f)
     {

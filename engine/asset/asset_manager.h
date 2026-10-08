@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <filesystem>
 #include <optional>
@@ -66,6 +66,7 @@ class AssetManager
         Scene,
         Texture,
         Audio,
+        Tyre,
         Other
     };
 
@@ -164,6 +165,9 @@ class AssetManager
     // across a whole-tree rescan, so calling it per frame stalls the UI.
     int m_previewUuidIndex = -1;
     std::string m_previewUuid;
+    // The focused tyre file, read once: the entry index it was read for and what it holds.
+    int m_previewTyreIndex = -1;
+    std::string m_previewTyre;
     std::string m_clipboard;
     bool m_needsScan = true;
     // Shown in red under the toolbar: a browser action that failed, or a missing assets folder.

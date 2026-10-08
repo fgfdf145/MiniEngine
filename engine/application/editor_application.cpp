@@ -1,6 +1,7 @@
 #include "editor_application.h"
 
 #include <engine/asset/compressed_texture_cache.h>
+#include <engine/asset/tyre_library.h>
 #include <engine/audio/audio_engine.h>
 #include <engine/core/log/log.h>
 #include <engine/core/threading/task_future.h>
@@ -295,6 +296,14 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--adopt-car-tyres")
+        {
+            const std::string_view gltf = ReadRequiredArgument(i, argc, argv, argument);
+            const std::string_view folder = ReadRequiredArgument(i, argc, argv, argument);
+            options.adoptCarTyres.emplace_back(std::string(gltf), std::string(folder));
+            continue;
+        }
+
         if (argument == "--physics-rate")
         {
             const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
@@ -503,6 +512,15 @@ int EditorApplication::Run()
     platform::process::RequestFullSpeedScheduling();
     // Resolve the directory roots before any subsystem touches the filesystem.
     EnginePaths::Initialize(m_options.paths);
+    if (!m_options.adoptCarTyres.empty())
+    {
+        for (const auto& [gltf, folder] : m_options.adoptCarTyres)
+        {
+            const size_t tyres = TyreLibrary::AdoptGltfCarTyres(EnginePaths::ResolveProjectPath(gltf), folder);
+            LOG_INFO("'{}': its {} compound tyre(s) are in the tyre library under '{}'", gltf, tyres, folder);
+        }
+        return 0;
+    }
     // The priority and CPUs, before the task system sizes its workers to those CPUs. The editor
     // loads the rest of the settings later; a change in the Preferences window applies at once.
     const std::vector<uint32_t> processCpus = ApplyStartupProcessAllocation();

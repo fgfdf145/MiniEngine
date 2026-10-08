@@ -27,8 +27,8 @@ target_link_libraries(engine_physics
     PUBLIC
         glm::glm
         engine_suspension
+        engine_tyre
     PRIVATE
         engine_core
-        engine_tyre
         Jolt::Jolt
 )

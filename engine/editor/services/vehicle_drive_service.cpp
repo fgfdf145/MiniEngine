@@ -2,6 +2,7 @@
 
 #include <engine/asset/ac_car_data.h>
 #include <engine/asset/model_cache.h>
+#include <engine/asset/tyre_library.h>
 #include <engine/core/input/input.h>
 #include <engine/core/log/log.h>
 #include <engine/editor/renderer_shared_state.h>
@@ -340,9 +341,31 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     }
     // A model that carries its car's own figures drives on them, unless the tuning asks otherwise.
     VehicleSettings fitTuning = tuning;
+    // The car's own figures, on the library tyres the Vehicle panel fitted in place of its own.
+    std::optional<VehicleCarSpec> carSpec;
     if (tuning.useCarData && modelData && modelData->carSpec.has_value())
     {
-        fitTuning = ApplyCarSpec(tuning, *modelData->carSpec);
+        carSpec = *modelData->carSpec;
+        for (size_t wheel = 0; wheel < kVehicleWheelCount; ++wheel)
+        {
+            if (tuning.tyreFitment[wheel].Empty())
+            {
+                continue;
+            }
+            if (std::optional<tyre::TyreSpec> fitted = TyreLibrary::Resolve(tuning.tyreFitment[wheel]))
+            {
+                carSpec->wheelTyres[wheel] = std::move(fitted);
+                carSpec->wheelTyreRefs[wheel] = tuning.tyreFitment[wheel];
+            }
+            else
+            {
+                LOG_WARN("'{}': the tyre fitted to wheel {} ('{}') is not in the tyre library; it keeps its own", session->name, wheel, tuning.tyreFitment[wheel].path);
+            }
+        }
+    }
+    if (carSpec.has_value())
+    {
+        fitTuning = ApplyCarSpec(tuning, *carSpec);
         session->carData = DescribeCarSpec(*modelData->carSpec);
         // The body's shell is in the model's frame: scaled and turned into vehicle space as the bounds are.
         fitTuning.chassisHull.clear();
@@ -405,21 +428,22 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     session->shiftUpRpm = ComputeVehicleShiftPoints(settings).upFull;
     session->maxSteerDegrees = settings.maxSteerAngleDegrees;
     session->wheelbase = std::max(settings.frontAxleZ - settings.rearAxleZ, 0.5f);
-    session->frontPeakSlipDegrees = settings.frontTyres.peakSlipAngleDegrees > 0.0f ? settings.frontTyres.peakSlipAngleDegrees : 7.0f;
+    session->frontPeakSlipDegrees = settings.tyres[0].peakSlipAngleDegrees > 0.0f ? settings.tyres[0].peakSlipAngleDegrees : 7.0f;
     session->absFitted = settings.absSlipRatioLimit > 0.0f;
     session->tractionControlFitted = settings.tcSlipRatioLimit > 0.0f || settings.tractionControlGrip > 0.0f;
     session->absOn = settings.useAbs;
     session->tractionControlOn = settings.useTractionControl;
     session->turbo = !settings.turbos.empty();
-    if (tuning.useCarData && modelData && modelData->carSpec.has_value())
+    if (carSpec.has_value())
     {
-        const VehicleCarSpec& spec = *modelData->carSpec;
-        if (spec.defaultTyreCompound.has_value() && *spec.defaultTyreCompound >= 0 &&
-            static_cast<size_t>(*spec.defaultTyreCompound) < spec.tyreCompounds.size())
+        // The HUD's compounds: the left wheels' tyres.
+        if (carSpec->wheelTyres[0].has_value())
         {
-            const VehicleTyreCompound& compound = spec.tyreCompounds[static_cast<size_t>(*spec.defaultTyreCompound)];
-            session->frontTyre = compound.front.shortName;
-            session->rearTyre = compound.rear.shortName;
+            session->frontTyre = carSpec->wheelTyres[0]->shortName;
+        }
+        if (carSpec->wheelTyres[2].has_value())
+        {
+            session->rearTyre = carSpec->wheelTyres[2]->shortName;
         }
     }
 

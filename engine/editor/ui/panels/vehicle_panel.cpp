@@ -5,15 +5,23 @@
 #include <engine/editor/ui/framework/editor_window_manager.h>
 #include <engine/editor/ui/panels/suspension_rigs_panel.h>
 
+#include <engine/asset/model_cache.h>
+#include <engine/editor/services/vehicle_tyre_fitment.h>
 #include <engine/editor/ui_colors.h>
 #include <engine/logic/editor_world.h>
 #include <engine/tyre/tyre_brush.h>
 #include <IconsPhosphor.h>
 #include <imgui.h>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <stdexcept>
 
 namespace me
 {
@@ -280,6 +288,201 @@ bool DrawTuning(VehicleSettings& tuning)
 }
 }
 
+void VehiclePanel::DrawTyres(const IEditorWorld& scene, EditorVehicleSettings& vehicle, bool driving)
+{
+    std::string path;
+    if (scene.HasSelection() && scene.HasModelComponent(scene.GetSelectedEntity()))
+    {
+        path = scene.GetModel(scene.GetSelectedEntity()).sourcePath;
+    }
+    const std::shared_ptr<const LoadedModelData> model = path.empty() ? nullptr : ModelCache::Get(path);
+    if (!model || !model->carSpec.has_value() || std::none_of(model->carSpec->wheelTyres.begin(), model->carSpec->wheelTyres.end(), [](const auto& tyre) { return tyre.has_value(); }))
+    {
+        ImGui::TextDisabled("Select a car that carries its own tyre data (an Assetto Corsa import).");
+        return;
+    }
+    const VehicleCarSpec& spec = *model->carSpec;
+    std::array<VehicleTyreRef, kVehicleWheelCount>& fitment = vehicle.tuning.tyreFitment;
+    if (vehicle.tyreFitmentModel != path)
+    {
+        fitment = {};
+        vehicle.tyreFitmentModel = path;
+    }
+    if (!m_tyreLibraryLoaded)
+    {
+        m_tyreLibrary = TyreLibrary::List();
+        m_tyreLibraryLoaded = true;
+    }
+
+    const auto findEntry = [&](const VehicleTyreRef& ref) -> const TyreLibrary::Entry*
+    {
+        for (const TyreLibrary::Entry& entry : m_tyreLibrary)
+        {
+            if ((!ref.uuid.empty() && entry.ref.uuid == ref.uuid) || (ref.uuid.empty() && !ref.path.empty() && entry.ref.path == ref.path))
+            {
+                return &entry;
+            }
+        }
+        return nullptr;
+    };
+    // "Semislicks  ks_mazda_rx7_tuned/semislicks_front": the compound, then where it sits in the library.
+    const auto labelFor = [](const TyreLibrary::Entry& entry)
+    {
+        std::string stem = entry.path.filename().string();
+        stem.resize(stem.size() - TyreLibrary::kSuffix.size());
+        return entry.spec.name + "  " + entry.path.parent_path().filename().string() + "/" + stem;
+    };
+    const auto tooltipFor = [](const tyre::TyreSpec& tyre)
+    {
+        const auto number = [](const std::optional<float>& value, const char* format)
+        {
+            if (!value.has_value())
+            {
+                return std::string("-");
+            }
+            char text[32];
+            std::snprintf(text, sizeof(text), format, *value);
+            return std::string(text);
+        };
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(tyre.source.empty() ? tyre.name.c_str() : tyre.source.c_str());
+        ImGui::Text("Width %s m, radius %s m, rim %s m", number(tyre.size.width, "%.3f").c_str(), number(tyre.size.radius, "%.4f").c_str(),
+                    number(tyre.size.rimRadius, "%.4f").c_str());
+        ImGui::Text("Grip %s along, %s across at %s N", number(tyre.grip.longitudinalReference, "%.3f").c_str(),
+                    number(tyre.grip.lateralReference, "%.3f").c_str(), number(tyre.grip.referenceLoad, "%.0f").c_str());
+        ImGui::Text("Peak at %s deg, %s left past it", number(tyre.slip.frictionLimitAngleDegrees, "%.2f").c_str(),
+                    number(tyre.slip.falloffLevel, "%.2f").c_str());
+        ImGui::Text("Rate %s N/m, %s psi cold", number(tyre.vertical.rate, "%.0f").c_str(), number(tyre.pressure.staticPsi, "%.1f").c_str());
+        ImGui::EndTooltip();
+    };
+    const auto fit = [&](size_t wheel, const VehicleTyreRef& ref) { VehicleTyreFitment::Fit(fitment, spec, wheel, ref, m_pairAxles); };
+
+    static constexpr const char* kWheelNames[kVehicleWheelCount] = {"Front Left", "Front Right", "Rear Left", "Rear Right"};
+    ImGui::Checkbox("Both Wheels of an Axle", &m_pairAxles);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("A tyre chosen for one wheel goes on the other wheel of its axle too.");
+    }
+    for (size_t wheel = 0; wheel < kVehicleWheelCount; ++wheel)
+    {
+        const bool refitted = !fitment[wheel].Empty();
+        const VehicleTyreRef& current = refitted ? fitment[wheel] : spec.wheelTyreRefs[wheel];
+        const TyreLibrary::Entry* currentEntry = findEntry(current);
+        std::string preview = currentEntry != nullptr ? labelFor(*currentEntry)
+                              : spec.wheelTyres[wheel].has_value() ? spec.wheelTyres[wheel]->name + "  (the car's own data)"
+                                                                    : std::string("None");
+        if (refitted)
+        {
+            preview = ICON_PH_ARROWS_CLOCKWISE " " + preview;
+        }
+        ImGui::PushID(static_cast<int>(wheel));
+        if (ImGui::BeginCombo(kWheelNames[wheel], preview.c_str()))
+        {
+            std::vector<const TyreLibrary::Entry*> own;
+            if (!spec.libraryCompounds.empty())
+            {
+                ImGui::SeparatorText("This Car");
+                for (const VehicleTyreCompoundRefs& compound : spec.libraryCompounds)
+                {
+                    const bool bothAxles = compound.front == compound.rear;
+                    for (const VehicleTyreRef* ref : {&compound.front, &compound.rear})
+                    {
+                        if (bothAxles && ref == &compound.rear)
+                        {
+                            continue;
+                        }
+                        if (const TyreLibrary::Entry* entry = findEntry(*ref))
+                        {
+                            own.push_back(entry);
+                            const std::string label = compound.name + (bothAxles ? "  (front and rear)" : ref == &compound.front ? "  (front)" : "  (rear)");
+                            if (ImGui::Selectable(label.c_str(), entry->ref == current))
+                            {
+                                fit(wheel, entry->ref);
+                            }
+                            if (ImGui::IsItemHovered())
+                            {
+                                tooltipFor(entry->spec);
+                            }
+                        }
+                    }
+                }
+            }
+            ImGui::SeparatorText("Tyre Library");
+            for (const TyreLibrary::Entry& entry : m_tyreLibrary)
+            {
+                if (std::find(own.begin(), own.end(), &entry) != own.end())
+                {
+                    continue;
+                }
+                if (ImGui::Selectable(labelFor(entry).c_str(), entry.ref == current))
+                {
+                    fit(wheel, entry.ref);
+                }
+                if (ImGui::IsItemHovered())
+                {
+                    tooltipFor(entry.spec);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+    }
+
+    const bool anyFitted = VehicleTyreFitment::Any(fitment);
+    // Writes the car's glTF; the spec's reference stays valid (the cache replaces its copy in place).
+    const auto save = [&](const auto& write, const char* what)
+    {
+        try
+        {
+            write();
+            fitment = {};
+            m_tyreLibrary = TyreLibrary::List();
+            m_tyreStatus = what;
+        }
+        catch (const std::exception& error)
+        {
+            m_tyreStatus = std::string("Not saved: ") + error.what();
+        }
+    };
+    ImGui::BeginDisabled(!anyFitted);
+    if (ImGui::Button(ICON_PH_FLOPPY_DISK " Save to Car"))
+    {
+        save([&] { VehicleTyreFitment::Save(path, spec, fitment); }, "The car's glTF now names these tyres.");
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("Writes the tyres chosen here into the car's glTF, so it starts on them from now on.");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_PH_ARROW_COUNTER_CLOCKWISE " Revert"))
+    {
+        fitment = {};
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button(ICON_PH_ARROWS_CLOCKWISE " Rescan Library"))
+    {
+        m_tyreLibrary = TyreLibrary::List();
+    }
+    // A car imported before the library carries its compounds in its glTF alone.
+    if (spec.libraryCompounds.empty() && !spec.tyreCompounds.empty())
+    {
+        if (ImGui::Button(ICON_PH_PLUS " Add the Car's Tyres to the Library"))
+        {
+            save([&] { VehicleTyreFitment::Adopt(path, spec, std::filesystem::path(path).stem().string()); },
+                 "The car's compounds are in the tyre library, and the car names them.");
+        }
+    }
+    if (driving && anyFitted)
+    {
+        ImGui::TextDisabled("Tyres fitted here apply the next time driving starts.");
+    }
+    if (!m_tyreStatus.empty())
+    {
+        ImGui::TextWrapped("%s", m_tyreStatus.c_str());
+    }
+}
+
 VehiclePanel::VehiclePanel()
     : EditorPanel("vehicle", "Vehicle", ICON_PH_CAR)
 {
@@ -380,6 +583,11 @@ void VehiclePanel::OnGui(EditorContext& context)
         ImGui::TextDisabled("Create (Back) reset, Triangle (Y) flip upright where it is, R3 (right stick click) change view,");
         ImGui::TextDisabled("D-pad left ABS on/off, D-pad right traction control on/off");
         ImGui::TextDisabled("Click the viewport first: keys typed into a panel do not drive.");
+    }
+
+    if (ImGui::CollapsingHeader("Tyres", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        DrawTyres(scene, vehicle, status.active);
     }
 
     if (ImGui::CollapsingHeader("Steering Assist", ImGuiTreeNodeFlags_DefaultOpen))

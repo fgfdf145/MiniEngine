@@ -6,6 +6,7 @@
 #include "material_definition.h"
 #include "model_cache.h"
 #include "svg_icon.h"
+#include "tyre_library.h"
 
 #include <engine/audio/audio_file.h>
 #include <engine/core/text/ascii.h>
@@ -69,7 +70,7 @@ bool IsSceneFile(const std::filesystem::path& p)
         return false;
     }
     const std::string name = p.filename().string();
-    return !name.ends_with(".material.yaml") && !name.ends_with(".miniengine_asset.yaml");
+    return !name.ends_with(".material.yaml") && !name.ends_with(".tyre.yaml") && !name.ends_with(".miniengine_asset.yaml");
 }
 
 bool IsTextureExt(const std::filesystem::path& p)
@@ -432,6 +433,8 @@ AssetManager::AssetType AssetManager::ClassifyPath(const std::filesystem::path& 
         return AssetType::Model;
     if (IsMaterialFile(p))
         return AssetType::Material;
+    if (TyreLibrary::IsTyreFile(p))
+        return AssetType::Tyre;
     if (IsSceneFile(p))
         return AssetType::Scene;
     if (IsTextureExt(p))
@@ -457,6 +460,8 @@ const char* AssetManager::TypeTag(AssetType t)
         return "[TEX]";
     case AssetType::Audio:
         return "[SND]";
+    case AssetType::Tyre:
+        return "[TYR]";
     default:
         return "[   ]";
     }
@@ -534,6 +539,8 @@ const char* AssetManager::TypeIcon(AssetType t)
         return ICON_PH_IMAGE;
     case AssetType::Audio:
         return ICON_PH_MUSIC_NOTES;
+    case AssetType::Tyre:
+        return ICON_PH_TIRE;
     default:
         return ICON_PH_FILE;
     }
@@ -555,6 +562,8 @@ const char* AssetManager::ShortTag(AssetType t)
         return "TEX";
     case AssetType::Audio:
         return "SND";
+    case AssetType::Tyre:
+        return "TYRE";
     default:
         return "FILE";
     }
@@ -577,6 +586,8 @@ unsigned int AssetManager::TypeColorU32(AssetType t)
         return IM_COL32(59, 189, 140, 255); // aqua
     case AssetType::Audio:
         return IM_COL32(232, 123, 164, 255); // magenta
+    case AssetType::Tyre:
+        return IM_COL32(227, 128, 86, 255); // orange
     default:
         return IM_COL32(137, 135, 129, 255); // --cds-text-muted
     }
@@ -1074,6 +1085,38 @@ void AssetManager::DrawPreviewDetails(AssetManagerResult& result)
         {
             result.selectedModelPath = entry.path.string();
         }
+    }
+    if (entry.type == AssetType::Tyre)
+    {
+        // What the tyre is, from its file (read when it gains the focus).
+        if (m_previewTyreIndex != focusIdx)
+        {
+            m_previewTyreIndex = focusIdx;
+            std::string problem;
+            if (const std::optional<tyre::TyreSpec> tyre = TyreLibrary::Load(entry.path, &problem))
+            {
+                const auto number = [](const std::optional<float>& value, int decimals)
+                {
+                    if (!value.has_value())
+                    {
+                        return std::string("-");
+                    }
+                    char text[32];
+                    std::snprintf(text, sizeof(text), "%.*f", decimals, *value);
+                    return std::string(text);
+                };
+                m_previewTyre = tyre->name + (tyre->shortName.empty() ? "" : " (" + tyre->shortName + ")") + "\n" + tyre->source + "\n" +
+                                "Width " + number(tyre->size.width, 3) + " m, radius " + number(tyre->size.radius, 4) + " m\n" +
+                                "Grip " + number(tyre->grip.longitudinalReference, 3) + " / " + number(tyre->grip.lateralReference, 3) + " at " +
+                                number(tyre->grip.referenceLoad, 0) + " N, peak " + number(tyre->slip.frictionLimitAngleDegrees, 2) + " deg\n" +
+                                "Rate " + number(tyre->vertical.rate, 0) + " N/m, " + number(tyre->pressure.staticPsi, 1) + " psi cold";
+            }
+            else
+            {
+                m_previewTyre = "Cannot read: " + problem;
+            }
+        }
+        ImGui::TextWrapped("%s", m_previewTyre.c_str());
     }
     if (entry.type == AssetType::Audio)
     {

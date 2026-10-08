@@ -61,6 +61,8 @@ struct EditorFrameInput
 struct EditorVehicleSettings
 {
     VehicleSettings tuning = VehicleDriveService::DefaultTuning();
+    // The car model (source path) tuning.tyreFitment was chosen for; another car starts on its own tyres.
+    std::string tyreFitmentModel;
     VehicleCameraSettings camera;
     VehicleHapticsSettings haptics;
     VehicleSteeringAssistSettings steeringAssist;

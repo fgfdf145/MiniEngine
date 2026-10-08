@@ -1,9 +1,12 @@
 #include <engine/asset/ac_car_data.h>
 #include <engine/asset/acd_archive.h>
+#include <engine/asset/asset_registry.h>
 #include <engine/asset/dds_decoder.h>
 #include <engine/asset/kn5_importer.h>
 #include <engine/asset/kn5_reader.h>
 #include <engine/asset/model_loader.h>
+#include <engine/asset/tyre_library.h>
+#include <engine/core/paths/engine_paths.h>
 
 #include <stb_image.h>
 
@@ -1659,6 +1662,167 @@ void FourWheelDriveRearSteerAndBodyBecomeASpec()
 }
 
 // The R34's figures through the import and back, with its collider.kn5 (here the fixture car's own kn5).
+// A tyre: every key of tyres.ini has a field, unknown keys are kept, and its file reads back equal.
+void TyreSpecHoldsEveryKeyAndRoundTrips()
+{
+    std::map<std::string, float> values;
+    float next = 1.0f;
+    for (const tyre::TyreSpecField& field : tyre::TyreSpecFields())
+    {
+        values[(field.thermalSection ? std::string("THERMAL_") : std::string()) + field.acKey] = next;
+        next += 0.125f;
+    }
+    values["SOMETHING_NEW"] = 0.1f;
+    values["THERMAL_SOMETHING_ELSE"] = 287430.0f;
+    std::map<std::string, std::vector<glm::vec2>> curves{
+        {"WEAR_CURVE", {{0.0f, 1.0f}, {5000.0f, 0.9f}}},
+        {"THERMAL_PERFORMANCE_CURVE", {{0.0f, 0.5f}, {80.0f, 1.0f}}},
+        {"ODD_CURVE", {{1.0f, 1e-7f}}}};
+    const tyre::TyreSpec spec = tyre::TyreSpecFromAc("Semislicks", "SM", values, curves);
+    Require(tyre::TyreSpecFields().size() == 51 && tyre::TyreSpecCurves().size() == 2, "a field for each of the 53 keys");
+    tyre::TyreSpec copy = spec;
+    next = 1.0f;
+    for (const tyre::TyreSpecField& field : tyre::TyreSpecFields())
+    {
+        Require(field.field(copy) == next, std::string("the field of ") + field.acKey);
+        next += 0.125f;
+    }
+    Require(spec.wear.wearCurve.size() == 2 && spec.thermal.performanceCurve[1] == glm::vec2(80.0f, 1.0f), "the curves");
+    Require(spec.extraValues.size() == 2 && spec.extraValues.at("THERMAL_SOMETHING_ELSE") == 287430.0f && spec.extraCurves.count("ODD_CURVE") == 1,
+            "and what the table does not know, by its own name");
+
+    const std::string text = TyreLibrary::ToYaml(spec);
+    const std::optional<tyre::TyreSpec> back = TyreLibrary::FromYaml(text);
+    Require(back.has_value() && *back == spec, "the file reads back equal:\n" + text);
+    Require(text.find("SOMETHING_NEW: 0.1") != std::string::npos, "numbers in their shortest exact form:\n" + text);
+
+    tyre::TyreSpec sparse;
+    sparse.name = "Street";
+    sparse.grip.dx0 = 1.2f;
+    const std::string sparseText = TyreLibrary::ToYaml(sparse);
+    Require(sparseText.find("camber") == std::string::npos && sparseText.find("dx0") != std::string::npos, "empty fields are left out");
+    Require(TyreLibrary::FromYaml(sparseText) == sparse, "and stay empty");
+    std::string problem;
+    Require(!TyreLibrary::FromYaml("tyre:\n  version: 99\n", &problem).has_value() && !problem.empty(), "a newer file is refused");
+
+    // The grip at a load, as the import worked it out.
+    const tyre::TyreSpec boxster = DefaultWheelTyres(AcCarData::BuildSpec(BoxsterDataFiles()))[0].value();
+    const float load = 1460.0f * 9.81f * 0.455f * 0.5f;
+    Require(tyre::LongitudinalGripAtLoad(boxster, load) == 1.30f * std::pow(load / 3606.0f, 0.8915f - 1.0f), "grip by the load sensitivity");
+    tyre::TyreSpec linear;
+    linear.grip.dx0 = 1.2f;
+    linear.grip.dx1 = -0.05f;
+    Require(tyre::LongitudinalGripAtLoad(linear, load) == 1.2f + -0.05f, "or DX0 + DX1 without it");
+}
+
+// The library: a tyre is written once, found by uuid after a move, and a different one at the same name
+// gets a suffix.
+void TyreLibraryStoresAndFindsTyres()
+{
+    tyre::TyreSpec spec;
+    spec.name = "Semislicks";
+    spec.shortName = "SM";
+    spec.source = "one car";
+    spec.grip.dx0 = 1.3f;
+    const VehicleTyreRef first = TyreLibrary::Store(spec, "library_test", "semislicks_front");
+    tyre::TyreSpec fromAnotherCar = spec;
+    fromAnotherCar.source = "another car";
+    const VehicleTyreRef same = TyreLibrary::Store(fromAnotherCar, "library_test_other", "semislicks_front");
+    Require(same == first && !first.uuid.empty(), "an equal tyre (but for its source) is referred to, not written again");
+    tyre::TyreSpec harder = spec;
+    harder.grip.dx0 = 1.2f;
+    const VehicleTyreRef second = TyreLibrary::Store(harder, "library_test", "semislicks_front");
+    Require(second.path.ends_with("library_test/semislicks_front_2.tyre.yaml"), "a different tyre gets a suffix: " + second.path);
+    Require(TyreLibrary::Resolve(first) == spec && TyreLibrary::Resolve(second) == harder, "both resolve");
+
+    const std::filesystem::path moved = TyreLibrary::Root() / "moved" / "renamed.tyre.yaml";
+    std::filesystem::create_directories(moved.parent_path());
+    const std::filesystem::path old = EnginePaths::ResolveProjectPath(first.path);
+    std::filesystem::rename(old, moved);
+    std::filesystem::rename(AssetRegistry::SidecarPathFor(old), AssetRegistry::SidecarPathFor(moved));
+    AssetRegistry::RescanAssetTree();
+    std::filesystem::path found;
+    Require(TyreLibrary::Resolve(first, &found) == spec && found == moved, "found by its uuid after a move");
+    Require(!TyreLibrary::Resolve(VehicleTyreRef{"no-such-uuid", "assets/tyres/nowhere.tyre.yaml"}).has_value(), "a lost tyre is not found");
+    Require(TyreLibrary::StemFor("Slick Medium (90s)") == "slick_medium_90s", "file names from compound names");
+
+    // A compound with the same tyre on both axles: one file, named for neither.
+    VehicleCarSpec car;
+    VehicleTyreCompound compound;
+    compound.front.name = compound.rear.name = "Street";
+    compound.front.values = compound.rear.values = {{"DX_REF", 1.2f}, {"FZ0", 3000.0f}};
+    car.tyreCompounds = {compound};
+    car.defaultTyreCompound = 0;
+    TyreLibrary::AdoptCarTyres(car, "ks_same_axles");
+    Require(car.libraryCompounds[0].front == car.libraryCompounds[0].rear && car.libraryCompounds[0].front.path.ends_with("ks_same_axles/street.tyre.yaml"),
+            "one tyre for both axles: " + car.libraryCompounds[0].front.path);
+    Require(TyreLibrary::Resolve(car.wheelTyreRefs[3])->source == "Assetto Corsa ks_same_axles, compound 0 Street, front and rear", "said so in its source");
+    std::filesystem::remove_all(TyreLibrary::Root());
+    AssetRegistry::RescanAssetTree();
+}
+
+// An imported car's compounds go into the library, the car refers to them by wheel, and a loaded car
+// drives on them; another tyre on one wheel reaches that wheel alone; without the library the car falls
+// back to its own data; a car imported before the library is adopted into it.
+void ImportPutsTheCarsTyresInTheLibrary()
+{
+    ScopedDirectory scope;
+    const std::filesystem::path kn5 = WriteCarFolder(scope.Path());
+    WriteFile(kn5.parent_path() / "data.acd", BuildAcd("ks_fixture", 42, BoxsterDataFiles()));
+    const Kn5ImportReport report = Kn5Importer::ConvertToGltf(kn5, scope.Path() / "car");
+    const VehicleCarSpec expected = AcCarData::BuildSpec(BoxsterDataFiles());
+    Require(TyreLibrary::List().size() == 4, "two compounds, front and rear: " + std::to_string(TyreLibrary::List().size()));
+    Require(std::filesystem::exists(TyreLibrary::Root() / "ks_fixture" / "semislicks_front.tyre.yaml") &&
+                std::filesystem::exists(TyreLibrary::Root() / "ks_fixture" / "street_rear.tyre.yaml"),
+            "under the game's folder name, by compound and axle");
+    const std::optional<tyre::TyreSpec> stored = TyreLibrary::Load(TyreLibrary::Root() / "ks_fixture" / "semislicks_front.tyre.yaml");
+    Require(stored.has_value() && stored->source == "Assetto Corsa ks_fixture, compound 0 Semislicks, front" && stored->grip.referenceLoad == 3606.0f,
+            "with where it came from");
+
+    const VehicleCarSpec spec = ModelLoader::LoadModel(report.gltfPath.string()).carSpec.value();
+    Require(spec.libraryCompounds.size() == 2 && spec.libraryCompounds[1].name == "Street", "the car's own compounds in the library");
+    Require(spec.wheelTyreRefs[0] == spec.libraryCompounds[0].front && spec.wheelTyreRefs[3] == spec.libraryCompounds[0].rear,
+            "the default compound on the wheels");
+    const auto defaults = DefaultWheelTyres(expected);
+    for (size_t wheel = 0; wheel < kVehicleWheelCount; ++wheel)
+    {
+        tyre::TyreSpec fitted = spec.wheelTyres[wheel].value();
+        fitted.source.clear();
+        Require(fitted == defaults[wheel].value(), "wheel " + std::to_string(wheel) + " drives on the default compound's tyre");
+    }
+
+    // The physics' tyres from the library are the import's own figures.
+    const VehicleSettings settings = ApplyCarSpec(VehicleSettings{}, spec);
+    Require(settings.tyres[0].longitudinalGrip == expected.frontTyres->longitudinalGrip && settings.tyres[2].lateralGrip == expected.rearTyres->lateralGrip &&
+                settings.tyres[1].peakSlipRatio == expected.frontTyres->peakSlipRatio && settings.tyres[3].inertia == 1.97f,
+            "the grip the import works out, to the bit");
+    Require(settings.tyres[0] == settings.tyres[1] && settings.tyres[2] == settings.tyres[3] && !(settings.tyres[0] == settings.tyres[2]),
+            "each axle's wheels alike");
+
+    // Another tyre on one wheel, written into the car.
+    VehicleCarSpec refitted = spec;
+    refitted.wheelTyreRefs[0] = spec.libraryCompounds[1].front;
+    TyreLibrary::WriteCarTyres(report.gltfPath, refitted);
+    const VehicleCarSpec reloaded = ModelLoader::LoadModel(report.gltfPath.string()).carSpec.value();
+    Require(reloaded.wheelTyres[0]->name == "Street" && reloaded.wheelTyres[1]->name == "Semislicks", "one wheel on another compound");
+    const VehicleSettings mixed = ApplyCarSpec(VehicleSettings{}, reloaded);
+    Require(!(mixed.tyres[0] == mixed.tyres[1]) && mixed.tyres[1] == settings.tyres[1], "and the physics has it on that wheel alone");
+
+    // A lost library: the car's own default compound.
+    std::filesystem::remove_all(TyreLibrary::Root());
+    AssetRegistry::RescanAssetTree();
+    const VehicleCarSpec orphan = ModelLoader::LoadModel(report.gltfPath.string()).carSpec.value();
+    Require(orphan.wheelTyres[0].has_value() && orphan.wheelTyres[0]->name == "Semislicks", "falls back to the car's own default compound");
+
+    // Adopted into the library again from the glTF alone, as for a car imported before it.
+    Require(TyreLibrary::AdoptGltfCarTyres(report.gltfPath, "ks_fixture") == 4, "four tyres adopted");
+    const VehicleCarSpec adopted = ModelLoader::LoadModel(report.gltfPath.string()).carSpec.value();
+    Require(TyreLibrary::List().size() == 4 && adopted.wheelTyreRefs[0] == adopted.libraryCompounds[0].front && !adopted.wheelTyreRefs[0].uuid.empty(),
+            "the car refers to the library again, the default compound on all wheels");
+    std::filesystem::remove_all(TyreLibrary::Root());
+    AssetRegistry::RescanAssetTree();
+}
+
 void ImportWritesFourWheelDriveRearSteerAndBody()
 {
     ScopedDirectory scope;
@@ -2092,6 +2256,12 @@ void CarMaterialsTakeAcsLightScale()
 
 int main()
 {
+    // Imports write their tyres into the tyre library under the assets root: a scratch one, not the project's.
+    const ScopedDirectory assets;
+    EnginePaths::Overrides paths;
+    paths.assetsRoot = assets.Path();
+    EnginePaths::Initialize(paths);
+    AssetRegistry::Initialize(assets.Path());
     try
     {
         DdsDecodesBc1();
@@ -2117,6 +2287,9 @@ int main()
         AcdArchiveDecryptsAndRefusesAWrongFolder();
         CarDataBecomesASpec();
         ImportWritesTheCarsOwnData();
+        TyreSpecHoldsEveryKeyAndRoundTrips();
+        TyreLibraryStoresAndFindsTyres();
+        ImportPutsTheCarsTyresInTheLibrary();
         FourWheelDriveRearSteerAndBodyBecomeASpec();
         ImportWritesFourWheelDriveRearSteerAndBody();
         LiveAxleDataBecomesASolidAxle();
