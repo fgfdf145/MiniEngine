@@ -544,14 +544,28 @@ std::optional<VehicleSuspensionAxle> ReadSuspensionAxle(const IniView& suspensio
     return out;
 }
 
-// The default compound's vertical tyre: RADIUS, RATE and DAMP of tyres.ini's [FRONT] or [REAR].
+// The default compound's vertical tyre: RADIUS, RATE and DAMP of tyres.ini's [FRONT] or [REAR] for
+// compound 0, [FRONT_n] or [REAR_n] for the one [COMPOUND_DEFAULT] INDEX names (the grip is read from
+// the same compound). The RX-7 Tuned's default semislicks are 4% softer than its compound 0, the R34's
+// 12% softer.
 void ReadVerticalTyre(const AcdArchive::Files& files, const std::string& axle, VehicleSuspensionAxle& out)
 {
     const AcCarData::Ini ini = ParseFile(files, "tyres.ini");
     const IniView tyres(&ini);
-    out.tyreRadius = tyres.Number(axle, "RADIUS").value_or(0.0f);
-    out.tyreRate = tyres.Number(axle, "RATE").value_or(0.0f);
-    out.tyreDamping = tyres.Number(axle, "DAMP").value_or(0.0f);
+    // An index past the last compound falls to the last, as ReadTyres clamps it.
+    int index = static_cast<int>(tyres.Number("COMPOUND_DEFAULT", "INDEX").value_or(0.0f));
+    std::string section = axle;
+    for (; index > 0; --index)
+    {
+        if (tyres.HasSection(axle + "_" + std::to_string(index)))
+        {
+            section = axle + "_" + std::to_string(index);
+            break;
+        }
+    }
+    out.tyreRadius = tyres.Number(section, "RADIUS").value_or(0.0f);
+    out.tyreRate = tyres.Number(section, "RATE").value_or(0.0f);
+    out.tyreDamping = tyres.Number(section, "DAMP").value_or(0.0f);
 }
 
 void ReadSuspension(const AcdArchive::Files& files, VehicleCarSpec& spec)

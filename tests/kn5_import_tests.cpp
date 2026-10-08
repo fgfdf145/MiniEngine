@@ -1461,6 +1461,30 @@ void CarDataBecomesASpec()
     Require(spec.frontTyres->postPeakShare == 0.86f && spec.frontTyres->inertia == 1.62f && spec.rearTyres->inertia == 1.97f, "falloff and wheel inertia");
     // Grip near 1.3 is what the real tyres have; the physics engine's own peak is 1.2.
     Require(spec.frontTyres->longitudinalGrip > 1.25f && spec.frontTyres->longitudinalGrip < 1.4f, "a semislick's grip");
+    // The vertical tyre comes from the default compound too, not always from compound 0.
+    {
+        std::map<std::string, std::string> files = BoxsterDataFiles();
+        std::string& tyres = files["tyres.ini"];
+        const auto insertAfter = [&](const std::string& header, const std::string& lines)
+        {
+            const size_t at = tyres.find(header);
+            Require(at != std::string::npos, "the fixture has " + header);
+            tyres.insert(at + header.size(), lines);
+        };
+        insertAfter("[FRONT]\r\n", "RATE=325354\r\nDAMP=600\r\n");
+        insertAfter("[FRONT_1]\r\n", "RADIUS=0.330\r\nRATE=287098\r\nDAMP=500\r\n");
+        const size_t index = tyres.find("INDEX=0");
+        tyres.replace(index, 7, "INDEX=1");
+        const VehicleCarSpec second = AcCarData::BuildSpec(files);
+        Require(second.defaultTyreCompound == 1, "the second compound is the default");
+        Require(second.frontSuspension->tyreRate == 287098.0f && second.frontSuspension->tyreDamping == 500.0f &&
+                    second.frontSuspension->tyreRadius == 0.330f,
+                "the default compound's RATE, DAMP and RADIUS");
+        tyres.replace(tyres.find("INDEX=1"), 7, "INDEX=7");
+        Require(AcCarData::BuildSpec(files).frontSuspension->tyreRate == 287098.0f, "an index past the last compound takes the last");
+        tyres.replace(tyres.find("INDEX=7"), 7, "INDEX=0");
+        Require(AcCarData::BuildSpec(files).frontSuspension->tyreRate == 325354.0f, "and compound 0's own when it is the default");
+    }
 
     // The air.
     Require(spec.aeroWings.size() == 2 && spec.aeroControllers.size() == 1, "two wings and a controller");
