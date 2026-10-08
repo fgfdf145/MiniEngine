@@ -16,9 +16,9 @@ namespace me
 // The cascaded DDGI probes on the GPU (docs/design/2026-09-27-ddgi-design.md): the irradiance and
 // visibility atlases (one array layer per level), the probe states, the ray buffer and each frame
 // slot's schedule. Each frame the probes the CPU scheduled trace their rays (ddgi_trace.comp) and
-// blend them into their tiles (ddgi_update.comp). Device lifetime like VulkanEnvironmentProbe: the
-// images stay in GENERAL, set 0 binds them for every draw (bindings 21 to 23), and Record orders
-// itself with its own barriers. It records after the ray scene and before the scene passes.
+// blend them into their tiles (ddgi_update.comp). Device lifetime like VulkanEnvironmentProbe: set 0
+// binds the atlases for every draw (bindings 21 to 23), so they rest in SHADER_READ_ONLY_OPTIMAL and
+// are GENERAL only for the update, and Record orders itself with its own barriers. It records after the ray scene and before the scene passes.
 class VulkanDdgi
 {
   public:
@@ -65,7 +65,7 @@ class VulkanDdgi
     TextureDescriptorBinding GetIrradianceBinding() const;
     TextureDescriptorBinding GetVisibilityBinding() const;
     VkBuffer GetProbeStateBuffer() const;
-    // The irradiance atlas (RGBA16F, GENERAL), for the reference comparison's readback.
+    // The irradiance atlas (RGBA16F, SHADER_READ_ONLY_OPTIMAL), for the reference comparison's readback.
     VkImage GetIrradianceImage() const;
     VkImage GetVisibilityImage() const;
 

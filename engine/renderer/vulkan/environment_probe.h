@@ -16,8 +16,8 @@ namespace me
 // when what they show can have changed: the environment's parameters (EnvironmentUniformData, the
 // camera's altitude standing in for its position under the atmosphere, which sees no horizontal
 // move) or, through Invalidate, the HDRI image; a static sky costs nothing per frame. Like VulkanAtmosphere it is
-// device-lifetime, shared by the frames in flight, kept in VK_IMAGE_LAYOUT_GENERAL, and orders
-// itself with its own barriers; it records after VulkanAtmosphere, whose sky-view LUT the capture
+// device-lifetime, shared by the frames in flight, and orders itself with its own barriers (the
+// radiance cube stays in GENERAL, the prefiltered one rests in SHADER_READ_ONLY_OPTIMAL for set 0); it records after VulkanAtmosphere, whose sky-view LUT the capture
 // samples. Set 0 binding 8 names the prefiltered cube for every draw, so the first Record clears
 // both cubes whatever the mode.
 class VulkanEnvironmentProbe

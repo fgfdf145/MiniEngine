@@ -18,9 +18,12 @@ namespace me
 // Hillaire 2020's four LUTs: transmittance and multiple scattering (rebuilt when the atmosphere's
 // parameters change), sky-view and the aerial perspective volume (every frame). Like the shadow
 // map, this is not an IScenePass and its images are not render targets: they have fixed sizes and
-// one copy shared by every frame in flight, so they stay in VK_IMAGE_LAYOUT_GENERAL and Record
-// orders itself with its own barriers. A barrier's first scope is every command submitted earlier
-// on the queue, so the one at the head of Record covers the previous frame's fragment reads.
+// one copy shared by every frame in flight, so Record orders itself with its own barriers. A
+// barrier's first scope is every command submitted earlier on the queue, so the one at the head of
+// Record covers the previous frame's fragment reads. What set 0 samples (the transmittance and
+// sky-view LUTs, the aerial perspective volume, the cloud noise, shadow map and resolved clouds)
+// rests in SHADER_READ_ONLY_OPTIMAL, the layout an NVRHI binding set names it in, and is GENERAL
+// only around its writes (BeginFrameImageWrites); the rest stays GENERAL.
 //
 // Set 0 names these images for every draw, whatever the mode, so the first Record moves them out
 // of UNDEFINED and clears them even when the atmosphere is off (and a view's first RecordView its
@@ -98,9 +101,9 @@ class VulkanAtmosphere
 
         VkDevice m_device = VK_NULL_HANDLE;
         LutImage m_aerialPerspective{};
-        // RGBA16F, GENERAL: the march's samples (half the scene's extent, rounded up), the resolved
-        // clouds the sky reads and last frame's copy of them, the history (both at the scene's
-        // extent). Fresh after (re)creation until their first transition, when there is no history.
+        // RGBA16F: the march's samples (half the scene's extent, rounded up), the resolved clouds
+        // the sky reads (SHADER_READ_ONLY_OPTIMAL between frames) and last frame's copy of them,
+        // the history (both at the scene's extent). Fresh after (re)creation until their first transition, when there is no history.
         LutImage m_cloudTarget{};
         LutImage m_cloudResolved{};
         LutImage m_cloudHistory{};
@@ -176,6 +179,8 @@ class VulkanAtmosphere
     void Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, uint32_t x, uint32_t y, uint32_t z) const;
     void DestroyHandles();
     void DestroyPlumeStaging();
+    // The images shared by every view that set 0 samples.
+    std::array<VkImage, 6> FrameSampledImages() const;
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
@@ -189,10 +194,10 @@ class VulkanAtmosphere
     // The transmittance, multiple scattering and sky-view LUTs; the aerial perspective volume is each
     // view's own, so its slot stays empty.
     std::array<LutImage, kLutCount> m_images{};
-    // RGBA8 volumes, written once and then only sampled; GENERAL like the LUTs.
+    // RGBA8 volumes, written once and then only sampled.
     std::array<LutImage, kCloudNoiseCount> m_cloudNoise{};
     nvrhi::SamplerHandle m_cloudSampler;
-    // RGBA16F, r the transmittance toward the sun; GENERAL like the LUTs.
+    // RGBA16F, r the transmittance toward the sun.
     LutImage m_cloudShadow{};
     bool m_cloudNoiseBuilt = false;
     // The phases of life the plume map was last built at.

@@ -1,5 +1,6 @@
 #include "environment_probe.h"
 
+#include "compute_pass_util.h"
 #include "nvrhi_resources.h"
 #include "pipeline.h"
 #include "sampler_settings.h"
@@ -160,6 +161,8 @@ void VulkanEnvironmentProbe::Record(
             const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, mipCount, 0, 6};
             vkCmdClearColorImage(commandBuffer, image, VK_IMAGE_LAYOUT_GENERAL, &black, 1, &range);
         }
+        // Set 0 samples the prefiltered cube.
+        EndFrameImageWrites(commandBuffer, std::span(&m_prefiltered.image, 1), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         m_imagesInitialized = true;
     }
 
@@ -197,6 +200,7 @@ void VulkanEnvironmentProbe::Record(
         RecordMipChain(commandBuffer);
         GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
 
+        BeginFrameImageWrites(commandBuffer, std::span(&m_prefiltered.image, 1));
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_prefilterPipeline);
         for (uint32_t mip = 0; mip < kPrefilterMipCount; ++mip)
         {
@@ -209,6 +213,7 @@ void VulkanEnvironmentProbe::Record(
             vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
             vkCmdDispatch(commandBuffer, GroupCount(constants.size), GroupCount(constants.size), 6);
         }
+        EndFrameImageWrites(commandBuffer, std::span(&m_prefiltered.image, 1));
     }
 
     // This frame's writes before its fragment shaders sample them.

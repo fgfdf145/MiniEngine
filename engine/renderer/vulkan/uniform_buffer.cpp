@@ -154,7 +154,7 @@ void VulkanUniformBuffer::SetPathTraceLayerImages(TextureDescriptorBinding depth
 void VulkanUniformBuffer::SetCloudTarget(TextureDescriptorBinding target)
 {
     m_environment.cloudTarget = target;
-    const VkDescriptorImageInfo info{target.sampler, target.imageView, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo info{target.sampler, target.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     for (VkDescriptorSet set : m_frameDescriptorSets)
     {
         VkWriteDescriptorSet write{};
@@ -669,9 +669,9 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         frameWrites[2].descriptorCount = 1;
         frameWrites[2].pBufferInfo = &motionInfo;
         const std::array<VkDescriptorImageInfo, 4> environmentInfos = {
-            VkDescriptorImageInfo{m_environment.transmittance.sampler, m_environment.transmittance.imageView, VK_IMAGE_LAYOUT_GENERAL},
-            VkDescriptorImageInfo{m_environment.skyView.sampler, m_environment.skyView.imageView, VK_IMAGE_LAYOUT_GENERAL},
-            VkDescriptorImageInfo{m_environment.aerialPerspective.sampler, m_environment.aerialPerspective.imageView, VK_IMAGE_LAYOUT_GENERAL},
+            VkDescriptorImageInfo{m_environment.transmittance.sampler, m_environment.transmittance.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            VkDescriptorImageInfo{m_environment.skyView.sampler, m_environment.skyView.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            VkDescriptorImageInfo{m_environment.aerialPerspective.sampler, m_environment.aerialPerspective.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             VkDescriptorImageInfo{m_environment.environmentMap.sampler, m_environment.environmentMap.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
         for (uint32_t index = 0; index < 4; ++index)
         {
@@ -691,7 +691,7 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
         frameWrites[7].descriptorCount = 1;
         frameWrites[7].pBufferInfo = &irradianceInfo;
         const std::array<VkDescriptorImageInfo, 2> specularInfos = {
-            VkDescriptorImageInfo{m_environment.prefiltered.sampler, m_environment.prefiltered.imageView, VK_IMAGE_LAYOUT_GENERAL},
+            VkDescriptorImageInfo{m_environment.prefiltered.sampler, m_environment.prefiltered.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             VkDescriptorImageInfo{m_environment.brdfLut.sampler, m_environment.brdfLut.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
         for (uint32_t index = 0; index < 2; ++index)
         {
@@ -776,8 +776,8 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
             frameWrites[binding].descriptorCount = 1;
             frameWrites[binding].pImageInfo = binding == 19u ? &scatterLightInfo : &scatterDepthInfo;
         }
-        const VkDescriptorImageInfo ddgiIrradianceInfo{m_environment.ddgiIrradiance.sampler, m_environment.ddgiIrradiance.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo ddgiVisibilityInfo{m_environment.ddgiVisibility.sampler, m_environment.ddgiVisibility.imageView, VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorImageInfo ddgiIrradianceInfo{m_environment.ddgiIrradiance.sampler, m_environment.ddgiIrradiance.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo ddgiVisibilityInfo{m_environment.ddgiVisibility.sampler, m_environment.ddgiVisibility.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         const VkDescriptorBufferInfo ddgiStateInfo{m_environment.ddgiProbeStates, 0, VK_WHOLE_SIZE};
         for (uint32_t binding : {21u, 22u, 23u})
         {
@@ -796,11 +796,11 @@ void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
                 frameWrites[binding].pImageInfo = binding == 21u ? &ddgiIrradianceInfo : &ddgiVisibilityInfo;
             }
         }
-        const VkDescriptorImageInfo cloudShapeInfo{m_environment.cloudShapeNoise.sampler, m_environment.cloudShapeNoise.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo cloudDetailInfo{m_environment.cloudDetailNoise.sampler, m_environment.cloudDetailNoise.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo cloudShadowInfo{m_environment.cloudShadow.sampler, m_environment.cloudShadow.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo cloudWeatherInfo{m_environment.cloudWeather.sampler, m_environment.cloudWeather.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo cloudTargetInfo{m_environment.cloudTarget.sampler, m_environment.cloudTarget.imageView, VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorImageInfo cloudShapeInfo{m_environment.cloudShapeNoise.sampler, m_environment.cloudShapeNoise.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo cloudDetailInfo{m_environment.cloudDetailNoise.sampler, m_environment.cloudDetailNoise.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo cloudShadowInfo{m_environment.cloudShadow.sampler, m_environment.cloudShadow.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo cloudWeatherInfo{m_environment.cloudWeather.sampler, m_environment.cloudWeather.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo cloudTargetInfo{m_environment.cloudTarget.sampler, m_environment.cloudTarget.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         for (uint32_t binding : {24u, 25u, 26u, 27u, 28u})
         {
             frameWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

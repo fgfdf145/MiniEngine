@@ -26,9 +26,10 @@ struct TextureDescriptorBinding
     VkSampler sampler = VK_NULL_HANDLE;
 };
 
-// The environment images set 0 binds for the fragment shaders: the atmosphere LUTs, kept in
-// VK_IMAGE_LAYOUT_GENERAL by VulkanAtmosphere, and the equirectangular HDRI (a 1x1 black map when
-// none is loaded), in SHADER_READ_ONLY_OPTIMAL.
+// The environment images set 0 binds for the fragment shaders: the atmosphere LUTs and the
+// equirectangular HDRI (a 1x1 black map when none is loaded). Every image set 0 names rests in
+// SHADER_READ_ONLY_OPTIMAL, the layout an NVRHI binding set names it in; the ones written on the GPU
+// are GENERAL only around their writes.
 struct EnvironmentDescriptorBindings
 {
     TextureDescriptorBinding transmittance;
@@ -37,39 +38,38 @@ struct EnvironmentDescriptorBindings
     TextureDescriptorBinding environmentMap;
     // Binding 7: the atmosphere's radiance SH (VulkanAtmosphere::GetIrradianceBuffer).
     VkBuffer irradiance = VK_NULL_HANDLE;
-    // Binding 8: the GGX-prefiltered sky cube (VulkanEnvironmentProbe), in GENERAL.
+    // Binding 8: the GGX-prefiltered sky cube (VulkanEnvironmentProbe).
     TextureDescriptorBinding prefiltered;
-    // Binding 9: the DFG table, in SHADER_READ_ONLY_OPTIMAL.
+    // Binding 9: the DFG table.
     TextureDescriptorBinding brdfLut;
-    // Bindings 15 and 16: the area lights' LTC tables (ltc_table.h), in SHADER_READ_ONLY_OPTIMAL.
+    // Bindings 15 and 16: the area lights' LTC tables (ltc_table.h).
     TextureDescriptorBinding ltcInverseMatrices;
     TextureDescriptorBinding ltcAmplitudes;
-    // Binding 18: the transmission copy (VulkanTransmissionImage), in SHADER_READ_ONLY_OPTIMAL.
+    // Binding 18: the transmission copy (VulkanTransmissionImage).
     TextureDescriptorBinding transmission;
-    // Bindings 19 and 20: the scatter pre-pass's light and depth (VulkanScatterPass), in
-    // SHADER_READ_ONLY_OPTIMAL. They follow the scene's extent: SetScatterImages repoints them.
+    // Bindings 19 and 20: the scatter pre-pass's light and depth (VulkanScatterPass). They follow
+    // the scene's extent: SetScatterImages repoints them.
     TextureDescriptorBinding scatterLight;
     TextureDescriptorBinding scatterDepth;
-    // Bindings 21 to 23: the DDGI probes' irradiance and visibility atlases, in GENERAL, and their
-    // states (VulkanDdgi).
+    // Bindings 21 to 23: the DDGI probes' irradiance and visibility atlases and their states
+    // (VulkanDdgi).
     TextureDescriptorBinding ddgiIrradiance;
     TextureDescriptorBinding ddgiVisibility;
     VkBuffer ddgiProbeStates = VK_NULL_HANDLE;
-    // Bindings 24 and 25: the volumetric clouds' shape and detail noise (VulkanAtmosphere), in
-    // GENERAL.
+    // Bindings 24 and 25: the volumetric clouds' shape and detail noise (VulkanAtmosphere).
     TextureDescriptorBinding cloudShapeNoise;
     TextureDescriptorBinding cloudDetailNoise;
-    // Binding 26: the clouds' shadow map (VulkanAtmosphere), in GENERAL.
+    // Binding 26: the clouds' shadow map (VulkanAtmosphere).
     TextureDescriptorBinding cloudShadow;
-    // Binding 27: the clouds' plume map (VulkanAtmosphere), in GENERAL.
+    // Binding 27: the clouds' plume map (VulkanAtmosphere).
     TextureDescriptorBinding cloudWeather;
-    // Binding 28: the clouds resolved at the scene's extent (VulkanAtmosphere), in GENERAL. It
-    // follows the scene's extent: SetCloudTarget repoints it.
+    // Binding 28: the clouds resolved at the scene's extent (VulkanAtmosphere). It follows the
+    // scene's extent: SetCloudTarget repoints it.
     TextureDescriptorBinding cloudTarget;
     // Bindings 29 to 31: the path traced layer of the forward-shaded surfaces
     // (docs/design/2026-10-08-path-tracing-missing-effects-design.md): the nearest one's depth
     // (VulkanPathTraceLayerPass) and the light the path tracer found for it through its diffuse and
-    // specular lobes (VulkanPathTracePass), all in SHADER_READ_ONLY_OPTIMAL. Placeholders until path
+    // specular lobes (VulkanPathTracePass). Placeholders until path
     // tracing first runs; SetPathTraceLayerImages repoints them.
     TextureDescriptorBinding pathTraceLayerDepth;
     TextureDescriptorBinding pathTraceLayerDiffuse;

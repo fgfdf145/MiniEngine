@@ -179,6 +179,68 @@ VkWriteDescriptorSet ImageWrite(VkDescriptorSet set, uint32_t binding, VkDescrip
     return write;
 }
 
+VkImageMemoryBarrier ColorImageTransition(
+    VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, VkAccessFlags srcAccess, VkAccessFlags dstAccess)
+{
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask = srcAccess;
+    barrier.dstAccessMask = dstAccess;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
+    return barrier;
+}
+
+void TransitionColorImages(
+    VkCommandBuffer commandBuffer,
+    std::span<const VkImage> images,
+    VkImageLayout oldLayout,
+    VkImageLayout newLayout,
+    VkPipelineStageFlags srcStage,
+    VkAccessFlags srcAccess,
+    VkPipelineStageFlags dstStage,
+    VkAccessFlags dstAccess)
+{
+    std::vector<VkImageMemoryBarrier> barriers;
+    barriers.reserve(images.size());
+    for (VkImage image : images)
+    {
+        barriers.push_back(ColorImageTransition(image, oldLayout, newLayout, srcAccess, dstAccess));
+    }
+    vkCmdPipelineBarrier(
+        commandBuffer, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
+}
+
+void BeginFrameImageWrites(VkCommandBuffer commandBuffer, std::span<const VkImage> images)
+{
+    TransitionColorImages(
+        commandBuffer,
+        images,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_IMAGE_LAYOUT_GENERAL,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+}
+
+void EndFrameImageWrites(VkCommandBuffer commandBuffer, std::span<const VkImage> images, VkPipelineStageFlags srcStage, VkAccessFlags srcAccess)
+{
+    TransitionColorImages(
+        commandBuffer,
+        images,
+        VK_IMAGE_LAYOUT_GENERAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        srcStage,
+        srcAccess,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT);
+}
+
 HistoryImagePair::~HistoryImagePair()
 {
     Destroy();

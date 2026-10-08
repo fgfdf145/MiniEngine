@@ -5,6 +5,24 @@
 namespace me
 {
 
+namespace
+{
+// What the resource is, for its debug name: the failure message without its "Failed to create (the
+// | a | an) ".
+std::string DebugName(const char* failureMessage)
+{
+    std::string name = failureMessage;
+    for (const char* prefix : {"Failed to create the ", "Failed to create an ", "Failed to create a ", "Failed to create "})
+    {
+        if (name.starts_with(prefix))
+        {
+            return name.substr(std::char_traits<char>::length(prefix));
+        }
+    }
+    return name;
+}
+}
+
 nvrhi::TextureHandle CreateNvrhiImage(nvrhi::IDevice* device, const VkImageCreateInfo& info, VkImage& image, const char* failureMessage)
 {
     constexpr VkImageUsageFlags kKnownUsage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
@@ -63,7 +81,7 @@ nvrhi::TextureHandle CreateNvrhiImage(nvrhi::IDevice* device, const VkImageCreat
     desc.isRenderTarget = (info.usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) != 0;
     // MUTABLE_FORMAT, and EXTENDED_USAGE with it: a view in a format the image's usage does not allow.
     desc.isTypeless = (info.flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) != 0;
-    desc.debugName = failureMessage;
+    desc.debugName = DebugName(failureMessage);
 
     nvrhi::TextureHandle texture = device->createTexture(desc);
     if (!texture)
@@ -123,7 +141,7 @@ nvrhi::BufferHandle CreateNvrhiBuffer(
     {
         throw std::runtime_error(std::string(failureMessage) + ": a memory kind NVRHI cannot allocate");
     }
-    desc.debugName = failureMessage;
+    desc.debugName = DebugName(failureMessage);
 
     nvrhi::BufferHandle handle = device->createBuffer(desc);
     if (!handle)

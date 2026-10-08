@@ -73,6 +73,33 @@ std::vector<VkDescriptorSet> AllocateDescriptorSets(VkDevice device, VkDescripto
 
 VkWriteDescriptorSet ImageWrite(VkDescriptorSet set, uint32_t binding, VkDescriptorType type, const VkDescriptorImageInfo* info);
 
+// Every level and layer of a colour image from oldLayout to newLayout, srcAccess before dstAccess.
+VkImageMemoryBarrier ColorImageTransition(
+    VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, VkAccessFlags srcAccess, VkAccessFlags dstAccess);
+
+// One barrier moving each colour image so, after srcStage and before dstStage. The images set 0
+// samples rest in SHADER_READ_ONLY_OPTIMAL, the layout an NVRHI binding set names them in; their
+// writers move them to GENERAL around the writes.
+void TransitionColorImages(
+    VkCommandBuffer commandBuffer,
+    std::span<const VkImage> images,
+    VkImageLayout oldLayout,
+    VkImageLayout newLayout,
+    VkPipelineStageFlags srcStage,
+    VkAccessFlags srcAccess,
+    VkPipelineStageFlags dstStage,
+    VkAccessFlags dstAccess);
+
+// Those images to GENERAL for a compute writer, after every shader's reads of them...
+void BeginFrameImageWrites(VkCommandBuffer commandBuffer, std::span<const VkImage> images);
+
+// ...and back to SHADER_READ_ONLY_OPTIMAL, srcStage's srcAccess visible to every shader after.
+void EndFrameImageWrites(
+    VkCommandBuffer commandBuffer,
+    std::span<const VkImage> images,
+    VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+    VkAccessFlags srcAccess = VK_ACCESS_SHADER_WRITE_BIT);
+
 // Two storage-and-sampled images a temporal filter ping-pongs between. They live outside
 // SceneRenderTargets because they must survive across frames, which the frame-scoped layout tracker
 // cannot describe, so they stay in VK_IMAGE_LAYOUT_GENERAL and RecordBarrier orders them itself.

@@ -190,6 +190,25 @@ SAMPLER（b + 64），仍是原生 Vulkan：布局按同样的规则展开，`Up
 验证：71 个 SPIR-V 全部 `spirv-val` 通过，用帧集的着色器在 set 0 里不再有 combined image sampler；A/B 对比 A1
 之前的基线，9 个场景逐像素相同，validation 无报告；ctest 与之前相同（120/123，三个已知失败与此无关）。
 
+**B2a 完成（2026-10-09）**：帧集里的图像平时都在 `SHADER_READ_ONLY_OPTIMAL`。NVRHI 的 binding set 把 SRV 一律
+写成这个 layout（`vulkan-resource-bindings.cpp`），而原来有 11 张帧集图像一直放在 `GENERAL`：大气的透射/天空视图
+LUT、空气透视体积、云噪声三张、云阴影、解析后的云，环境探针的预滤波立方体，DDGI 的两个图集。现在它们只在写的
+那段是 `GENERAL`（`BeginFrameImageWrites` / `EndFrameImageWrites`，`compute_pass_util`），写完回到
+`SHADER_READ_ONLY_OPTIMAL`；大气 pass 自己的集里透射 LUT 的采样描述符跟着改。只在本 pass 内部用的图像
+（多次散射 LUT、云的 march 目标和历史、探针的辐射立方体）照旧是 `GENERAL`。
+- DDGI 的更新在写第 L 层的同时采样第 L+1 层（新探针从更粗一层起步），而帧集的视图包含所有层、要求全是
+  `SHADER_READ_ONLY_OPTIMAL`，所以更新改从 DDGI 自己的集（binding 6 到 9，`GENERAL`）读图集
+  （`DDGI_UPDATE_ATLASES`）。
+- DDGI 的两个 layout 转换并进已有的那两个 `vkCmdPipelineBarrier`。分开记成两个独立的 barrier（就挨着原来的，
+  lavapipe 会把相邻的 barrier 合并成一次 stall，所以执行上应当完全一样）时，Cornell DDGI 场景确定性地变了一点
+  （均值 0.157，最大 31，3.4% 的像素 > 2），其中任何一个单独加都不变，也和 layout 本身无关（`GENERAL→GENERAL`
+  同样会变），基线在 CPU 满载下跑也不变。像是某处依赖了未初始化的内存（命令流形状不同→主机分配不同），原因未查，
+  记为后续。
+- `CreateNvrhiImage/Buffer` 的 debug name 原来就是失败信息本身（"Failed to create a DDGI atlas"），改成去掉
+  "Failed to create (the|a|an)" 的部分。
+
+验证：A/B 对比 A1 之前的基线，9 个场景逐像素相同，validation 无报告；ctest 与之前相同。
+
 ### 验证工具
 
 `tools/render_ab/`：`ab.py`（A/B 截图，`AB_MODE=exe` 对比 `out/baseline_src` 里编的基线 exe；基线 = 改动前的

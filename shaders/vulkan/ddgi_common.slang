@@ -57,11 +57,13 @@ static const uint DDGI_FEEDBACK_INACTIVE = 4u;
 
 // Set 0 bindings 21 to 23 (VulkanDdgi): one array layer per level, a 10 x 10 (irradiance: rgb
 // irradiance / pi, a sky visibility) or 18 x 18 (visibility: mean distance, mean squared distance)
-// tile per probe, bordered.
+// tile per probe, bordered. ddgi_update.comp declares the atlases itself (DDGI_UPDATE_ATLASES).
+#ifndef DDGI_UPDATE_ATLASES
 [[vk::binding(21, 0)]] Texture2DArray ddgiIrradianceAtlas;
 [[vk::binding(FRAME_SAMPLER(21), 0)]] SamplerState ddgiIrradianceAtlasSampler;
 [[vk::binding(22, 0)]] Texture2DArray ddgiVisibilityAtlas;
 [[vk::binding(FRAME_SAMPLER(22), 0)]] SamplerState ddgiVisibilityAtlasSampler;
+#endif
 [[vk::binding(23, 0)]] StructuredBuffer<DdgiProbeState> ddgiProbeStates;
 
 uint DdgiLevelCount()

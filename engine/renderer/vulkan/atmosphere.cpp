@@ -1,6 +1,7 @@
 #include "atmosphere.h"
 
 #include "command.h"
+#include "compute_pass_util.h"
 #include "nvrhi_resources.h"
 #include "sampler_settings.h"
 
@@ -258,12 +259,8 @@ void VulkanAtmosphere::InitializeView(VkCommandBuffer commandBuffer, View& view)
     const VkClearColorValue black{};
     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCmdClearColorImage(commandBuffer, view.m_aerialPerspective.image, VK_IMAGE_LAYOUT_GENERAL, &black, 1, &range);
-    GlobalBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_ACCESS_TRANSFER_WRITE_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    // Set 0 samples it.
+    EndFrameImageWrites(commandBuffer, std::span(&view.m_aerialPerspective.image, 1), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
     view.m_initialized = true;
 }
 
@@ -282,13 +279,9 @@ void VulkanAtmosphere::RecordView(
         const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, view.m_descriptorSet};
         vkCmdBindDescriptorSets(
             commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
+        BeginFrameImageWrites(commandBuffer, std::span(&view.m_aerialPerspective.image, 1));
         Dispatch(commandBuffer, kAerialPerspective, GroupCount(32, 8), GroupCount(32, 8), 32);
-        GlobalBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_ACCESS_SHADER_WRITE_BIT,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_ACCESS_SHADER_READ_BIT);
+        EndFrameImageWrites(commandBuffer, std::span(&view.m_aerialPerspective.image, 1));
     }
     RecordClouds(commandBuffer, view, frameDescriptorSet, timer);
 }
@@ -335,6 +328,8 @@ void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, View& view, V
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        // The resolved clouds rest where set 0 samples them.
+        BeginFrameImageWrites(commandBuffer, std::span(&view.m_cloudResolved.image, 1));
     }
 
     const VkExtent2D sceneExtent = view.m_cloudSceneExtent;
@@ -374,6 +369,8 @@ void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, View& view, V
         VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_ACCESS_SHADER_READ_BIT);
+    EndFrameImageWrites(
+        commandBuffer, std::span(&view.m_cloudResolved.image, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT);
 }
 
 void VulkanAtmosphere::CreateCloudImage(LutImage& image, VkExtent2D extent, VkImageUsageFlags usage, const char* name)
@@ -422,7 +419,8 @@ void VulkanAtmosphere::WriteViewDescriptors(const View& view)
         infos[lut] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_images[lut].view, VK_IMAGE_LAYOUT_GENERAL};
     }
     infos[kAerialPerspectiveBinding] = VkDescriptorImageInfo{VK_NULL_HANDLE, view.m_aerialPerspective.view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[4] = VkDescriptorImageInfo{NativeSampler(m_sampler), m_images[kTransmittance].view, VK_IMAGE_LAYOUT_GENERAL};
+    // Set 0 samples the transmittance too, so it rests in SHADER_READ_ONLY_OPTIMAL between its writes.
+    infos[4] = VkDescriptorImageInfo{NativeSampler(m_sampler), m_images[kTransmittance].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     infos[5] = VkDescriptorImageInfo{NativeSampler(m_sampler), m_images[kMultiScattering].view, VK_IMAGE_LAYOUT_GENERAL};
     infos[7] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudShape].view, VK_IMAGE_LAYOUT_GENERAL};
     infos[8] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudDetail].view, VK_IMAGE_LAYOUT_GENERAL};
@@ -539,6 +537,7 @@ void VulkanAtmosphere::Record(
         // The plume table, before the plume map is first built below.
         const VkBufferCopy plumes{0, 0, static_cast<VkDeviceSize>(kCloudPlumeTableSize) * sizeof(CloudPlumeCell)};
         vkCmdCopyBuffer(commandBuffer, m_plumeStaging, m_plumeBuffer, 1, &plumes);
+        EndFrameImageWrites(commandBuffer, FrameSampledImages(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         InitializeView(commandBuffer, *m_placeholderView);
         m_imagesInitialized = true;
     }
@@ -570,12 +569,15 @@ void VulkanAtmosphere::Record(
             sets.data(),
             0,
             nullptr);
+        const std::array<VkImage, kCloudNoiseCount> noise = {
+            m_cloudNoise[kCloudShape].image, m_cloudNoise[kCloudDetail].image, m_cloudNoise[kCloudWeather].image};
+        BeginFrameImageWrites(commandBuffer, noise);
         const uint32_t groups = GroupCount(kCloudNoiseSizes[kCloudShape], 4);
         Dispatch(commandBuffer, kCloudNoisePipeline, groups, groups, groups);
         const uint32_t weatherGroups = GroupCount(kCloudNoiseSizes[kCloudWeather], 8);
         Dispatch(commandBuffer, kCloudWeatherPipeline, weatherGroups, weatherGroups, 1);
         // The shadow map below reads the noise.
-        GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        EndFrameImageWrites(commandBuffer, noise);
         m_cloudNoiseBuilt = true;
         m_cloudWeatherLife = cloudLife != nullptr ? *cloudLife : glm::vec4(-1.0f);
     }
@@ -593,9 +595,10 @@ void VulkanAtmosphere::Record(
             sets.data(),
             0,
             nullptr);
+        BeginFrameImageWrites(commandBuffer, std::span(&m_cloudNoise[kCloudWeather].image, 1));
         const uint32_t weatherGroups = GroupCount(kCloudNoiseSizes[kCloudWeather], 8);
         Dispatch(commandBuffer, kCloudWeatherPipeline, weatherGroups, weatherGroups, 1);
-        GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        EndFrameImageWrites(commandBuffer, std::span(&m_cloudNoise[kCloudWeather].image, 1));
         m_cloudWeatherLife = *cloudLife;
     }
 
@@ -614,17 +617,20 @@ void VulkanAtmosphere::Record(
 
         if (!m_staticLutParameters.has_value() || !(*m_staticLutParameters == *parameters))
         {
+            BeginFrameImageWrites(commandBuffer, std::span(&m_images[kTransmittance].image, 1));
             Dispatch(commandBuffer, kTransmittance, GroupCount(256, 8), GroupCount(64, 8), 1);
-            GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+            EndFrameImageWrites(commandBuffer, std::span(&m_images[kTransmittance].image, 1));
             Dispatch(commandBuffer, kMultiScattering, 32, 32, 1);
             GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
             m_staticLutParameters = *parameters;
         }
+        const std::array<VkImage, 2> skyAndShadow = {m_images[kSkyView].image, m_cloudShadow.image};
+        BeginFrameImageWrites(commandBuffer, skyAndShadow);
         Dispatch(commandBuffer, kSkyView, GroupCount(192, 8), GroupCount(108, 8), 1);
         // Every frame, as the map follows the camera; all ones when the clouds are off.
         Dispatch(commandBuffer, kCloudShadowPipeline, GroupCount(kCloudShadowSize, 8), GroupCount(kCloudShadowSize, 8), 1);
         // The SH projection samples the sky-view LUT written above.
-        GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+        EndFrameImageWrites(commandBuffer, skyAndShadow);
         Dispatch(commandBuffer, kIrradiancePipeline, 1, 1, 1);
 
         // A copy for the CPU, read once this slot's fence has signaled.
@@ -643,6 +649,17 @@ void VulkanAtmosphere::Record(
         VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_ACCESS_SHADER_READ_BIT);
+}
+
+std::array<VkImage, 6> VulkanAtmosphere::FrameSampledImages() const
+{
+    return {
+        m_images[kTransmittance].image,
+        m_images[kSkyView].image,
+        m_cloudNoise[kCloudShape].image,
+        m_cloudNoise[kCloudDetail].image,
+        m_cloudNoise[kCloudWeather].image,
+        m_cloudShadow.image};
 }
 
 void VulkanAtmosphere::Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, uint32_t x, uint32_t y, uint32_t z) const
