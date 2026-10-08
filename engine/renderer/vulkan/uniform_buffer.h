@@ -383,8 +383,10 @@ class VulkanUniformBuffer
         float preExposure,
         const DdgiUniformData& ddgi,
         float textureMipBias,
-        // The forward pass takes its ambient light from the path traced layer (bindings 29 to 31).
-        bool pathTraceLayer);
+        // The forward pass takes its ambient light from the path traced layer (bindings 29 to 31),
+        // traced at a resolution this many times 2 lower each way.
+        bool pathTraceLayer,
+        uint32_t pathTraceLayerShift);
 
   private:
     // Shared by the destructor and the constructor's unwind path. Skips null handles.

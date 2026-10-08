@@ -301,8 +301,23 @@ struct PathTracingSettings
     // the nearest one over each pixel takes traced light in place of the probes and the sky, and the
     // paths meet them (VulkanPathTraceLayerPass).
     bool forwardSurfaces = true;
+    // Those surfaces traced at half the resolution each way (a quarter of the paths), each 2 x 2 block
+    // taking its top-left pixel's light: their cost follows how much of the image foliage and decals
+    // cover.
+    bool forwardSurfacesHalfResolution = false;
     // The paths' rays pass through the air (aerial perspective) and the height fog, as the camera's do.
     bool rayMedia = true;
+    // Next event estimation also picks a point on one emissive triangle (lamps, neon, lit windows) in
+    // proportion to its power, weighted against the paths finding it (multiple importance sampling).
+    bool emissiveLights = true;
+    // The local light candidates come from a world grid around the camera, each cell listing the lights
+    // that reach it, rather than from every local light where the vertex is outside the view frustum's
+    // cluster grid (which a scene of hundreds of lights all but never picks well).
+    bool lightGrid = true;
+    // DLSS ray reconstruction gets the specular paths' hit distance and the reflections' motion
+    // vectors with the raw paths, so a glossy reflection reprojects as the reflected scene moves
+    // rather than with the surface it is seen in.
+    bool reflectionGuides = true;
     // ReSTIR PT Enhanced instead of the plain path tracer: direct and indirect light resampled across
     // neighbours and frames (best with DLSS ray reconstruction, as the paper is evaluated).
     bool restir = false;

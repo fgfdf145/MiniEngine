@@ -32,6 +32,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -603,6 +605,11 @@ VulkanRenderer::~VulkanRenderer()
             LOG_ERROR("The render thread failed: {}", error.what());
         }
         m_renderThread.reset();
+    }
+    if (m_frameTimesFile != nullptr)
+    {
+        std::fclose(m_frameTimesFile);
+        m_frameTimesFile = nullptr;
     }
     // Its last frames are read back from the device about to be torn down.
     try
@@ -1526,6 +1533,19 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         };
         push(m_cpuFrameMs, frameMs - waitMs);
         push(m_cpuWaitMs, waitMs);
+        if (!m_frameTimesChecked)
+        {
+            m_frameTimesChecked = true;
+            if (const char* path = std::getenv("MINIENGINE_FRAME_TIMES"); path != nullptr && path[0] != 0)
+            {
+                m_frameTimesFile = std::fopen(path, "w");
+            }
+        }
+        if (m_frameTimesFile != nullptr)
+        {
+            const long long now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            std::fprintf(m_frameTimesFile, "%lld %.3f %.3f %.3f\n", now, frameMs - waitMs, waitMs, m_gpuTimer ? m_gpuTimer->GetLastFrameMs() : 0.0);
+        }
         ++m_cpuFrameCursor;
         // A frame the CPU held up for two at 60 Hz says where the time went.
         constexpr double kSlowFrameMs = 33.0;
@@ -1708,7 +1728,9 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
 
     // The forward-shaded surfaces path traced as well (the viewport's path tracing only), from images
     // made before the camera block says so.
-    const bool pathTraceLayer = viewport && features.pathTracing && renderDebug.pathTracing.forwardSurfaces && PreparePathTraceLayer(view);
+    const bool pathTraceLayer = viewport && features.pathTracing && renderDebug.pathTracing.forwardSurfaces &&
+                                PreparePathTraceLayer(view, renderDebug.pathTracing.forwardSurfacesHalfResolution);
+    const uint32_t pathTraceLayerShift = pathTraceLayer ? view.pathTracePass->GetLayerShift() : 0u;
 
     // This frame's EV, already adapted by UpdateAutoExposure, so every writer and reader of the
     // HDR target agrees on one pre-exposure.
@@ -1735,7 +1757,8 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
                           glm::uvec2(extent.width, extent.height),
                           glm::uvec2(outputExtent.width, outputExtent.height))
                     : 0.0f,
-        pathTraceLayer);
+        pathTraceLayer,
+        pathTraceLayerShift);
     // Culled against the jittered projection, the one the GPU rasterises with.
     std::vector<VulkanDrawItem>& drawItems = prepared->drawItems;
     drawItems = BuildDrawItems(imageIndex, shared.models, renderMatrices.renderProjection * renderMatrices.view, viewportMatrices.view);
@@ -1897,6 +1920,7 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     }
     frame.pathTracing = renderDebug.pathTracing;
     frame.pathTracing.enabled = features.pathTracing;
+    frame.localLightCount = static_cast<uint32_t>(shared.selectedLights.size()) - shared.directionalLightCount;
     frame.pathTracing.restir = features.restirPt;
     // The layer accumulates and denoises by the settings whatever DLSS does: ray reconstruction never
     // sees it.
@@ -1977,6 +2001,10 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
         frame.rayTracing.denoise = frame.rayTracing.denoise && features.rayTracedShadowDenoise;
         frame.pathTracing.accumulate = frame.pathTracing.accumulate && features.pathTraceAccumulate;
         frame.pathTracing.denoise = frame.pathTracing.denoise && features.pathTraceDenoise;
+        // The raw paths' reflections reproject by their hit distance (its guides).
+        frame.pathTraceHitDistance = frame.dlssRayReconstruction && frame.pathTracing.reflectionGuides && frame.pathTracing.enabled &&
+                                     !frame.pathTracing.restir &&
+                                     !frame.pathTracing.accumulate && !frame.pathTracing.denoise;
         m_dlssResetPending = false;
     }
     // The traced shadow accumulates only while its filters run.
@@ -2635,7 +2663,7 @@ void VulkanRenderer::PathTraceLayerBindings(
     specular = placeholder;
 }
 
-bool VulkanRenderer::PreparePathTraceLayer(VulkanSceneView& view)
+bool VulkanRenderer::PreparePathTraceLayer(VulkanSceneView& view, bool halfResolution)
 {
     VulkanPathTraceLayerPass* layerPass = view.pathTraceLayerPass;
     VulkanPathTracePass* pathTracePass = view.pathTracePass;
@@ -2643,8 +2671,15 @@ bool VulkanRenderer::PreparePathTraceLayer(VulkanSceneView& view)
     {
         return false;
     }
+    const uint32_t shift = halfResolution ? 1u : 0u;
+    if (pathTracePass->IsLayerReady() && pathTracePass->GetLayerShift() != shift)
+    {
+        // The frames in flight still sample the layer's result at the old size.
+        m_commandContext->WaitForAllFrames();
+        pathTracePass->DestroyLayerImages();
+    }
     bool made = layerPass->Prepare(*view.targets);
-    made = pathTracePass->PrepareLayer(*view.targets, *layerPass) || made;
+    made = pathTracePass->PrepareLayer(*view.targets, *layerPass, shift) || made;
     if (made)
     {
         // Set 0 names the new images from now on, in the layout they rest in: the frames that may

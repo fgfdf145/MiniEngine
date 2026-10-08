@@ -134,8 +134,14 @@ void VulkanGpuTimer::Collect(uint32_t frameSlot)
     {
         PushSample(m_sections[index].samples, m_sampleCursor, toMs(ticks[index], ticks[index + 1]));
     }
-    PushSample(m_frameSamples, m_sampleCursor, toMs(ticks.front(), ticks.back()));
+    m_lastFrameMs = toMs(ticks.front(), ticks.back());
+    PushSample(m_frameSamples, m_sampleCursor, m_lastFrameMs);
     ++m_sampleCursor;
+}
+
+double VulkanGpuTimer::GetLastFrameMs() const
+{
+    return m_lastFrameMs;
 }
 
 std::vector<VulkanGpuTimer::Section> VulkanGpuTimer::GetSections() const

@@ -5,11 +5,13 @@
 #include "uniform_buffer.h"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace me
 {
 
+class VulkanPathTraceLights;
 class VulkanPathTraceLayerPass;
 class VulkanRayScene;
 
@@ -67,8 +69,13 @@ class VulkanPathTracePass : public IScenePass
     // The same for the forward-shaded surfaces' layer, read from the layer pass's images (which must
     // exist); true when it made them: the caller resets the layer's history, moves the result pair to
     // its resting layout (RecordLayerInitialTransition) and points set 0 at it.
-    bool PrepareLayer(const SceneRenderTargets& targets, const VulkanPathTraceLayerPass& layer);
+    // shift: the layer is traced on a grid 2^shift times smaller each way than its G-buffer.
+    bool PrepareLayer(const SceneRenderTargets& targets, const VulkanPathTraceLayerPass& layer, uint32_t shift);
     bool IsLayerReady() const;
+    uint32_t GetLayerShift() const;
+    // Frees the layer's images (the caller has waited for the frames that may use them); the next
+    // PrepareLayer makes them again.
+    void DestroyLayerImages();
     void RecordLayerInitialTransition(VkCommandBuffer commandBuffer) const;
     // The layer's traced light through the diffuse and the specular lobes, nearest, for set 0.
     TextureDescriptorBinding GetLayerDiffuseBinding() const;
@@ -83,7 +90,9 @@ class VulkanPathTracePass : public IScenePass
         bool accumulate,
         bool denoise,
         bool historyValid,
-        float historyScale) const;
+        float historyScale,
+        bool hitDistance,
+        uint32_t gbufferShift) const;
     void CreateRaw(VkExtent2D extent);
     void WriteDescriptorSets(const SceneRenderTargets& targets);
     void WriteLayerDescriptorSets(const VulkanPathTraceLayerPass& layer);
@@ -95,14 +104,22 @@ class VulkanPathTracePass : public IScenePass
     VkSampler m_nearestSampler = VK_NULL_HANDLE;
     // The atmosphere's multiple-scattering LUT (binding 18), for the air along the paths.
     TextureDescriptorBinding m_multiScattering;
+    // The emissive triangles as lights (the trace's set 4), built at the start of each path traced
+    // frame; null without hardware ray tracing.
+    std::unique_ptr<VulkanPathTraceLights> m_lights;
     // One set for all three shaders (path_trace_common.glsl's bindings 0-18).
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    // Frame set, ray set, this pass's set, ray texture table (the trace); frame set and this pass's set
+    // Frame set, ray set, this pass's set, ray texture table, emissive lights (the trace); frame set and
+    // this pass's set
     // (the other two), with the same push constants.
     VkPipelineLayout m_tracePipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
+    // The trace's variants, by [transmission][layered] (PT_TRANSMISSION, PT_LAYERED in path_trace.comp);
+    // [1][1] is the whole of it.
+    VkPipeline m_tracePipelines[2][2] = {};
     VkPipeline m_tracePipeline = VK_NULL_HANDLE;
+    const VulkanRayScene* m_rayScene = nullptr;
     VkPipeline m_temporalPipeline = VK_NULL_HANDLE;
     VkPipeline m_filterPipeline = VK_NULL_HANDLE;
     // The raw paths (0 diffuse, 1 specular), rewritten every frame; and the accumulations of the two
@@ -122,6 +139,7 @@ class VulkanPathTracePass : public IScenePass
     HistoryImagePair m_layerSurfaceHistory;
     HistoryImagePair m_layerResult;
     bool m_layerReady = false;
+    uint32_t m_layerShift = 0;
     mutable bool m_layerInitialized = false;
     std::vector<VkDescriptorSet> m_layerDescriptorSets;
 };

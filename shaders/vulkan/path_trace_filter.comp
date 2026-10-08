@@ -31,7 +31,7 @@ void main()
     {
         return;
     }
-    float depth = texelFetch(ptDepth, pixel, 0).r;
+    float depth = texelFetch(ptDepth, PtGBufferPixel(pixel), 0).r;
     vec4 centerDiffuse;
     vec4 centerSpecular;
     LoadPathTracePair(pathTrace.source, pixel, centerDiffuse, centerSpecular);
@@ -78,7 +78,7 @@ void main()
     vec2 luminanceScale = 1.0 / (LUMINANCE_SIGMA * deviation + 1e-4);
 
     vec3 position = PathTraceWorldPosition(pixel, depth);
-    vec3 N = DecodeNormalOctahedral(texelFetch(ptNormal, pixel, 0).rg);
+    vec3 N = DecodeNormalOctahedral(texelFetch(ptNormal, PtGBufferPixel(pixel), 0).rg);
     float planeScale = 1.0 / max(PLANE_TOLERANCE * length(position - ubo.cameraWorldPosition.xyz) * float(pathTrace.stepSize), 1e-3);
     float roughness = PathTraceSpecularRoughness(pixel);
     vec2 centerLuminance = vec2(PathTraceLuminance(centerDiffuse.rgb), PathTraceLuminance(centerSpecular.rgb));
@@ -96,13 +96,13 @@ void main()
             {
                 continue;
             }
-            float sourceDepth = texelFetch(ptDepth, source, 0).r;
+            float sourceDepth = texelFetch(ptDepth, PtGBufferPixel(source), 0).r;
             if (!PathTraceSurfaceShaded(source, sourceDepth))
             {
                 continue;
             }
             float kernel = KERNEL[abs(x)] * KERNEL[abs(y)];
-            vec3 sourceNormal = DecodeNormalOctahedral(texelFetch(ptNormal, source, 0).rg);
+            vec3 sourceNormal = DecodeNormalOctahedral(texelFetch(ptNormal, PtGBufferPixel(source), 0).rg);
             float plane = abs(dot(N, PathTraceWorldPosition(source, sourceDepth) - position));
             float geometry = kernel * exp(-plane * planeScale) * pow(max(dot(N, sourceNormal), 0.0), NORMAL_POWER);
             vec4 d;

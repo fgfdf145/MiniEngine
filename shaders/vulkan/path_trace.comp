@@ -14,9 +14,11 @@
 //     sharpest level, which holds the clouds but not the sun's disk, plus the Ambient and Hemisphere
 //     lights);
 //   - next event estimation: every directional light (a disk the sun's size) and one local light
-//     resampled from a few candidates (the cluster grid's list where the point is in the view
-//     frustum), each through a shadow ray; the analytic lights are invisible to the paths themselves,
-//     so nothing is counted twice;
+//     resampled from a few candidates (the light grid's cell, else the cluster grid's list where the
+//     point is in the view frustum), each through a shadow ray; the analytic lights are invisible to
+//     the paths themselves, so nothing is counted twice. And at the G-buffer's surface and the first
+//     path vertex, one point on an emissive triangle picked by power (emissive_lights_common.glsl),
+//     weighed against the paths that hit it by multiple importance sampling;
 //   - the next direction from its material's diffuse or GGX lobe (visible normals), with Russian
 //     roulette from the third surface on.
 // The direct light at the G-buffer's surface itself is the lighting pass's, so a path starts with
@@ -28,6 +30,17 @@
 
 #define RAY_TEXTURED_ALPHA
 #define PATH_TRACE_SET 2
+// The variants (VulkanPathTracePass picks one per frame): PT_TRANSMISSION 0 leaves out what the
+// paths do at transmissive surfaces (no forward surfaces: they meet none but by coverage, as opaque),
+// PT_LAYERED 0 the later surfaces' coat, sheen, dielectric specular and normal maps (no material in
+// the ray scene has any). The code they leave out folds away at compile time, and with it the
+// registers it held.
+#ifndef PT_TRANSMISSION
+#define PT_TRANSMISSION 1
+#endif
+#ifndef PT_LAYERED
+#define PT_LAYERED 1
+#endif
 #include "scene_common.glsl"
 #include "gbuffer_common.glsl"
 #include "pbr_common.glsl"
@@ -38,6 +51,9 @@
 #include "material_common.glsl"
 #include "material_uv.glsl"
 #include "ray_hit_common.glsl"
+#define EMISSIVE_LIGHT_SET 4
+#include "emissive_lights_common.glsl"
+#include "light_grid_common.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -56,10 +72,23 @@ const float PT_SHARP_ROUGHNESS = 0.3;
 // Rays through less air than this (kilometres, at the scene's aerial perspective distance scale) pass
 // it untouched: a clear sky takes out under 4 % per kilometre near the ground, so under 1 % here.
 const float PT_AIR_MIN_KM = 0.2;
+// Emissive samples whose light would add less than this (pre-exposed luminance) trace their shadow
+// ray by Russian roulette (EmissiveShadowWeight).
+const float PT_SHADOW_ROULETTE = 1.0 / 64.0;
+// The path vertices next event estimation looks for an emissive triangle at, from the first: past
+// them the paths alone find emissive surfaces (all their light, no MIS), which costs a shadow ray less
+// a vertex where it matters least.
+const uint PT_EMISSIVE_NEE_BOUNCES = 1u;
+// The hit distance a ray that leaves the scene reports to ray reconstruction: far enough that its
+// reflection moves with the camera's rotation alone.
+const float PT_SKY_HIT_DISTANCE = 10000.0;
 // The most interfaces a path leaves transmissive volumes through.
 const uint PT_MAX_VOLUME_EXITS = 4u;
 
 uint g_rngState;
+// How far the last TracePath's first ray went before it met a surface (PT_SKY_HIT_DISTANCE when it
+// left the scene).
+float g_firstHitDistance = 0.0;
 
 float Random()
 {
@@ -104,6 +133,152 @@ float SmithG2OverG1(float NdV, float NdL, float alpha)
     float lambdaV = 0.5 * (-1.0 + sqrt(1.0 + a2 * (1.0 - NdV * NdV) / max(NdV * NdV, 1e-8)));
     float lambdaL = 0.5 * (-1.0 + sqrt(1.0 + a2 * (1.0 - NdL * NdL) / max(NdL * NdL, 1e-8)));
     return (1.0 + lambdaV) / (1.0 + lambdaV + lambdaL);
+}
+
+// The probability density (solid angle) of a GGX lobe's visible normals reflecting V into L: G1(V)
+// D(H) / (4 N.V), as SampleGgxVisibleNormal draws them.
+float GgxReflectionDensity(vec3 N, vec3 V, vec3 L, float roughness)
+{
+    if (dot(N, L) <= 0.0)
+    {
+        return 0.0;
+    }
+    float NdV = max(dot(N, V), 1e-4);
+    float alpha = roughness * roughness;
+    float lambdaV = 0.5 * (-1.0 + sqrt(1.0 + alpha * alpha * (1.0 - NdV * NdV) / (NdV * NdV)));
+    return DistributionGGX(N, normalize(V + L), roughness) / (4.0 * NdV * (1.0 + lambdaV));
+}
+
+// The power heuristic's weight of the strategy whose density is chosen, against the other's.
+float MisWeight(float chosen, float other)
+{
+    float chosen2 = chosen * chosen;
+    float total = chosen2 + other * other;
+    return total > 0.0 && !isinf(total) ? chosen2 / total : (chosen >= other ? 1.0 : 0.0);
+}
+
+bool EmissiveLightsOn()
+{
+    return (pathTrace.flags & PT_FLAG_EMISSIVE_LIGHTS) != 0u;
+}
+
+// The density next event estimation picks the direction to a path's hit with, solid angle: its
+// triangle's probability over its area, by the squared distance over the cosine there. 0 for a hit
+// that is no emissive light.
+float EmissiveHitDensity(RayHit hit, vec3 faceNormal, vec3 direction)
+{
+    uint light = EmissiveLightOfHit(hit);
+    if (light == ~0u)
+    {
+        return 0.0;
+    }
+    EmissiveTriangle triangle = emissiveTriangles[light];
+    float area = 0.5 * length(cross(triangle.e1Slot.xyz, triangle.e2Front.xyz));
+    float cosine = abs(dot(direction, faceNormal));
+    return area > 0.0 && cosine > 0.0 ? EmissiveLightProbability(light) * hit.t * hit.t / (area * cosine) : 0.0;
+}
+
+// One point on an emissive triangle, picked by the power tree, seen from position past faceNormal's
+// side, unshadowed: false when there is none to see (picked nothing, or behind the surface or the
+// light). light is the radiance it sends along L, over the density of picking it (solid angle), which
+// is in density; target is where its shadow ray ends, short of the point by a few units of rounding
+// of its coordinates over the cosine there: a ray stopped a fixed distance short ran within rounding
+// of the light's plane where it met the light at a grazing angle, and hit the light itself; lifting
+// the point off the plane instead (OffsetRayOrigin, several centimetres this far from the origin)
+// took it through the near side of a thin light (a neon tube) to its far side.
+bool EmissiveSample(vec3 position, vec3 faceNormal, float footprintWidth, out vec3 L, out vec3 light, out float density, out vec3 target)
+{
+    L = vec3(0.0, 0.0, 1.0);
+    light = vec3(0.0);
+    density = 0.0;
+    target = position;
+    uint picked;
+    if (!PickEmissiveLight(Random(), picked))
+    {
+        return false;
+    }
+    EmissivePoint point;
+    if (!SampleEmissivePoint(picked, vec2(Random(), Random()), position, footprintWidth, point))
+    {
+        return false;
+    }
+    vec3 toLight = point.position - position;
+    float distance2 = dot(toLight, toLight);
+    L = toLight / max(sqrt(distance2), 1e-6);
+    float cosLight = -dot(point.normal, L);
+    if (dot(L, faceNormal) <= 0.0 || cosLight <= 0.0 || all(equal(point.radiance, vec3(0.0))))
+    {
+        return false;
+    }
+    density = point.areaDensity * distance2 / cosLight;
+    light = point.radiance / density;
+    vec3 magnitude = abs(point.position);
+    float margin = (1e-3 + 4e-7 * max(magnitude.x, max(magnitude.y, magnitude.z))) / max(cosLight, 0.01);
+    target = point.position - L * min(margin, 0.5 * sqrt(distance2));
+    return true;
+}
+
+// The weight of an emissive sample's shadow ray, with Russian roulette by what it would add (its
+// pre-exposed luminance, contribution): one that adds less than PT_SHADOW_ROULETTE is traced only
+// with that share of probability and counts for one over it, so the many dim samples (a far sign,
+// light at a grazing angle) cost few rays; then 0 when the scene's casters shadow the way to target.
+float EmissiveShadowWeight(vec3 position, vec3 faceNormal, vec3 target, float contribution)
+{
+    float weight = 1.0;
+    float luminance = contribution * ubo.exposure.x;
+    if (luminance < PT_SHADOW_ROULETTE)
+    {
+        float survival = luminance / PT_SHADOW_ROULETTE;
+        if (!(Random() < survival))
+        {
+            return 0.0;
+        }
+        weight = 1.0 / survival;
+    }
+    vec3 origin = OffsetRayOrigin(position, faceNormal);
+    vec3 toTarget = target - origin;
+    float reach = length(toTarget);
+    RayHit hit;
+    return reach > 0.0 && TraceSceneRayMasked(origin, toTarget / reach, 0.0, reach, true, NextRayId(), RAY_MASK_SHADOW, hit) ? 0.0 : weight;
+}
+
+// What the layered surface (ShadeSurface's composition, as LayeredLight) reflects toward V of light
+// arriving along L.
+vec3 LayeredReflection(
+    vec3 N, vec3 V, vec3 L, vec3 light, vec3 albedo, float metallic, float roughness, vec3 energyCompensation, CoatParams coat,
+    SheenParams sheen, SpecularParams specular, float sheenScaling, float coatTransmittance)
+{
+    vec3 result = EvaluateBRDF(N, V, L, L, 1.0, albedo, metallic, roughness, NoAnisotropy(), specular, energyCompensation, light);
+    if (HasSheen(sheen))
+    {
+        result = result * sheenScaling + EvaluateSheen(N, V, L, sheen, light);
+    }
+    if (coat.factor > 0.0)
+    {
+        result = result * coatTransmittance + coat.factor * EvaluateCoatSpecular(coat, V, L, 1.0, light);
+    }
+    return result;
+}
+
+// The density (solid angle) of a path vertex's next direction being L, its lobes picked by their
+// weights (x diffuse, y the base's specular, z the coat, w all of them with the transmission, which
+// never leaves on L's side).
+float PathVertexDensity(vec3 N, vec3 coatNormal, vec3 V, vec3 L, float roughness, float coatRoughness, vec4 lobeWeights)
+{
+    if (lobeWeights.w <= 0.0)
+    {
+        return 0.0;
+    }
+    float density = lobeWeights.x * max(dot(N, L), 0.0) / PI;
+    if (lobeWeights.y > 0.0)
+    {
+        density += lobeWeights.y * GgxReflectionDensity(N, V, L, roughness);
+    }
+    if (lobeWeights.z > 0.0)
+    {
+        density += lobeWeights.z * GgxReflectionDensity(coatNormal, V, L, coatRoughness);
+    }
+    return density / lobeWeights.w;
 }
 
 // What the sky sends along a direction, as the reflections see it.
@@ -195,7 +370,7 @@ TransmissionLobe TransmissionLobeOf(RayHit hit, bool transmissive, bool doubleSi
     lobe.volume = false;
     lobe.ior = 1.5;
     lobe.absorption = vec3(1.0);
-    if (!transmissive)
+    if (PT_TRANSMISSION == 0 || !transmissive)
     {
         return lobe;
     }
@@ -289,6 +464,10 @@ void RayHitLayersOf(RayHitSurface surface, out CoatParams coat, out SheenParams 
     coat = NoCoat();
     sheen = NoSheen();
     specular = NoSpecularOverride();
+    if (PT_LAYERED == 0)
+    {
+        return;
+    }
     if ((flags & SHADING_FLAG_CLEARCOAT) != 0u)
     {
         coat.factor = clamp(material.clearcoatFactors.x, 0.0, 1.0);
@@ -335,8 +514,10 @@ vec3 LayeredLight(
 // local light send toward V, shadowed by a ray each. The local light is resampled importance
 // sampling (Talbot 2005) over lightCandidates uniform picks, with the luminance of the base layer's
 // unshadowed contribution as the target (the coat and the sheen are evaluated for the chosen light
-// alone): from the cluster grid's list when the point is in the view frustum, which names only lights
-// whose range reaches it, from every local light otherwise.
+// alone): from the light grid's cell when the point is in it (light_grid_common.glsl: lights whose
+// range reaches the cell, a uniform subset of them when there are more than it holds, each then
+// counting for all of them), else from the cluster grid's list when the point is in the view
+// frustum, which names only lights whose range reaches it, else from every local light.
 vec3 DirectLight(
     vec3 position, vec3 N, vec3 faceNormal, vec3 V, vec3 albedo, float metallic, float roughness, vec3 energyCompensation,
     CoatParams coat, SheenParams sheen, SpecularParams specular, float sheenScaling, float coatTransmittance)
@@ -366,10 +547,21 @@ vec3 DirectLight(
     {
         return result;
     }
-    // The cluster grid covers the view frustum only.
+    // The candidates: range.y lights to pick from, each standing for population / range.y of them. The
+    // cluster grid covers the view frustum only.
     uvec2 range = uvec2(ubo.lightCounts.x, localCount);
     bool clustered = false;
-    if (ubo.lightCounts.z != 0u)
+    bool gridded = false;
+    uint cell = 0u;
+    float population = float(localCount);
+    if ((pathTrace.flags & PT_FLAG_LIGHT_GRID) != 0u && LightGridCellOf(position, cell))
+    {
+        uint reaching = LightGridCount(cell);
+        range = uvec2(0u, min(reaching, LIGHT_GRID_SLOTS));
+        population = float(reaching);
+        gridded = true;
+    }
+    else if (ubo.lightCounts.z != 0u)
     {
         vec4 clip = ubo.proj * ubo.view * vec4(position, 1.0);
         vec3 ndc = clip.xyz / max(clip.w, 1e-6);
@@ -377,6 +569,7 @@ vec3 DirectLight(
         {
             range = lightClusters.ranges[FindLightCluster(position)];
             clustered = true;
+            population = float(range.y);
         }
     }
     if (range.y == 0u)
@@ -391,12 +584,12 @@ vec3 DirectLight(
     for (uint k = 0u; k < pathTrace.lightCandidates; ++k)
     {
         uint pick = min(uint(Random() * float(range.y)), range.y - 1u);
-        uint lightIndex = clustered ? lightClusters.indices[range.x + pick] : range.x + pick;
+        uint lightIndex = gridded ? LightGridLight(cell, pick) : (clustered ? lightClusters.indices[range.x + pick] : range.x + pick);
         vec3 contribution = EvaluateSceneLight(
             sceneLights.lights[lightIndex], position, N, V, albedo, metallic, roughness, energyCompensation, NoCoat(), coatContribution,
             NoSheen(), sheenContribution, NoAnisotropy(), specular);
         float target = PathTraceLuminance(contribution);
-        float weight = target * float(range.y);
+        float weight = target * population;
         weightSum += weight;
         if (weight > 0.0 && Random() * weightSum < weight)
         {
@@ -426,10 +619,14 @@ vec3 DirectLight(
 // is the regularization's: the least roughness the path's surfaces have. sharp: the path so far is
 // a mirror-like reflection, whose rays test alpha-tested surfaces against their textures so leaves
 // keep their shapes; behind any wider lobe the coverage decision gives the same average light.
-vec3 TracePath(vec3 origin, vec3 direction, float coneWidth, float coneSpread, bool clampFirst, float roughnessFloor, bool sharp)
+vec3 TracePath(vec3 origin, vec3 direction, float coneWidth, float coneSpread, bool clampFirst, float roughnessFloor, bool sharp, float firstDensity)
 {
     vec3 radiance = vec3(0.0);
     vec3 throughput = vec3(1.0);
+    // The density the last vertex picked direction with (solid angle), against which an emissive hit
+    // weighs next event estimation's; 0 where that could not have found the hit (a refraction, a
+    // volume's exit), which keeps all of the hit's light.
+    float previousDensity = firstDensity;
     // Interfaces a path leaves a transmissive volume through: they are no surface of their own, and
     // do not count as bounces, up to this many.
     uint exits = 0u;
@@ -447,6 +644,10 @@ vec3 TracePath(vec3 origin, vec3 direction, float coneWidth, float coneSpread, b
         bool found = TraceSceneRayMasked(
             origin, direction, 0.0, PT_MAX_DISTANCE, false, NextRayId(), forwardSurfaces && sharp ? RAY_MASK_PATH : RAY_MASK_VISIBILITY, hit);
         rayMeetsTransmission = false;
+        if (bounce == 1u && exits == 0u)
+        {
+            g_firstHitDistance = found ? hit.t : PT_SKY_HIT_DISTANCE;
+        }
         PathMedium medium = RayMedium(origin, direction, hit.t, !found);
         vec3 inscatter = throughput * medium.inscatter;
         radiance += clamped ? ClampContribution(inscatter) : inscatter;
@@ -484,6 +685,7 @@ vec3 TracePath(vec3 origin, vec3 direction, float coneWidth, float coneSpread, b
             bool reflects = Random() < F;
             direction = reflects ? reflect(direction, surface.faceNormal) : refracted;
             origin = OffsetRayOrigin(surface.position, reflects ? surface.faceNormal : -surface.faceNormal);
+            previousDensity = 0.0;
             --bounce;
             continue;
         }
@@ -500,7 +702,7 @@ vec3 TracePath(vec3 origin, vec3 direction, float coneWidth, float coneSpread, b
         // The surface as the G-buffer's is shaded, but from its material's factors where the G-buffer
         // reads maps: the coat, the sheen and the dielectric specular. Its normal map where a
         // mirror-like path sees it; behind a wider lobe the map's detail averages away.
-        vec3 N = sharp ? RayHitMappedNormal(hit, surface, coneWidth, cosTheta) : surface.normal;
+        vec3 N = PT_LAYERED != 0 && sharp ? RayHitMappedNormal(hit, surface, coneWidth, cosTheta) : surface.normal;
         CoatParams coat;
         SheenParams sheen;
         SpecularParams specular;
@@ -520,20 +722,10 @@ vec3 TracePath(vec3 origin, vec3 direction, float coneWidth, float coneSpread, b
         float sheenScaling = HasSheen(sheen) ? 1.0 - max(sheen.color.r, max(sheen.color.g, sheen.color.b)) * SampleSheenAlbedo(sheen.roughness, NdV) : 1.0;
         float coatTransmittance = 1.0 - coat.factor * FresnelSchlick(max(dot(coat.normal, V), 0.0), COAT_F0).x;
 
-        vec3 emitted = material.emissive + DirectLight(surface.position, N, surface.faceNormal, V, material.albedo, material.metallic,
-                                                       material.roughness, lobes.energyCompensation, coat, sheen, specular, sheenScaling,
-                                                       coatTransmittance);
-        emitted *= throughput;
-        radiance += clamped ? ClampContribution(emitted) : emitted;
-        if (bounce == pathTrace.maxBounces)
-        {
-            break;
-        }
-
-        // The next direction: the transmission lobe (the share of the diffuse the transmission takes
-        // over, through the surface), the diffuse lobe, the base's specular one or the coat's, in
-        // proportion to their albedos (the sheen's own lobe is left to next event estimation, as at the
-        // G-buffer's surface).
+        // The lobes the next direction is picked from: the transmission lobe (the share of the diffuse
+        // the transmission takes over, through the surface), the diffuse lobe, the base's specular one
+        // or the coat's, in proportion to their albedos (the sheen's own lobe is left to next event
+        // estimation, as at the G-buffer's surface).
         vec3 transmittedAlbedo = lobes.diffuse * transmission.factor;
         vec3 diffuseAlbedo = lobes.diffuse - transmittedAlbedo;
         float transmittedWeight = PathTraceLuminance(transmittedAlbedo);
@@ -541,7 +733,41 @@ vec3 TracePath(vec3 origin, vec3 direction, float coneWidth, float coneSpread, b
         float specularWeight = PathTraceLuminance(lobes.specular);
         float coatWeight = PathTraceLuminance(lobes.coat);
         float lobeTotal = transmittedWeight + diffuseWeight + specularWeight + coatWeight;
-        if (lobeTotal <= 0.0)
+        vec4 lobeWeights = vec4(diffuseWeight, specularWeight, coatWeight, lobeTotal);
+
+        // An emissive surface's own light, less what next event estimation would have found of it
+        // from the last vertex (MIS); and that estimation here, for the emissive triangles, weighed
+        // against this vertex's next direction (none from the last vertex).
+        vec3 emission = material.emissive;
+        vec3 emissiveLight = vec3(0.0);
+        if (EmissiveLightsOn())
+        {
+            if (previousDensity > 0.0 && any(greaterThan(emission, vec3(0.0))))
+            {
+                emission *= MisWeight(previousDensity, EmissiveHitDensity(hit, surface.faceNormal, direction));
+            }
+            vec3 L;
+            vec3 light;
+            float density;
+            vec3 target;
+            if (bounce <= PT_EMISSIVE_NEE_BOUNCES && EmissiveSample(surface.position, surface.faceNormal, coneWidth, L, light, density, target))
+            {
+                float pathDensity = bounce < pathTrace.maxBounces
+                                        ? PathVertexDensity(N, coat.normal, V, L, material.roughness, coat.roughness, lobeWeights)
+                                        : 0.0;
+                emissiveLight = LayeredReflection(N, V, L, light, material.albedo, material.metallic, material.roughness,
+                                                  lobes.energyCompensation, coat, sheen, specular, sheenScaling, coatTransmittance) *
+                                MisWeight(density, pathDensity);
+                emissiveLight *= EmissiveShadowWeight(surface.position, surface.faceNormal, target,
+                                                      PathTraceLuminance(emissiveLight * throughput));
+            }
+        }
+        vec3 emitted = emission + emissiveLight +
+                       DirectLight(surface.position, N, surface.faceNormal, V, material.albedo, material.metallic, material.roughness,
+                                   lobes.energyCompensation, coat, sheen, specular, sheenScaling, coatTransmittance);
+        emitted *= throughput;
+        radiance += clamped ? ClampContribution(emitted) : emitted;
+        if (bounce == pathTrace.maxBounces || lobeTotal <= 0.0)
         {
             break;
         }
@@ -607,6 +833,11 @@ vec3 TracePath(vec3 origin, vec3 direction, float coneWidth, float coneSpread, b
         {
             break;
         }
+        previousDensity = 0.0;
+        if (lobePick >= transmittedWeight && EmissiveLightsOn() && bounce <= PT_EMISSIVE_NEE_BOUNCES)
+        {
+            previousDensity = PathVertexDensity(N, coat.normal, V, nextDirection, material.roughness, coat.roughness, lobeWeights);
+        }
         // Russian roulette from the third surface on, by what the path can still carry.
         if (bounce >= 2u)
         {
@@ -640,7 +871,8 @@ void main()
         return;
     }
     uint target = (pathTrace.flags & (PT_FLAG_ACCUMULATE | PT_FLAG_DENOISE)) != 0u ? PT_IMAGE_RAW : PT_IMAGE_FINAL;
-    float depth = texelFetch(ptDepth, pixel, 0).r;
+    ivec2 gbufferPixel = PtGBufferPixel(pixel);
+    float depth = texelFetch(ptDepth, gbufferPixel, 0).r;
     if (!PathTraceSurfaceShaded(pixel, depth) || pathTrace.maxBounces == 0u)
     {
         StorePathTracePair(target, pixel, vec4(0.0, 0.0, 0.0, 1.0), vec4(0.0, 0.0, 0.0, 1.0));
@@ -650,11 +882,11 @@ void main()
 
     // The surface as the lighting pass reads it.
     vec3 worldPosition = PathTraceWorldPosition(pixel, depth);
-    vec3 albedo = texelFetch(ptAlbedo, pixel, 0).rgb;
-    vec4 normals = texelFetch(ptNormal, pixel, 0);
+    vec3 albedo = texelFetch(ptAlbedo, gbufferPixel, 0).rgb;
+    vec4 normals = texelFetch(ptNormal, gbufferPixel, 0);
     vec3 N = DecodeNormalOctahedral(normals.rg);
     vec3 geoNormal = DecodeNormalOctahedral(normals.ba);
-    vec4 surfaceData = texelFetch(ptSurface, pixel, 0);
+    vec4 surfaceData = texelFetch(ptSurface, gbufferPixel, 0);
     float metallic = surfaceData.r;
     float roughness = clamp(surfaceData.g, 0.04, 1.0);
     uint flags = DecodeShadingFlags(surfaceData.a);
@@ -663,20 +895,20 @@ void main()
     SpecularParams specular = NoSpecularOverride();
     if ((flags & SHADING_FLAG_CLEARCOAT) != 0u)
     {
-        vec4 coatData = texelFetch(ptCoat, pixel, 0);
+        vec4 coatData = texelFetch(ptCoat, gbufferPixel, 0);
         coat.factor = coatData.r;
         coat.roughness = clamp(coatData.g, 0.04, 1.0);
-        coat.normal = (flags & SHADING_FLAG_COAT_NORMAL) != 0u ? DecodeNormalOctahedral(texelFetch(ptVelocity, pixel, 0).ba) : geoNormal;
+        coat.normal = (flags & SHADING_FLAG_COAT_NORMAL) != 0u ? DecodeNormalOctahedral(texelFetch(ptVelocity, gbufferPixel, 0).ba) : geoNormal;
     }
     if ((flags & SHADING_FLAG_SHEEN) != 0u)
     {
-        vec4 sheenData = texelFetch(ptSheen, pixel, 0);
+        vec4 sheenData = texelFetch(ptSheen, gbufferPixel, 0);
         sheen.color = sheenData.rgb;
         sheen.roughness = clamp(sheenData.a, 0.04, 1.0);
     }
     if ((flags & SHADING_FLAG_SPECULAR) != 0u)
     {
-        vec4 specularData = texelFetch(ptSpecular, pixel, 0);
+        vec4 specularData = texelFetch(ptSpecular, gbufferPixel, 0);
         specular.dielectricF0 = specularData.rgb * specularData.rgb;
         specular.dielectricF90 = specularData.a;
     }
@@ -700,18 +932,21 @@ void main()
     bool clampFirst[2] = bool[2](true, false);
     bool sharp[2] = bool[2](false, false);
     float roughnessFloors[2] = float[2](Regularization(), 0.0);
+    float densities[2] = float[2](0.0, 0.0);
     directions[0] = CosineSampleHemisphere(N, vec2(Random(), Random()));
-    if (PathTraceLuminance(lobes.diffuse) > 0.0 && dot(directions[0], geoNormal) > 0.0)
+    bool hasDiffuse = PathTraceLuminance(lobes.diffuse) > 0.0;
+    if (hasDiffuse && dot(directions[0], geoNormal) > 0.0)
     {
         weights[0] = vec3(1.0);
+        densities[0] = max(dot(N, directions[0]), 0.0) / PI;
     }
     vec3 specularAlbedo = lobes.specular + lobes.coat;
     float baseWeight = PathTraceLuminance(lobes.specular);
     float coatWeight = PathTraceLuminance(lobes.coat);
+    float coatProbability = baseWeight + coatWeight > 0.0 ? coatWeight / (baseWeight + coatWeight) : 0.0;
     directions[1] = N;
     if (baseWeight + coatWeight > 0.0)
     {
-        float coatProbability = coatWeight / (baseWeight + coatWeight);
         bool throughCoat = Random() < coatProbability;
         vec3 lobeNormal = throughCoat ? coat.normal : N;
         float lobeRoughness = throughCoat ? coat.roughness : roughness;
@@ -737,19 +972,77 @@ void main()
             spreads[1] += alpha;
             clampFirst[1] = lobeRoughness > 0.25;
             sharp[1] = lobeRoughness < PT_SHARP_ROUGHNESS;
+            densities[1] = (1.0 - coatProbability) * GgxReflectionDensity(N, V, directions[1], roughness) +
+                           (coat.factor > 0.0 ? coatProbability * GgxReflectionDensity(coat.normal, V, directions[1], coat.roughness) : 0.0);
+        }
+    }
+
+    // Next event estimation for the emissive triangles here, as the lighting pass does it for the
+    // analytic lights: one point, one shadow ray, into both channels, each weighed against its own
+    // path's direction (MIS) and demodulated as that path is (the diffuse one a Lambert lobe, by its
+    // cosine-weighted directions).
+    vec3 emissiveDiffuse = vec3(0.0);
+    vec3 emissiveSpecular = vec3(0.0);
+    if (EmissiveLightsOn())
+    {
+        vec3 L;
+        vec3 incoming;
+        float density;
+        vec3 target;
+        if (EmissiveSample(origin, geoNormal, coneWidth, L, incoming, density, target))
+        {
+            float NdL = dot(N, L);
+            if (hasDiffuse && NdL > 0.0)
+            {
+                emissiveDiffuse = ClampContribution(incoming * (NdL / PI) * MisWeight(density, NdL / PI));
+            }
+            if (baseWeight + coatWeight > 0.0)
+            {
+                vec3 H = normalize(V + L);
+                float VdH = max(dot(V, H), 0.0);
+                vec3 F = mix(FresnelSchlick(VdH, specular.dielectricF0, specular.dielectricF90), FresnelSchlick(VdH, albedo), metallic);
+                vec3 reflected = NdL > 0.0 ? IsotropicSpecularTerm(N, V, L, H, roughness) * NdL * F * lobes.energyCompensation * lobes.baseScale : vec3(0.0);
+                float pathDensity = (1.0 - coatProbability) * GgxReflectionDensity(N, V, L, roughness);
+                if (coat.factor > 0.0)
+                {
+                    reflected += coat.factor * EvaluateCoatSpecular(coat, V, L, 1.0, vec3(1.0));
+                    pathDensity += coatProbability * GgxReflectionDensity(coat.normal, V, L, coat.roughness);
+                }
+                emissiveSpecular = incoming * reflected / max(specularAlbedo, vec3(1e-3)) * MisWeight(density, pathDensity);
+                if (min(roughness, coat.factor > 0.0 ? coat.roughness : 1.0) > 0.25)
+                {
+                    emissiveSpecular = ClampContribution(emissiveSpecular);
+                }
+            }
+            // The lobes' albedos bring the demodulated light back to what it adds to the pixel.
+            float shadow = EmissiveShadowWeight(origin, geoNormal, target,
+                                                max(PathTraceLuminance(emissiveDiffuse * lobes.diffuse), PathTraceLuminance(emissiveSpecular * specularAlbedo)));
+            emissiveDiffuse *= shadow;
+            emissiveSpecular *= shadow;
         }
     }
 
     vec3 light[2] = vec3[2](vec3(0.0), vec3(0.0));
+    float specularHitDistance = 0.0;
     for (int path = 0; path < 2; ++path)
     {
         if (any(greaterThan(weights[path], vec3(0.0))))
         {
-            light[path] = TracePath(origin, directions[path], coneWidth, spreads[path], clampFirst[path], roughnessFloors[path], sharp[path]) * weights[path];
+            light[path] = TracePath(origin, directions[path], coneWidth, spreads[path], clampFirst[path], roughnessFloors[path], sharp[path],
+                                    densities[path]) *
+                          weights[path];
+            specularHitDistance = path == 1 ? g_firstHitDistance : specularHitDistance;
         }
     }
-    vec3 diffuse = light[0];
-    vec3 specularLight = light[1];
+    vec3 diffuse = light[0] + emissiveDiffuse;
+    vec3 specularLight = light[1] + emissiveSpecular;
 
-    StorePathTracePair(target, pixel, Sanitize(diffuse * ubo.exposure.x), Sanitize(specularLight * ubo.exposure.x));
+    // Ray reconstruction's specular hit distance rides in the specular channel's alpha (dlss_rr_guides.comp
+    // reads it), which nothing else reads of the result.
+    vec4 specularResult = Sanitize(specularLight * ubo.exposure.x);
+    if ((pathTrace.flags & PT_FLAG_HIT_DISTANCE) != 0u)
+    {
+        specularResult.a = min(specularHitDistance, 65000.0);
+    }
+    StorePathTracePair(target, pixel, Sanitize(diffuse * ubo.exposure.x), specularResult);
 }

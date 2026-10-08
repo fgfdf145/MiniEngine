@@ -408,6 +408,12 @@ void VulkanRayScene::SetContent(
         }
     }
 
+    // New materials may emit, or no longer.
+    if (!placed.empty() || !released.empty())
+    {
+        UpdateEmissiveSubmeshes();
+    }
+
     // The hierarchies, on a worker: only meshes not built before cost anything. The previous
     // content's hierarchies go in with it and come back out pruned to what this content uses.
     // The task uses this only to make its buffers, which the destructor waits for.
@@ -682,7 +688,53 @@ void VulkanRayScene::InstallBuild(const std::function<void()>& waitForFrames)
     {
         WriteSets();
     }
+    UpdateEmissiveSubmeshes();
     m_ready = true;
+}
+
+void VulkanRayScene::UpdateEmissiveSubmeshes()
+{
+    m_emissiveSubmeshes.clear();
+    ++m_emissiveGeneration;
+    m_hasLayeredMaterials = false;
+    for (const MaterialSlot& slot : m_materialSlots)
+    {
+        if (slot.set != VK_NULL_HANDLE &&
+            ((slot.source.material.shadingModel[0] & (kShadingFlagClearcoat | kShadingFlagSheen | kShadingFlagSpecular)) != 0u ||
+             slot.source.normal.imageView != VK_NULL_HANDLE))
+        {
+            m_hasLayeredMaterials = true;
+            break;
+        }
+    }
+    const std::vector<RaySceneSubmesh>& submeshes = *m_installedSubmeshes;
+    for (size_t index = 0; index < submeshes.size() && index < m_submeshMeshes.size(); ++index)
+    {
+        const RaySceneSubmesh& submesh = submeshes[index];
+        const uint32_t flags = index < m_installedFlags.size() ? m_installedFlags[index] : 0u;
+        if ((flags & (kRayInstanceSkip | kRayInstanceBlend)) != 0u || submesh.slot >= m_materialSlots.size() ||
+            m_materialSlots[submesh.slot].set == VK_NULL_HANDLE)
+        {
+            continue;
+        }
+        const float* emissive = m_materialSlots[submesh.slot].source.material.emissiveFactor;
+        if (std::max({emissive[0], emissive[1], emissive[2]}) <= 0.0f)
+        {
+            continue;
+        }
+        // The mesh's leaf triangles run up to the next mesh's (AppendMesh concatenates them in order).
+        const uint32_t mesh = m_submeshMeshes[index];
+        if (mesh >= m_scene.meshes.size() || m_scene.meshes[mesh].nodeCount == 0)
+        {
+            continue;
+        }
+        const uint32_t end = mesh + 1 < m_scene.meshes.size() ? m_scene.meshes[mesh + 1].triangleOffset : static_cast<uint32_t>(m_meshTriangleCount);
+        const uint32_t count = end - m_scene.meshes[mesh].triangleOffset;
+        if (count > 0)
+        {
+            m_emissiveSubmeshes.push_back(RayEmissiveSubmesh{submesh.slot, count});
+        }
+    }
 }
 
 void VulkanRayScene::MapInstalledSubmeshes()
@@ -934,6 +986,31 @@ void VulkanRayScene::WriteTextureSlot(
 size_t VulkanRayScene::GetSubmeshCount() const
 {
     return m_submeshMeshes.size();
+}
+
+const std::vector<RayEmissiveSubmesh>& VulkanRayScene::GetEmissiveSubmeshes() const
+{
+    return m_emissiveSubmeshes;
+}
+
+uint64_t VulkanRayScene::GetEmissiveGeneration() const
+{
+    return m_emissiveGeneration;
+}
+
+uint32_t VulkanRayScene::GetSlotCapacity() const
+{
+    return m_materialCapacity;
+}
+
+uint32_t VulkanRayScene::GetInstanceCount() const
+{
+    return static_cast<uint32_t>(m_scene.instances.size());
+}
+
+bool VulkanRayScene::HasLayeredMaterials() const
+{
+    return m_hasLayeredMaterials;
 }
 
 RayScene VulkanRayScene::CopyCpuScene() const

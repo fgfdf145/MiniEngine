@@ -7,6 +7,11 @@
 // split-sum directional albedo of the specular lobe, Karis's analytic fit) and the world space
 // shading normal with the perceptual roughness in w (NVSDK_NGX_DLSS_Roughness_Mode_Packed). Pixels no
 // geometry covered get zero albedos and a normal toward the camera.
+// With the plain path tracer's raw paths (guide.hitDistance), also the specular ray's hit distance (the
+// path tracer's specular result carries it in its alpha) and the motion vectors of what the
+// reflection shows: the virtual image's, the point as far behind the surface along the view ray as the
+// ray went in front of it, reprojected through last frame's camera (exact for a flat mirror and a
+// still scene), so a glossy reflection is not dragged along with the surface it is seen in.
 
 #include "scene_common.glsl"
 #include "gbuffer_common.glsl"
@@ -21,6 +26,9 @@ layout(set = 1, binding = 4) uniform sampler2D depthTexture;
 layout(set = 1, binding = 5, rgba8) uniform writeonly image2D diffuseAlbedoImage;
 layout(set = 1, binding = 6, rgba16f) uniform writeonly image2D specularAlbedoImage;
 layout(set = 1, binding = 7, rgba16f) uniform writeonly image2D normalRoughnessImage;
+layout(set = 1, binding = 8) uniform sampler2D reflectionsTexture;  // the path tracer's specular result
+layout(set = 1, binding = 9, r16f) uniform writeonly image2D hitDistanceImage;
+layout(set = 1, binding = 10, rg16f) uniform writeonly image2D reflectionMotionImage;
 
 // DlssMotionPushConstants in engine/renderer/vulkan/taa_pass.cpp, shared with dlss_motion_vectors.comp.
 layout(push_constant) uniform GuideConstants
@@ -28,7 +36,8 @@ layout(push_constant) uniform GuideConstants
     vec2 extent;
     vec2 invExtent;
     vec2 jitterPixels;
-    vec2 unused;
+    // x: 1 to write the hit distance and the reflections' motion vectors.
+    vec2 hitDistance;
 }
 guide;
 
@@ -53,6 +62,20 @@ void main()
     float depth = texelFetch(depthTexture, pixel, 0).r;
     vec4 world = ubo.invViewProj * vec4(uv * 2.0 - 1.0, IsFarDepth(depth) ? DEPTH_FAR : depth, 1.0);
     vec3 V = normalize(ubo.cameraWorldPosition.xyz - world.xyz / world.w);
+    if (guide.hitDistance.x > 0.0)
+    {
+        // As dlss_motion_vectors.comp: from where the point is now (unjittered) to where it was, in
+        // render pixels. The sky (and a pixel without a specular path, distance 0) moves as the
+        // surface point would if it stood still.
+        float distance = IsFarDepth(depth) ? 0.0 : texelFetch(reflectionsTexture, pixel, 0).a;
+        vec3 surface = world.xyz / world.w;
+        vec3 virtualPoint = surface + normalize(surface - ubo.cameraWorldPosition.xyz) * distance;
+        vec4 previousClip = ubo.prevViewProj * vec4(virtualPoint, 1.0);
+        vec2 previousUv = previousClip.xy / previousClip.w * 0.5 + 0.5;
+        vec2 currentUv = uv - guide.jitterPixels * guide.invExtent;
+        imageStore(hitDistanceImage, pixel, vec4(distance, 0.0, 0.0, 0.0));
+        imageStore(reflectionMotionImage, pixel, vec4((previousUv - currentUv) * guide.extent, 0.0, 0.0));
+    }
     if (IsFarDepth(depth))
     {
         imageStore(diffuseAlbedoImage, pixel, vec4(0.0));

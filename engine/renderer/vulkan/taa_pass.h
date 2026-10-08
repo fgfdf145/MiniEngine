@@ -89,7 +89,7 @@ class VulkanTaaPass : public IScenePass
     VkImageView m_motionView = VK_NULL_HANDLE;
     // Diffuse albedo, specular albedo, normal and roughness, written before a ray reconstruction
     // evaluation; one set per transient copy names the G-buffer they are made from.
-    std::array<GuideImage, 3> m_guides{};
+    std::array<GuideImage, 5> m_guides{};
     VkDescriptorSetLayout m_guideSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_guideDescriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_guidePipelineLayout = VK_NULL_HANDLE;

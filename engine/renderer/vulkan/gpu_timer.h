@@ -38,6 +38,8 @@ class VulkanGpuTimer
     // In recording order; empty until a frame has come back.
     std::vector<Section> GetSections() const;
     double GetAverageFrameMs() const;
+    // The whole of the last frame that came back (0 before any).
+    double GetLastFrameMs() const;
 
   private:
     void Collect(uint32_t frameSlot);
@@ -60,5 +62,6 @@ class VulkanGpuTimer
     std::vector<Accumulator> m_sections;
     std::vector<double> m_frameSamples;
     uint32_t m_sampleCursor = 0;
+    double m_lastFrameMs = 0.0;
 };
 }

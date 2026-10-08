@@ -37,6 +37,10 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("path_tracing", "denoise", settings.pathTracing.denoise);
     visit("path_tracing", "forward_surfaces", settings.pathTracing.forwardSurfaces);
     visit("path_tracing", "ray_media", settings.pathTracing.rayMedia);
+    visit("path_tracing", "forward_surfaces_half_resolution", settings.pathTracing.forwardSurfacesHalfResolution);
+    visit("path_tracing", "emissive_lights", settings.pathTracing.emissiveLights);
+    visit("path_tracing", "light_grid", settings.pathTracing.lightGrid);
+    visit("path_tracing", "reflection_guides", settings.pathTracing.reflectionGuides);
     visit("path_tracing", "restir", settings.pathTracing.restir);
     RestirPtSettings& restirPt = settings.pathTracing.restirPt;
     visit("restir_pt", "temporal_reuse", restirPt.temporalReuse);

@@ -28,11 +28,16 @@ constexpr uint32_t kFlagEnabled = 1u;
 constexpr uint32_t kFlagHistoryValid = 2u;
 
 constexpr VkFormat kMotionFormat = VK_FORMAT_R16G16_SFLOAT;
-// Ray reconstruction's guides: diffuse albedo, specular albedo, normal and roughness.
-constexpr std::array<VkFormat, 3> kGuideFormats = {
+// Ray reconstruction's guides: diffuse albedo, specular albedo, normal and roughness, the specular
+// hit distance and the reflections' motion vectors.
+constexpr std::array<VkFormat, 5> kGuideFormats = {
     VK_FORMAT_R8G8B8A8_UNORM,
     VK_FORMAT_R16G16B16A16_SFLOAT,
-    VK_FORMAT_R16G16B16A16_SFLOAT};
+    VK_FORMAT_R16G16B16A16_SFLOAT,
+    VK_FORMAT_R16_SFLOAT,
+    VK_FORMAT_R16G16_SFLOAT};
+constexpr size_t kGuideHitDistance = 3;
+constexpr size_t kGuideReflectionMotion = 4;
 
 // Must match DlssMotionConstants in shaders/vulkan/dlss_motion_vectors.comp.
 struct DlssMotionPushConstants
@@ -134,13 +139,16 @@ VulkanTaaPass::VulkanTaaPass(
         m_motionDescriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 2, 1);
         CreateMotionImage(targets.GetExtent());
 
-        static constexpr std::array<VkDescriptorType, 8> kGuideTypes = {
+        static constexpr std::array<VkDescriptorType, 11> kGuideTypes = {
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
         m_guideSetLayout = CreateComputeSetLayout(m_device, kGuideTypes);
@@ -153,7 +161,7 @@ VulkanTaaPass::VulkanTaaPass(
             sizeof(DlssMotionPushConstants),
             m_guidePipelineLayout,
             m_guidePipeline);
-        m_guideDescriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 5, 3);
+        m_guideDescriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 6, 5);
         CreateGuideImages(targets.GetExtent());
         CreateDescriptorSets(targets);
     }
@@ -178,16 +186,18 @@ RenderPassIo VulkanTaaPass::Io() const
 {
     // The velocity target is declared in both orders because the bound set names it; in the
     // forward-only order it was never written, and the pass, passing through, never samples it.
-    // The G-buffer's albedo, normals, surface and specular make ray reconstruction's guides; like the
-    // velocity they are declared in both orders, and read only when the guides are made.
-    static constexpr std::array<RenderTargetId, 7> kReads = {
+    // The G-buffer's albedo, normals, surface and specular make ray reconstruction's guides, and the
+    // path tracer's specular result its hit distance (in the alpha); like the velocity they are
+    // declared in both orders, and read only when the guides are made.
+    static constexpr std::array<RenderTargetId, 8> kReads = {
         RenderTargetId::SceneHdr,
         RenderTargetId::SceneDepth,
         RenderTargetId::GBufferVelocity,
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,
         RenderTargetId::GBufferSurface,
-        RenderTargetId::GBufferSpecular};
+        RenderTargetId::GBufferSpecular,
+        RenderTargetId::SceneReflections};
     static constexpr std::array<RenderTargetId, 1> kWrites = {RenderTargetId::SceneTaa};
     RenderPassIo io{};
     io.reads = kReads;
@@ -263,8 +273,8 @@ void VulkanTaaPass::RecordDlss(
     // Ray reconstruction's guides, as the motion vectors: rewritten whole, then read by NGX.
     if (frame.dlssRayReconstruction)
     {
-        std::array<VkImageMemoryBarrier, 3> toGeneral{};
-        std::array<VkImageMemoryBarrier, 3> toRead{};
+        std::array<VkImageMemoryBarrier, kGuideFormats.size()> toGeneral{};
+        std::array<VkImageMemoryBarrier, kGuideFormats.size()> toRead{};
         for (size_t index = 0; index < m_guides.size(); ++index)
         {
             toGeneral[index] = ImageBarrier(m_guides[index].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_WRITE_BIT);
@@ -276,14 +286,16 @@ void VulkanTaaPass::RecordDlss(
                 VK_ACCESS_SHADER_READ_BIT);
         }
         RecordBarriers(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, toGeneral);
+        DlssMotionPushConstants guideConstants = constants;
+        guideConstants.unused.x = frame.pathTraceHitDistance ? 1.0f : 0.0f;
         DispatchCompute(
             commandBuffer,
             m_guidePipeline,
             m_guidePipelineLayout,
             frame.frameDescriptorSet,
             m_guideDescriptorSets.at(frame.frameSlot),
-            &constants,
-            sizeof(constants),
+            &guideConstants,
+            sizeof(guideConstants),
             frame.extent);
         RecordBarriers(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, toRead);
     }
@@ -320,6 +332,14 @@ void VulkanTaaPass::RecordDlss(
         inputs.diffuseAlbedo = {m_guides[0].image, m_guides[0].view, m_guides[0].format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
         inputs.specularAlbedo = {m_guides[1].image, m_guides[1].view, m_guides[1].format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
         inputs.normalRoughness = {m_guides[2].image, m_guides[2].view, m_guides[2].format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
+        if (frame.pathTraceHitDistance)
+        {
+            const GuideImage& hitDistance = m_guides[kGuideHitDistance];
+            const GuideImage& reflectionMotion = m_guides[kGuideReflectionMotion];
+            inputs.specularHitDistance = {hitDistance.image, hitDistance.view, hitDistance.format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
+            inputs.reflectionMotionVectors = {
+                reflectionMotion.image, reflectionMotion.view, reflectionMotion.format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
+        }
         inputs.worldToView = frame.view;
         inputs.viewToClip = frame.projection;
     }
@@ -534,7 +554,10 @@ void VulkanTaaPass::CreateDescriptorSets(const SceneRenderTargets& targets)
         const VkDescriptorImageInfo diffuseInfo{VK_NULL_HANDLE, m_guides[0].view, VK_IMAGE_LAYOUT_GENERAL};
         const VkDescriptorImageInfo specularAlbedoInfo{VK_NULL_HANDLE, m_guides[1].view, VK_IMAGE_LAYOUT_GENERAL};
         const VkDescriptorImageInfo normalRoughnessInfo{VK_NULL_HANDLE, m_guides[2].view, VK_IMAGE_LAYOUT_GENERAL};
-        const std::array<VkWriteDescriptorSet, 8> writes = {
+        const VkDescriptorImageInfo reflectionsInfo{m_nearestSampler, targets.GetSampledView(RenderTargetId::SceneReflections, slot), kReadLayout};
+        const VkDescriptorImageInfo hitDistanceInfo{VK_NULL_HANDLE, m_guides[kGuideHitDistance].view, VK_IMAGE_LAYOUT_GENERAL};
+        const VkDescriptorImageInfo reflectionMotionInfo{VK_NULL_HANDLE, m_guides[kGuideReflectionMotion].view, VK_IMAGE_LAYOUT_GENERAL};
+        const std::array<VkWriteDescriptorSet, 11> writes = {
             ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &albedoInfo),
             ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
             ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &surfaceInfo),
@@ -542,7 +565,10 @@ void VulkanTaaPass::CreateDescriptorSets(const SceneRenderTargets& targets)
             ImageWrite(set, 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
             ImageWrite(set, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &diffuseInfo),
             ImageWrite(set, 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &specularAlbedoInfo),
-            ImageWrite(set, 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &normalRoughnessInfo)};
+            ImageWrite(set, 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &normalRoughnessInfo),
+            ImageWrite(set, 8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &reflectionsInfo),
+            ImageWrite(set, 9, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &hitDistanceInfo),
+            ImageWrite(set, 10, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &reflectionMotionInfo)};
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 }

@@ -65,6 +65,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <cstdio>
 #include <mutex>
 #include <future>
 #include <optional>
@@ -299,7 +300,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // A path traced frame's forward-shaded surfaces' layer (path_trace_layer_pass.h): its images,
     // made, moved to their resting layout and named in set 0 the first time; true when the frame
     // can trace it.
-    bool PreparePathTraceLayer(VulkanSceneView& view);
+    // halfResolution: the layer is traced at half the resolution each way (its images remade, the
+    // frames in flight finished first, when that changes).
+    bool PreparePathTraceLayer(VulkanSceneView& view, bool halfResolution);
     // A view's set 0 for drawCapacity draws, with every live draw's material written in.
     std::unique_ptr<VulkanUniformBuffer> CreateViewUniformBuffer(const VulkanSceneView& view, uint32_t drawCapacity) const;
     VkSampler EquirectangularSampler() const;
@@ -686,6 +689,11 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanParallelRecorder> m_parallelRecorder;
     std::vector<double> m_cpuFrameMs;
     std::vector<double> m_cpuWaitMs;
+    // MINIENGINE_FRAME_TIMES=<file>: one line a frame, at present: the time (microseconds, steady
+    // clock), the CPU's recording and waiting, and the GPU time of the last frame that came back (ms),
+    // to check frame pacing in scripted runs.
+    std::FILE* m_frameTimesFile = nullptr;
+    bool m_frameTimesChecked = false;
     uint32_t m_cpuFrameCursor = 0;
     // The frame's CPU time by stage, logged with the frame timings: the render thread's, and the
     // main thread's.

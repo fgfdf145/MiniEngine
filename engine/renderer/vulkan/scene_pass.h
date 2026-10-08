@@ -148,6 +148,12 @@ struct ScenePassFrameContext
     // frame's (writeIndex); last frame's camera position; how many frames its accumulate mode has
     // averaged so far.
     PathTracingSettings pathTracing;
+    // The local lights in the scene light list (after its directional ones), for the path tracer's
+    // light grid.
+    uint32_t localLightCount = 0;
+    // The plain path tracer writes its specular hit distance for DLSS ray reconstruction's guides
+    // (the specular result's alpha): it runs this frame and ray reconstruction denoises it.
+    bool pathTraceHitDistance = false;
     TemporalHistoryFrame pathTraceHistory;
     float pathTraceHistoryScale = 1.0f;
     uint32_t pathTraceHistoryCap = 1;

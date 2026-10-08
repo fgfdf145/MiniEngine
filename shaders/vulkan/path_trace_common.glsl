@@ -67,7 +67,9 @@ layout(push_constant) uniform PathTraceConstants
     uint stepSize;
     uint source;
     uint target;
-    uint unused;
+    // The G-buffer is this many times 2 larger each way than the grid traced (extent): the layer at
+    // half resolution reads its top-left pixel of each 2 x 2 block (PtGBufferPixel).
+    uint gbufferShift;
 }
 pathTrace;
 
@@ -80,6 +82,15 @@ const uint PT_FLAG_RAY_MEDIA = 8u;
 // PathTracingSettings::forwardSurfaces: the paths meet Blend surfaces by their coverage and refract
 // through transmissive ones.
 const uint PT_FLAG_FORWARD_SURFACES = 16u;
+// PathTracingSettings::emissiveLights, and the frame has emissive triangles: next event estimation
+// picks one too (emissive_lights_common.glsl), against the paths' hits by MIS.
+const uint PT_FLAG_EMISSIVE_LIGHTS = 32u;
+// PathTracingSettings::lightGrid, and the frame built it: the local light candidates come from the
+// light grid's cells (light_grid_common.glsl).
+const uint PT_FLAG_LIGHT_GRID = 64u;
+// DLSS ray reconstruction denoises the raw paths: the specular result's alpha is the specular path's
+// first hit distance (0 where there was no specular path), for its guides.
+const uint PT_FLAG_HIT_DISTANCE = 128u;
 
 const uint PT_IMAGE_RAW = 0u;
 const uint PT_IMAGE_HISTORY = 1u;
@@ -123,9 +134,16 @@ void StorePathTracePair(uint pair, ivec2 pixel, vec4 diffuse, vec4 specular)
     }
 }
 
+// The G-buffer pixel a traced pixel reads.
+ivec2 PtGBufferPixel(ivec2 pixel)
+{
+    return pixel << pathTrace.gbufferShift;
+}
+
+// The world position of a traced pixel's surface, depth read at PtGBufferPixel(pixel).
 vec3 PathTraceWorldPosition(ivec2 pixel, float depth)
 {
-    vec2 uv = (vec2(pixel) + 0.5) * pathTrace.invExtent;
+    vec2 uv = (vec2(PtGBufferPixel(pixel)) + 0.5) * pathTrace.invExtent / float(1u << pathTrace.gbufferShift);
     vec4 world = ubo.invViewProj * vec4(uv * 2.0 - 1.0, depth, 1.0);
     return world.xyz / world.w;
 }
@@ -143,7 +161,7 @@ bool PathTraceSurfaceShaded(ivec2 pixel, float depth)
     {
         return false;
     }
-    uint flags = DecodeShadingFlags(texelFetch(ptSurface, pixel, 0).a);
+    uint flags = DecodeShadingFlags(texelFetch(ptSurface, PtGBufferPixel(pixel), 0).a);
     return (flags & (SHADING_FLAG_UNLIT | SHADING_FLAG_FORWARD)) == 0u;
 }
 
@@ -151,11 +169,11 @@ bool PathTraceSurfaceShaded(ivec2 pixel, float depth)
 // whichever reflects the sharper image.
 float PathTraceSpecularRoughness(ivec2 pixel)
 {
-    vec4 surface = texelFetch(ptSurface, pixel, 0);
+    vec4 surface = texelFetch(ptSurface, PtGBufferPixel(pixel), 0);
     float roughness = clamp(surface.g, 0.04, 1.0);
     if ((DecodeShadingFlags(surface.a) & SHADING_FLAG_CLEARCOAT) != 0u)
     {
-        vec4 coat = texelFetch(ptCoat, pixel, 0);
+        vec4 coat = texelFetch(ptCoat, PtGBufferPixel(pixel), 0);
         if (coat.r > 0.0)
         {
             roughness = min(roughness, clamp(coat.g, 0.04, 1.0));

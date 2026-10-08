@@ -27,7 +27,7 @@ void main()
     {
         return;
     }
-    float depth = texelFetch(ptDepth, pixel, 0).r;
+    float depth = texelFetch(ptDepth, PtGBufferPixel(pixel), 0).r;
     vec4 rawDiffuse = imageLoad(ptRawDiffuse, pixel);
     vec4 rawSpecular = imageLoad(ptRawSpecular, pixel);
     if (!PathTraceSurfaceShaded(pixel, depth))
@@ -39,7 +39,7 @@ void main()
     }
 
     vec3 worldPosition = PathTraceWorldPosition(pixel, depth);
-    vec3 N = DecodeNormalOctahedral(texelFetch(ptNormal, pixel, 0).rg);
+    vec3 N = DecodeNormalOctahedral(texelFetch(ptNormal, PtGBufferPixel(pixel), 0).rg);
     float viewDepth = (ubo.proj * ubo.view * vec4(worldPosition, 1.0)).w;
     imageStore(ptHistorySurface, pixel, vec4(viewDepth, EncodeNormalOctahedral(N), 0.0));
 
@@ -50,7 +50,7 @@ void main()
     {
         // Where this surface was last frame, and how far from the camera.
         vec2 uv = (vec2(pixel) + 0.5) * pathTrace.invExtent;
-        vec2 previousUv = uv - texelFetch(ptVelocity, pixel, 0).rg;
+        vec2 previousUv = uv - texelFetch(ptVelocity, PtGBufferPixel(pixel), 0).rg;
         float previousViewDepth = (ubo.prevViewProj * vec4(worldPosition, 1.0)).w;
         vec2 position = previousUv * pathTrace.extent - 0.5;
         ivec2 base = ivec2(floor(position));

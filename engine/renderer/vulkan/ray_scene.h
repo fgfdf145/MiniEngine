@@ -61,6 +61,14 @@ struct RayMaterialSource
     TextureDescriptorBinding normal;
 };
 
+// An installed submesh whose material emits light: the path tracer's emissive light list holds each
+// of its triangles (VulkanPathTraceLights).
+struct RayEmissiveSubmesh
+{
+    uint32_t slot = 0;
+    uint32_t triangleCount = 0;
+};
+
 // The textures hit shading samples per draw slot, in this order, in the ray texture table
 // (RAY_TEXTURE_* in shaders/vulkan/ray_hit_common.glsl).
 inline constexpr uint32_t kRayTexturesPerSlot = 5;
@@ -159,6 +167,18 @@ class VulkanRayScene
     VkDescriptorSet GetTextureSet() const;
     // Submeshes of the installed content, in the order SetContent gave them.
     size_t GetSubmeshCount() const;
+    // The installed submeshes that emit light and that every ray may meet (no Blend, no far level of
+    // detail), each draw slot once, and a number that changes whenever they may have: a new install or
+    // new materials. Their triangles are the leaf triangles from the instance's triangle offset on.
+    const std::vector<RayEmissiveSubmesh>& GetEmissiveSubmeshes() const;
+    uint64_t GetEmissiveGeneration() const;
+    // How many draw slots the ray materials have room for, and how many instances the last
+    // UpdateInstances wrote.
+    uint32_t GetSlotCapacity() const;
+    uint32_t GetInstanceCount() const;
+    // Whether any draw slot's material has a coat, a sheen, a dielectric specular or a normal map of
+    // its own: the path tracer's hits need its layered variant (PT_LAYERED).
+    bool HasLayeredMaterials() const;
 
     // The installed hierarchies with the last UpdateInstances' instances and top level, and the ray
     // materials the GPU averaged, for the CPU reference path tracer. Both read the GPU's host-visible
@@ -337,6 +357,12 @@ class VulkanRayScene
     VkDescriptorSet m_textureSet = VK_NULL_HANDLE;
     uint32_t m_textureCapacity = 0;
     uint32_t m_textureLimit = 0;
+
+    // GetEmissiveSubmeshes's list, remade from the installed submeshes and the slots' materials.
+    void UpdateEmissiveSubmeshes();
+    std::vector<RayEmissiveSubmesh> m_emissiveSubmeshes;
+    uint64_t m_emissiveGeneration = 0;
+    bool m_hasLayeredMaterials = false;
 
     // Null without hardware ray tracing.
     std::unique_ptr<VulkanRayAcceleration> m_acceleration;

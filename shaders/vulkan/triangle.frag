@@ -326,8 +326,10 @@ void main()
         if (texelFetch(pathTraceLayerDepth, pixel, 0).r == gl_FragCoord.z)
         {
             pathTracedIndirect = true;
-            pathTracedDiffuse = texelFetch(pathTraceLayerDiffuse, pixel, 0).rgb * ubo.exposure.y;
-            pathTracedSpecular = texelFetch(pathTraceLayerSpecular, pixel, 0).rgb * ubo.exposure.y;
+            // At half resolution (textureParams.z 1) each 2 x 2 block shares one traced pixel.
+            ivec2 traced = pixel >> uint(ubo.textureParams.z);
+            pathTracedDiffuse = texelFetch(pathTraceLayerDiffuse, traced, 0).rgb * ubo.exposure.y;
+            pathTracedSpecular = texelFetch(pathTraceLayerSpecular, traced, 0).rgb * ubo.exposure.y;
         }
     }
     // The forward path has no screen-space reflection: the environment alone, specularly occluded.

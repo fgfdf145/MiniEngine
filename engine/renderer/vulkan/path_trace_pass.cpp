@@ -1,5 +1,7 @@
 #include "path_trace_pass.h"
 
+#include "command.h"
+#include "path_trace_lights.h"
 #include "gpu_timer.h"
 #include "path_trace_layer_pass.h"
 #include "ray_scene.h"
@@ -28,7 +30,7 @@ struct PathTracePushConstants
     uint32_t stepSize = 0;
     uint32_t source = 0;
     uint32_t target = 0;
-    uint32_t unused = 0;
+    uint32_t gbufferShift = 0;
 };
 static_assert(sizeof(PathTracePushConstants) == 64, "PathTracePushConstants must match path_trace_common.glsl");
 
@@ -38,6 +40,9 @@ constexpr uint32_t kFlagDenoise = 2u;
 constexpr uint32_t kFlagHistoryValid = 4u;
 constexpr uint32_t kFlagRayMedia = 8u;
 constexpr uint32_t kFlagForwardSurfaces = 16u;
+constexpr uint32_t kFlagEmissiveLights = 32u;
+constexpr uint32_t kFlagLightGrid = 64u;
+constexpr uint32_t kFlagHitDistance = 128u;
 constexpr uint32_t kImageRaw = 0u;
 constexpr uint32_t kImageHistory = 1u;
 constexpr uint32_t kImageFinal = 2u;
@@ -100,10 +105,17 @@ VulkanPathTracePass::VulkanPathTracePass(
         CreateComputePipeline(
             m_device, pipelineCache, setLayouts, "path_trace_filter.comp.spv", sizeof(PathTracePushConstants), m_pipelineLayout, m_filterPipeline);
         m_temporalPipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "path_trace_temporal.comp.spv");
-        const std::array<VkDescriptorSetLayout, 4> traceLayouts = {
-            frameSetLayout, rayScene.GetSetLayout(), m_setLayout, rayScene.GetTextureSetLayout()};
+        m_lights = std::make_unique<VulkanPathTraceLights>(
+            m_physicalDevice, m_device, pipelineCache, static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight), frameSetLayout, rayScene);
+        const std::array<VkDescriptorSetLayout, 5> traceLayouts = {
+            frameSetLayout, rayScene.GetSetLayout(), m_setLayout, rayScene.GetTextureSetLayout(), m_lights->GetSetLayout()};
         CreateComputePipeline(
             m_device, pipelineCache, traceLayouts, "path_trace.comp.spv", sizeof(PathTracePushConstants), m_tracePipelineLayout, m_tracePipeline);
+        m_tracePipelines[1][1] = m_tracePipeline;
+        m_tracePipelines[0][1] = CreateComputeShaderPipeline(m_device, pipelineCache, m_tracePipelineLayout, "path_trace_no_transmission.comp.spv");
+        m_tracePipelines[1][0] = CreateComputeShaderPipeline(m_device, pipelineCache, m_tracePipelineLayout, "path_trace_no_layers.comp.spv");
+        m_tracePipelines[0][0] = CreateComputeShaderPipeline(m_device, pipelineCache, m_tracePipelineLayout, "path_trace_base.comp.spv");
+        m_rayScene = &rayScene;
         // The plain path tracer's sets, by transient copy and history read index; the layer's two.
         const uint32_t setCount = targets.GetTransientCopyCount() * 2;
         m_descriptorPool = CreateImageDescriptorPool(m_device, setCount + 2, kSampledBindings, kStorageBindings);
@@ -186,7 +198,7 @@ bool VulkanPathTracePass::Prepare(const SceneRenderTargets& targets)
     return true;
 }
 
-bool VulkanPathTracePass::PrepareLayer(const SceneRenderTargets& targets, const VulkanPathTraceLayerPass& layer)
+bool VulkanPathTracePass::PrepareLayer(const SceneRenderTargets& targets, const VulkanPathTraceLayerPass& layer, uint32_t shift)
 {
     if (m_layerReady || !IsSupported() || !layer.IsReady())
     {
@@ -194,8 +206,10 @@ bool VulkanPathTracePass::PrepareLayer(const SceneRenderTargets& targets, const 
     }
     try
     {
-        const VkExtent2D extent = targets.GetExtent();
-        CreateRaw(extent);
+        // The raw pair is the opaque trace's too, at the full size; the layer uses its top-left part.
+        CreateRaw(targets.GetExtent());
+        const VkExtent2D extent{(targets.GetExtent().width + (1u << shift) - 1u) >> shift, (targets.GetExtent().height + (1u << shift) - 1u) >> shift};
+        m_layerShift = shift;
         m_layerDiffuseHistory.Create(m_physicalDevice, m_device, extent, kImageFormat);
         m_layerSpecularHistory.Create(m_physicalDevice, m_device, extent, kImageFormat);
         m_layerSurfaceHistory.Create(m_physicalDevice, m_device, extent, kImageFormat);
@@ -215,6 +229,20 @@ bool VulkanPathTracePass::PrepareLayer(const SceneRenderTargets& targets, const 
 bool VulkanPathTracePass::IsLayerReady() const
 {
     return m_layerReady;
+}
+
+uint32_t VulkanPathTracePass::GetLayerShift() const
+{
+    return m_layerShift;
+}
+
+void VulkanPathTracePass::DestroyLayerImages()
+{
+    m_layerReady = false;
+    m_layerDiffuseHistory.Destroy();
+    m_layerSpecularHistory.Destroy();
+    m_layerSurfaceHistory.Destroy();
+    m_layerResult.Destroy();
 }
 
 void VulkanPathTracePass::RecordLayerInitialTransition(VkCommandBuffer commandBuffer) const
@@ -270,6 +298,17 @@ void VulkanPathTracePass::Record(
         return;
     }
     const PathTracingSettings& settings = frame.pathTracing;
+    // The emissive lights and the light grid both traces below pick from, this frame's.
+    if ((settings.emissiveLights || settings.lightGrid) && ((!settings.restir && m_imagesReady) || (frame.pathTraceLayer && m_layerReady)))
+    {
+        m_lights->Record(
+            commandBuffer, frame.frameDescriptorSet, frame.raySet, frame.rayTextureSet, frame.frameSlot, frame.frameIndex, settings.emissiveLights,
+            settings.lightGrid && settings.lightCandidates > 0, frame.localLightCount);
+        if (frame.gpuTimer != nullptr && (m_lights->GetLightCount(frame.frameSlot) > 0 || m_lights->HasLightGrid(frame.frameSlot)))
+        {
+            frame.gpuTimer->Mark(commandBuffer, "PathTraceLights");
+        }
+    }
     // ReSTIR PT (restir_pt_pass.h) runs in the plain path tracer's place when pathTracing.restir is set.
     if (!settings.restir && m_imagesReady)
     {
@@ -282,7 +321,7 @@ void VulkanPathTracePass::Record(
         const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneGi, frame.imageIndex, frame.frameSlot);
         RecordPaths(
             commandBuffer, frame, m_descriptorSets.at(slot * 2 + frame.pathTraceHistory.readIndex), settings.accumulate, settings.denoise,
-            historyValid, frame.pathTraceHistoryScale);
+            historyValid, frame.pathTraceHistoryScale, frame.pathTraceHitDistance, 0u);
         // Its own GPU timer section; the renderer's mark after the pass closes the layer's.
         if (frame.pathTraceLayer && m_layerReady && frame.gpuTimer != nullptr)
         {
@@ -332,7 +371,7 @@ void VulkanPathTracePass::Record(
         resultBarrier(false);
         RecordPaths(
             commandBuffer, frame, m_layerDescriptorSets.at(frame.pathTraceLayerHistory.readIndex), frame.pathTraceLayerAccumulate,
-            frame.pathTraceLayerDenoise, historyValid, frame.pathTraceLayerHistoryScale);
+            frame.pathTraceLayerDenoise, historyValid, frame.pathTraceLayerHistoryScale, false, m_layerShift);
         resultBarrier(true);
     }
 }
@@ -344,15 +383,23 @@ void VulkanPathTracePass::RecordPaths(
     bool accumulate,
     bool denoise,
     bool historyValid,
-    float historyScale) const
+    float historyScale,
+    bool hitDistance,
+    uint32_t gbufferShift) const
 {
     const PathTracingSettings& settings = frame.pathTracing;
+    // The grid traced: the frame's extent, or 2^gbufferShift times smaller each way (rounded up).
+    const VkExtent2D extent{
+        (frame.extent.width + (1u << gbufferShift) - 1u) >> gbufferShift, (frame.extent.height + (1u << gbufferShift) - 1u) >> gbufferShift};
     PathTracePushConstants constants{};
-    constants.extent = glm::vec2(static_cast<float>(frame.extent.width), static_cast<float>(frame.extent.height));
+    constants.gbufferShift = gbufferShift;
+    constants.extent = glm::vec2(static_cast<float>(extent.width), static_cast<float>(extent.height));
     constants.invExtent = 1.0f / constants.extent;
     constants.frameIndex = frame.frameIndex;
     constants.flags = (accumulate ? kFlagAccumulate : 0u) | (denoise ? kFlagDenoise : 0u) | (historyValid ? kFlagHistoryValid : 0u) |
-                      (settings.rayMedia ? kFlagRayMedia : 0u) | (settings.forwardSurfaces ? kFlagForwardSurfaces : 0u);
+                      (settings.rayMedia ? kFlagRayMedia : 0u) | (settings.forwardSurfaces ? kFlagForwardSurfaces : 0u) |
+                      (settings.emissiveLights && m_lights->GetLightCount(frame.frameSlot) > 0 ? kFlagEmissiveLights : 0u) |
+                      (m_lights->HasLightGrid(frame.frameSlot) ? kFlagLightGrid : 0u) | (hitDistance ? kFlagHitDistance : 0u);
     constants.maxBounces = static_cast<uint32_t>(std::clamp(settings.maxBounces, 0, kMaxBounces));
     constants.lightCandidates = static_cast<uint32_t>(std::clamp(settings.lightCandidates, 0, kMaxLightCandidates));
     constants.fireflyClamp = std::max(settings.fireflyClamp, 0.0f);
@@ -360,12 +407,17 @@ void VulkanPathTracePass::RecordPaths(
     constants.historyCap = static_cast<float>(std::max(frame.pathTraceHistoryCap, 1u));
     constants.motionFrames = static_cast<float>(std::max(settings.motionFrames, 1));
 
-    const std::array<VkDescriptorSet, 4> traceSets = {frame.frameDescriptorSet, frame.raySet, passSet, frame.rayTextureSet};
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracePipeline);
+    const std::array<VkDescriptorSet, 5> traceSets = {
+        frame.frameDescriptorSet, frame.raySet, passSet, frame.rayTextureSet, m_lights->GetSet(frame.frameSlot)};
+    // Transmissive surfaces are met whole only with the forward surfaces on (otherwise by coverage, as
+    // opaque); layered hits only where some material has layers.
+    const bool transmission = settings.forwardSurfaces;
+    const bool layered = m_rayScene == nullptr || m_rayScene->HasLayeredMaterials();
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracePipelines[transmission ? 1 : 0][layered ? 1 : 0]);
     vkCmdBindDescriptorSets(
         commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracePipelineLayout, 0, static_cast<uint32_t>(traceSets.size()), traceSets.data(), 0, nullptr);
     vkCmdPushConstants(commandBuffer, m_tracePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
-    Dispatch(commandBuffer, frame.extent);
+    Dispatch(commandBuffer, extent);
     if (!accumulate && !denoise)
     {
         return;
@@ -379,7 +431,7 @@ void VulkanPathTracePass::RecordPaths(
     {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_temporalPipeline);
         vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
-        Dispatch(commandBuffer, frame.extent);
+        Dispatch(commandBuffer, extent);
         ComputeBarrier(commandBuffer);
     }
 
@@ -406,7 +458,7 @@ void VulkanPathTracePass::RecordPaths(
         constants.source = iterations[index].source;
         constants.target = iterations[index].target;
         vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
-        Dispatch(commandBuffer, frame.extent);
+        Dispatch(commandBuffer, extent);
     }
 }
 
@@ -538,6 +590,16 @@ void VulkanPathTracePass::DestroyImages()
 
 void VulkanPathTracePass::DestroyHandles()
 {
+    m_lights.reset();
+    for (VkPipeline* pipeline : {&m_tracePipelines[0][0], &m_tracePipelines[0][1], &m_tracePipelines[1][0]})
+    {
+        if (*pipeline != VK_NULL_HANDLE)
+        {
+            vkDestroyPipeline(m_device, *pipeline, nullptr);
+            *pipeline = VK_NULL_HANDLE;
+        }
+    }
+    m_tracePipelines[1][1] = VK_NULL_HANDLE;
     for (VkPipeline* pipeline : {&m_tracePipeline, &m_temporalPipeline, &m_filterPipeline})
     {
         if (*pipeline != VK_NULL_HANDLE)

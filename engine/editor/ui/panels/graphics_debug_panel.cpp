@@ -346,10 +346,35 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
         ImGui::SetTooltip("The nearest glass, Blend or transmissive surface over each pixel is path traced too,\n"
                           "and the paths meet those surfaces; off, they keep the probes and the sky");
     }
+    ImGui::BeginDisabled(!pathTracing.forwardSurfaces);
+    ImGui::Checkbox("Half resolution##ptlayer", &pathTracing.forwardSurfacesHalfResolution);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Glass and blended surfaces traced at half the resolution each way: a quarter of their cost");
+    }
+    ImGui::EndDisabled();
     ImGui::Checkbox("Air and fog along the paths##pt", &pathTracing.rayMedia);
     if (ImGui::IsItemHovered())
     {
         ImGui::SetTooltip("Reflected and bounced light passes through the aerial perspective and the height fog");
+    }
+    ImGui::Checkbox("Emissive surfaces as lights##pt", &pathTracing.emissiveLights);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Each path vertex also aims a shadow ray at a point on an emissive triangle, picked by its power,\n"
+                          "weighted against the paths that hit it (MIS); off, only the paths find emissive surfaces");
+    }
+    ImGui::Checkbox("Light grid##pt", &pathTracing.lightGrid);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Path vertices pick their local light candidates from a world grid around the camera whose cells\n"
+                          "list the lights reaching them; off, from the view's cluster grid or every local light");
+    }
+    ImGui::Checkbox("Reflection guides for ray reconstruction##pt", &pathTracing.reflectionGuides);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("DLSS ray reconstruction gets the specular hit distance and the reflections' motion vectors,\n"
+                          "so glossy reflections do not smear along with the surface while the camera moves");
     }
     // ReSTIR PT Enhanced in place of the plain path tracer: it carries the direct light too.
     if (ImGui::Checkbox("ReSTIR PT Enhanced##pt", &pathTracing.restir))

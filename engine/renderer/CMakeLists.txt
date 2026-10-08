@@ -126,6 +126,8 @@ add_library(engine_renderer
     vulkan/ddgi.h
     vulkan/ddgi_debug_pass.cpp
     vulkan/ddgi_debug_pass.h
+    vulkan/path_trace_lights.cpp
+    vulkan/path_trace_lights.h
     vulkan/rt_shadow_pass.cpp
     vulkan/rt_shadow_pass.h
     vulkan/path_trace_layer_pass.cpp
@@ -336,6 +338,8 @@ set(MINIENGINE_SHADER_INCLUDES
     ray_hit_common.glsl
     rt_shadow_common.glsl
     path_trace_common.glsl
+    emissive_lights_common.glsl
+    light_grid_common.glsl
     restir_pt_common.glsl
     ddgi_common.glsl
     ground_plane.glsl
@@ -413,6 +417,31 @@ function(miniengine_add_shaders shader_target)
         list(APPEND spv_outputs "${shader_output}")
     endforeach()
 
+    # Hardware ray tracing shaders compiled again under another name with defines:
+    # source|output|NAME=value,NAME=value.
+    foreach(variant IN LISTS MINIENGINE_HARDWARE_RAY_DEFINE_VARIANTS)
+        string(REPLACE "|" ";" variant_fields "${variant}")
+        list(GET variant_fields 0 variant_source)
+        list(GET variant_fields 1 variant_name)
+        list(GET variant_fields 2 variant_defines)
+        string(REPLACE "," ";" variant_define_list "${variant_defines}")
+        set(variant_flags "")
+        foreach(define IN LISTS variant_define_list)
+            list(APPEND variant_flags "-D${define}")
+        endforeach()
+        set(shader_source "${PROJECT_SOURCE_DIR}/shaders/vulkan/${variant_source}")
+        set(shader_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${variant_name}.spv")
+        add_custom_command(
+            OUTPUT "${shader_output}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
+            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.2 -DRAY_QUERY ${variant_flags} "${shader_source}" -o "${shader_output}"
+            DEPENDS "${shader_source}" ${shader_includes}
+            COMMENT "Compiling ${variant_name} (${variant_source}, ${variant_defines})"
+            VERBATIM
+        )
+        list(APPEND spv_outputs "${shader_output}")
+    endforeach()
+
     add_custom_target(${shader_target} DEPENDS ${spv_outputs})
 endfunction()
 
@@ -421,6 +450,13 @@ endfunction()
 set(MINIENGINE_SHADER_DEFINE_VARIANTS
     "gbuffer.frag|path_trace_layer_depth.frag|PATH_TRACE_LAYER_PASS=1"
     "gbuffer.frag|path_trace_layer_surface.frag|PATH_TRACE_LAYER_PASS=2"
+)
+
+# The path tracer's trace without what a frame does not need (VulkanPathTracePass picks one).
+set(MINIENGINE_HARDWARE_RAY_DEFINE_VARIANTS
+    "path_trace.comp|path_trace_no_transmission.comp|PT_TRANSMISSION=0"
+    "path_trace.comp|path_trace_no_layers.comp|PT_LAYERED=0"
+    "path_trace.comp|path_trace_base.comp|PT_TRANSMISSION=0,PT_LAYERED=0"
 )
 
 # Shaders that trace the ray scene, compiled a second time for hardware ray tracing.
@@ -436,6 +472,8 @@ set(MINIENGINE_HARDWARE_RAY_SHADERS
     rt_shadow_trace.comp
     rt_reflection_trace.comp
     path_trace.comp
+    emissive_lights.comp
+    light_grid.comp
     restir_pt_initial.comp
     restir_pt_temporal.comp
     restir_pt_spatial_shift.comp

@@ -549,6 +549,14 @@ bool VulkanDlss::Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInput
         NVSDK_NGX_Resource_VK diffuseAlbedo = ToResource(inputs.diffuseAlbedo, false);
         NVSDK_NGX_Resource_VK specularAlbedo = ToResource(inputs.specularAlbedo, false);
         NVSDK_NGX_Resource_VK normalRoughness = ToResource(inputs.normalRoughness, false);
+        NVSDK_NGX_Resource_VK specularHitDistance{};
+        NVSDK_NGX_Resource_VK reflectionMotion{};
+        const bool hasHitDistance = inputs.specularHitDistance.image != VK_NULL_HANDLE && inputs.reflectionMotionVectors.image != VK_NULL_HANDLE;
+        if (hasHitDistance)
+        {
+            specularHitDistance = ToResource(inputs.specularHitDistance, false);
+            reflectionMotion = ToResource(inputs.reflectionMotionVectors, false);
+        }
         // NGX takes row-major matrices for row vectors, which is glm's column-major storage as it is.
         glm::mat4 worldToView = inputs.worldToView;
         glm::mat4 viewToClip = inputs.viewToClip;
@@ -560,6 +568,11 @@ bool VulkanDlss::Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInput
         evaluate.pInDiffuseAlbedo = &diffuseAlbedo;
         evaluate.pInSpecularAlbedo = &specularAlbedo;
         evaluate.pInNormals = &normalRoughness;
+        if (hasHitDistance)
+        {
+            evaluate.pInSpecularHitDistance = &specularHitDistance;
+            evaluate.pInMotionVectorsReflections = &reflectionMotion;
+        }
         evaluate.InJitterOffsetX = inputs.jitterPixels.x;
         evaluate.InJitterOffsetY = inputs.jitterPixels.y;
         evaluate.InRenderSubrectDimensions = {inputs.color.extent.width, inputs.color.extent.height};

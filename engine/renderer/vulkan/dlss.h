@@ -49,6 +49,11 @@ struct DlssEvaluateInputs
     DlssImage diffuseAlbedo;
     DlssImage specularAlbedo;
     DlssImage normalRoughness;
+    // Optional (null images: none): the specular ray's hit distance, world units (R16F), and the
+    // motion vectors of what the reflections show (RG16F, as motionVectors), which the path tracer's
+    // raw paths come with (dlss_rr_guides.comp).
+    DlssImage specularHitDistance;
+    DlssImage reflectionMotionVectors;
     glm::mat4 worldToView{1.0f};
     glm::mat4 viewToClip{1.0f};
 };
