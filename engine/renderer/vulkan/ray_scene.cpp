@@ -67,15 +67,16 @@ VkDeviceSize AtLeastOne(VkDeviceSize size)
 
 // How many instances the frame slots' top-level buffers and acceleration structures hold. A streamed
 // world installs a slightly different count every few seconds, and remaking them for each cost ~45 ms
-// of allocation in one frame on the GTA map, so they keep a quarter of room to grow; they shrink only
-// once the content needs less than half of them (a small scene after a map).
+// of allocation in one frame on the GTA map (and waits for the frames in flight), so they keep a
+// quarter of room to grow, at least doubling when they do (a map's first load commits over many frames);
+// they shrink only once the content needs less than half of them (a small scene after a map).
 size_t InstanceCapacity(size_t current, size_t needed)
 {
     if (needed <= current && needed * 2 >= current)
     {
         return current;
     }
-    return needed + needed / 4;
+    return needed > current ? std::max(needed + needed / 4, current * 2) : needed + needed / 4;
 }
 }
 
@@ -242,17 +243,35 @@ void VulkanRayScene::SetContent(
     const bool grows = capacity > m_materialCapacity;
     if (grows)
     {
-        DestroyBuffer(m_materials);
-        m_materials = CreateBuffer(kRayMaterialBytes * capacity, true);
+        // The averaged materials carry over and only the slots placed now are averaged: the GPU copies
+        // them in the next Record, before any averaging (reading the old buffer from the CPU, video
+        // memory the CPU writes well and reads slowly, took over 10 ms on a map).
+        Buffer grown = CreateBuffer(kRayMaterialBytes * capacity, true);
+        if (m_materialCopy.source.buffer != VK_NULL_HANDLE)
+        {
+            // Grown twice before a Record: the first growth's copy has not run, so the older buffer is
+            // still the one holding the materials.
+            DestroyBuffer(m_materials);
+        }
+        else if (m_materialCapacity > 0 && m_retire)
+        {
+            m_materialCopy.source = m_materials;
+            m_materialCopy.bytes = kRayMaterialBytes * m_materialCapacity;
+        }
+        else if (m_materialCapacity > 0)
+        {
+            // Nothing would keep the old buffer until the copy ran.
+            std::memcpy(grown.mapped, m_materials.mapped, kRayMaterialBytes * m_materialCapacity);
+            DestroyBuffer(m_materials);
+        }
+        else
+        {
+            DestroyBuffer(m_materials);
+        }
+        m_materials = grown;
         m_materialCapacity = capacity;
         m_materialSlots.resize(capacity);
-        for (uint32_t index = 0; index < capacity; ++index)
-        {
-            if (m_materialSlots[index].set != VK_NULL_HANDLE)
-            {
-                rewrite.push_back(index);
-            }
-        }
+        WriteMaterialOutputSet();
     }
     for (const RayMaterialSource& source : placed)
     {
@@ -268,9 +287,7 @@ void VulkanRayScene::SetContent(
                 m_materialPools = std::make_unique<VulkanDescriptorPoolList>(
                     m_device,
                     m_materialSetLayout,
-                    std::vector<VkDescriptorPoolSize>{
-                        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2},
-                        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}},
+                    std::vector<VkDescriptorPoolSize>{VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2}},
                     kMaterialSetsPerPool);
             }
             const VulkanDescriptorPoolList::Allocation allocation = m_materialPools->Allocate();
@@ -280,21 +297,14 @@ void VulkanRayScene::SetContent(
         slot.source = source;
         rewrite.push_back(source.slot);
     }
-    const VkDescriptorBufferInfo output{m_materials.buffer, 0, VK_WHOLE_SIZE};
     for (const uint32_t index : rewrite)
     {
         MaterialSlot& slot = m_materialSlots[index];
         const VkDescriptorImageInfo baseColor{slot.source.baseColor.sampler, slot.source.baseColor.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         const VkDescriptorImageInfo emissive{slot.source.emissive.sampler, slot.source.emissive.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        std::array<VkWriteDescriptorSet, 3> writes{};
-        writes[0] = ImageWrite(slot.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &baseColor);
-        writes[1] = ImageWrite(slot.set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &emissive);
-        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet = slot.set;
-        writes[2].dstBinding = 2;
-        writes[2].descriptorCount = 1;
-        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[2].pBufferInfo = &output;
+        const std::array<VkWriteDescriptorSet, 2> writes = {
+            ImageWrite(slot.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &baseColor),
+            ImageWrite(slot.set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &emissive)};
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         m_dirtyMaterialSlots.push_back(index);
     }
@@ -318,7 +328,9 @@ void VulkanRayScene::SetContent(
                 m_textureSet = VK_NULL_HANDLE;
             }
             // Room to grow, so a streamed map does not reallocate it at every new cell.
-            m_textureCapacity = std::min<uint32_t>(std::max(capacity + capacity / 2u, 1024u), m_textureLimit / kRayTexturesPerSlot);
+            // A map's draws from the first content on (65,536 slots, 320k descriptors): growing it writes
+            // every slot again, which took tens of milliseconds of a frame while a map streamed in.
+            m_textureCapacity = std::min<uint32_t>(std::max(capacity + capacity / 4u, 65536u), m_textureLimit / kRayTexturesPerSlot);
             const uint32_t count = m_textureCapacity * kRayTexturesPerSlot;
             const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count};
             VkDescriptorPoolCreateInfo poolInfo{};
@@ -460,15 +472,22 @@ void VulkanRayScene::SetContent(
             }
 
             std::atomic<size_t> newTriangles{0};
-            // Below the frame's own parallel loops, which the task system runs first.
+            // Below the frame's own parallel loops, which the task system runs first, and on a quarter
+            // of the workers at most: a worker stays in a mesh until it is built (tens of milliseconds
+            // for a large one), and with every worker in one the frame's loops ran on its thread alone
+            // (50 ms of recording while a map's first load built its hierarchies).
+            const uint32_t buildTasks = std::max(1u, TaskSystem::WorkerThreadCount() / 4);
             TaskSystem::ParallelFor(
                 static_cast<uint32_t>(distinct.size()),
-                1,
+                std::max(1u, static_cast<uint32_t>((distinct.size() + buildTasks - 1) / buildTasks)),
                 [&](uint32_t begin, uint32_t end)
                 {
                     for (uint32_t index = begin; index < end; ++index)
                     {
-                        if (bvhs[index])
+                        // Replaced: the newer build makes what is not in the cache yet (a large change
+                        // committing over several frames replaces a build each frame, and each used to
+                        // build the same new meshes again alongside the others).
+                        if (bvhs[index] || superseded->load())
                         {
                             continue;
                         }
@@ -479,10 +498,20 @@ void VulkanRayScene::SetContent(
                                 : std::vector<glm::vec3>{};
                         bvhs[index] = std::make_shared<const MeshBvh>(mesh ? BuildMeshBvh(positions, mesh->indices) : MeshBvh{});
                         newTriangles += bvhs[index]->triangles.size();
+                        // At once, for the builds that start while this one runs.
+                        std::lock_guard lock(cache->mutex);
+                        cache->meshes[mesh.get()] = BuiltMesh{mesh, bvhs[index]};
                     }
                 },
                 TaskPriority::Medium);
 
+            // A replaced build makes nothing else (concatenating a map's meshes copies hundreds of
+            // megabytes, and a large change committing over several frames replaces a build each frame);
+            // what it built is in the cache already.
+            if (superseded->load())
+            {
+                return build;
+            }
             for (size_t index = 0; index < distinct.size(); ++index)
             {
                 AppendMesh(build.scene, *bvhs[index]);
@@ -605,7 +634,9 @@ void VulkanRayScene::InstallBuild(const std::function<void()>& waitForFrames)
     Build build = m_pendingBuild.get();
     // A new capacity replaces every slot's top level and instance buffers, which the frames in flight
     // use; otherwise nothing they use changes.
-    const size_t capacity = InstanceCapacity(m_instanceCapacity, build.submeshMeshes.size());
+    // At least the draw slots' capacity, which the renderer reserves ahead for a map that loads over
+    // many commits: a new capacity remakes the top levels and waits for the frames in flight.
+    const size_t capacity = InstanceCapacity(m_instanceCapacity, std::max<size_t>(build.submeshMeshes.size(), m_materialCapacity));
     const bool framesIdle = capacity != m_instanceCapacity || !m_retire;
     if (framesIdle)
     {
@@ -826,6 +857,24 @@ void VulkanRayScene::UpdateInstances(uint32_t frameSlot, std::span<const glm::ma
 
 void VulkanRayScene::Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, bool hardwareRays)
 {
+    if (m_materialCopy.source.buffer != VK_NULL_HANDLE)
+    {
+        const VkBufferCopy region{0, 0, m_materialCopy.bytes};
+        vkCmdCopyBuffer(commandBuffer, m_materialCopy.source.buffer, m_materials.buffer, 1, &region);
+        VkMemoryBarrier copied{};
+        copied.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        copied.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        copied.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(
+            commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &copied, 0,
+            nullptr, 0, nullptr);
+        auto source = std::make_shared<Buffer>(m_materialCopy.source);
+        m_materialCopy = MaterialCopy{};
+        Retire([this, source]()
+               {
+                   DestroyBuffer(*source);
+               });
+    }
     if (!m_dirtyMaterialSlots.empty() && m_materialPipeline != VK_NULL_HANDLE)
     {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_materialPipeline);
@@ -855,8 +904,10 @@ void VulkanRayScene::Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, b
                     (submesh.alphaMode == MaterialAlphaMode::Blend ? kRayMaterialAlphaBlend : 0u) | (transmission > 0.0f ? kRayMaterialTransmission : 0u) |
                     (submesh.normal.imageView != VK_NULL_HANDLE ? kRayMaterialNormalMap : 0u),
                 transmissionBits);
+            const std::array<VkDescriptorSet, 2> materialSets = {m_materialSlots[index].set, m_materialOutputSet};
             vkCmdBindDescriptorSets(
-                commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_materialPipelineLayout, 0, 1, &m_materialSlots[index].set, 0, nullptr);
+                commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_materialPipelineLayout, 0, static_cast<uint32_t>(materialSets.size()),
+                materialSets.data(), 0, nullptr);
             vkCmdPushConstants(commandBuffer, m_materialPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
             vkCmdDispatch(commandBuffer, 1, 1, 1);
         }
@@ -1057,7 +1108,7 @@ VulkanRayScene::Buffer VulkanRayScene::CreateBuffer(VkDeviceSize size, bool near
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
-    bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &result.buffer), "Failed to create a ray scene buffer");
     try
@@ -1248,23 +1299,47 @@ void VulkanRayScene::WriteSet(uint32_t slot)
 
 void VulkanRayScene::CreateMaterialPipeline(VkPipelineCache pipelineCache)
 {
-    constexpr std::array<VkDescriptorType, 3> kTypes = {
+    constexpr std::array<VkDescriptorType, 2> kTypes = {
         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
     m_materialSetLayout = CreateComputeSetLayout(m_device, kTypes);
+    constexpr std::array<VkDescriptorType, 1> kOutputTypes = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
+    m_materialOutputLayout = CreateComputeSetLayout(m_device, kOutputTypes);
+    const VkDescriptorPoolSize outputPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};
+    VkDescriptorPoolCreateInfo outputPoolInfo{};
+    outputPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    outputPoolInfo.maxSets = 1;
+    outputPoolInfo.poolSizeCount = 1;
+    outputPoolInfo.pPoolSizes = &outputPoolSize;
+    CheckVulkan(vkCreateDescriptorPool(m_device, &outputPoolInfo, nullptr, &m_materialOutputPool), "Failed to create the ray material output pool");
+    m_materialOutputSet = AllocateDescriptorSets(m_device, m_materialOutputPool, m_materialOutputLayout, 1).front();
+    WriteMaterialOutputSet();
 
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.size = sizeof(RayMaterialConstants);
+    const std::array<VkDescriptorSetLayout, 2> materialLayouts = {m_materialSetLayout, m_materialOutputLayout};
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &m_materialSetLayout;
+    layoutInfo.setLayoutCount = static_cast<uint32_t>(materialLayouts.size());
+    layoutInfo.pSetLayouts = materialLayouts.data();
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &pushConstantRange;
     CheckVulkan(vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_materialPipelineLayout), "Failed to create the ray material pipeline layout");
     m_materialPipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_materialPipelineLayout, "ray_material_average.comp.spv");
+}
+
+void VulkanRayScene::WriteMaterialOutputSet()
+{
+    const VkDescriptorBufferInfo output{m_materials.buffer, 0, VK_WHOLE_SIZE};
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = m_materialOutputSet;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &output;
+    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
 }
 
 void VulkanRayScene::DestroyHandles()
@@ -1286,6 +1361,17 @@ void VulkanRayScene::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_materialSetLayout, nullptr);
         m_materialSetLayout = VK_NULL_HANDLE;
     }
+    if (m_materialOutputPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(m_device, m_materialOutputPool, nullptr);
+        m_materialOutputPool = VK_NULL_HANDLE;
+        m_materialOutputSet = VK_NULL_HANDLE;
+    }
+    if (m_materialOutputLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(m_device, m_materialOutputLayout, nullptr);
+        m_materialOutputLayout = VK_NULL_HANDLE;
+    }
     DestroyBuffer(m_meshNodes);
     DestroyBuffer(m_meshTriangles);
     DestroyBuffer(m_meshGeometry);
@@ -1297,6 +1383,7 @@ void VulkanRayScene::DestroyHandles()
     m_spareBuffers.clear();
     m_meshBuffers.clear();
     DestroyBuffer(m_materials);
+    DestroyBuffer(m_materialCopy.source);
     if (m_texturePool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(m_device, m_texturePool, nullptr);

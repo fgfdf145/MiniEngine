@@ -10,6 +10,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -133,6 +134,18 @@ glm::vec3 FocusOf(RendererSharedState& state)
 void UpdateBudgetRadius(RendererSharedState& state, const std::vector<float>& distances, std::chrono::steady_clock::time_point now)
 {
     WorldStreamingState& streaming = state.worldStreaming;
+    // MINIENGINE_STREAMING_BUDGET_RADIUS=<metres> pins the radius (diagnostics: a streaming test that
+    // does not depend on what other processes hold of the GPU's memory).
+    static const float pinnedRadius = []()
+    {
+        const char* value = std::getenv("MINIENGINE_STREAMING_BUDGET_RADIUS");
+        return value != nullptr ? std::max(std::strtof(value, nullptr), 0.0f) : 0.0f;
+    }();
+    if (pinnedRadius > 0.0f)
+    {
+        streaming.budgetRadius = pinnedRadius;
+        return;
+    }
     if (streaming.budgetRadius <= 0.0f)
     {
         streaming.budgetRadius = WorldStreamingService::kMinBudgetRadius;

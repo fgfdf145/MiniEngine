@@ -285,6 +285,9 @@ std::string FormatGpuMemoryStatus(const GpuMemoryReport& report, const WorldStre
 // queue; this is where a regression back onto the frame loop shows up.
 // The frame's loops over every render submesh run in ranges of this many on the task system.
 constexpr uint32_t kSubmeshesPerTask = 512;
+// Empty memory pool blocks kept for the next allocations (64 MiB each) before they go back to the
+// driver, one a frame.
+constexpr size_t kSpareMemoryBlocks = 4;
 
 void MixHashWord(uint64_t& hash, uint64_t word)
 {
@@ -878,6 +881,9 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // What the frames that have finished no longer need, draw slots among it, before this frame's
     // change of content asks for some.
     m_retireQueue.Collect(m_commandContext->CompletedSubmits());
+    // The memory pool's blocks that emptied, back to the driver one a frame beyond a few spares (each
+    // vkFreeMemory holds the driver for about a millisecond; compaction empties dozens at once).
+    VulkanMemoryPool::ReleaseEmptyBlocks(m_device->GetHandle(), kSpareMemoryBlocks, 1);
 
     if (packet.contentChanged)
     {
@@ -3532,6 +3538,15 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
     std::unordered_map<entt::entity, uint32_t> nextSubmeshOrdinal;
     size_t newBufferCount = 0;
     size_t keptSubmeshCount = 0;
+    // A large change commits over several frames: new submeshes are made until the budget is spent (at
+    // least kMinNewSubmeshesPerCommit of them), the rest wait for the next frames' commits, which keep
+    // what this one made. Making a submesh and then its descriptors and ray material cost ~10 us each in
+    // Release, and a map's first load committed 15,000 in one frame of 120 ms.
+    constexpr size_t kMinNewSubmeshesPerCommit = 256;
+    constexpr double kCommitBuildBudgetMs = 5.0;
+    size_t deferredSubmeshCount = 0;
+    // The time spent making new submeshes (not walking the kept ones), what the budget measures.
+    double makingMs = 0.0;
     try
     {
         const uint32_t defaultBaseColorIndex = acquireDefault("__default_base_color__", CreateSolidTexture(255, 255, 255, 255), VulkanTextureFormat::SrgbColor);
@@ -3593,6 +3608,13 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
                 ++keptSubmeshCount;
                 continue;
             }
+            // Over the budget: left for the next commit.
+            if (deferredSubmeshCount > 0 || (madeSubmeshes.size() >= kMinNewSubmeshesPerCommit && makingMs > kCommitBuildBudgetMs))
+            {
+                ++deferredSubmeshCount;
+                continue;
+            }
+            const auto makingStart = std::chrono::steady_clock::now();
 
             auto renderSubmesh = std::make_shared<RenderSubmesh>();
             renderSubmesh->entity = cpuRenderSubmesh.entity;
@@ -3699,6 +3721,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             madeSubmeshes.push_back(renderSubmesh);
             madeSlots.push_back(slots);
             newRenderSubmeshes.push_back(std::move(renderSubmesh));
+            makingMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - makingStart).count();
         }
 
         // The new submeshes' material sets: kept where another submesh already has the same textures.
@@ -3740,6 +3763,12 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
     const size_t submeshCount = newRenderSubmeshes.size();
     m_unreferencedTextureKeys.insert(m_unreferencedTextureKeys.end(), addedTextureKeys.begin(), addedTextureKeys.end());
     const auto applyStart = std::chrono::steady_clock::now();
+    // A change too large for one commit is a map loading, which keeps adding cells: room for four times
+    // what it holds so far (up to 65,536 draws, or a quarter more than it holds), made while few draws
+    // are live (a growth writes every live draw again, and allocating for 126,000 took 50 ms).
+    const size_t changeSize = submeshCount + deferredSubmeshCount;
+    m_drawSlotReserve =
+        static_cast<uint32_t>(deferredSubmeshCount > 0 ? std::max(std::min<size_t>(changeSize * 4, 65536), changeSize + changeSize / 4) : submeshCount);
     try
     {
         ApplyRenderContent(std::move(newRenderSubmeshes), keptSubmeshCount, frame);
@@ -3749,12 +3778,27 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
         dropAdded();
         throw;
     }
+    // The requests of what is on the GPU now are done; the rest of a deferred change commits next.
+    std::erase_if(m_requestedRevisions, [this](uint64_t revision)
+                  {
+                      return m_liveSubmeshes.count(revision) != 0;
+                  });
+    if (deferredSubmeshCount > 0)
+    {
+        m_sceneUploadPending = true;
+    }
+    else if (m_requestedRevisions.size() > 4096)
+    {
+        // Requests of submeshes that left before they committed: asked for again if they come back.
+        m_requestedRevisions.clear();
+    }
     LOG_INFO(
-        "Uploaded {} submeshes ({} kept, {} new buffers, {} textures stored) in {:.0f} ms, then {:.0f} ms for descriptors and the ray scene",
+        "Uploaded {} submeshes ({} kept, {} new buffers, {} textures stored{}) in {:.0f} ms, then {:.0f} ms for descriptors and the ray scene",
         submeshCount,
         keptSubmeshCount,
         newBufferCount,
         m_textureStore.size(),
+        deferredSubmeshCount > 0 ? ", " + std::to_string(deferredSubmeshCount) + " left for the next frames" : std::string(),
         uploadMs,
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - applyStart).count());
 }
@@ -3801,6 +3845,13 @@ void VulkanRenderer::UploadSceneResourcesOrKeepPrevious(const RenderFramePacket&
         return;
     }
 
+    // The rest of a large change commits over the next frames, with the textures and buffers prepared
+    // for it.
+    if (m_sceneUploadPending)
+    {
+        return;
+    }
+
     // Prepared buffers the change did not use (a submesh dropped again before it committed) go once
     // their uploads have run; the used ones live on in their submeshes.
     ReleasePreparedBuffers();
@@ -3833,7 +3884,7 @@ void VulkanRenderer::RequestSceneUpload(const RenderFramePacket& frame)
     for (const std::shared_ptr<const CpuRenderSubmesh>& entry : *frame.renderSubmeshes)
     {
         const CpuRenderSubmesh& submesh = *entry;
-        if (m_liveSubmeshes.count(submesh.revision) != 0)
+        if (m_liveSubmeshes.count(submesh.revision) != 0 || !m_requestedRevisions.insert(submesh.revision).second)
         {
             continue;
         }
@@ -3942,10 +3993,16 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
                     mesh,
                     std::make_shared<VulkanBuffer>(m_device->GetPhysicalDevice(), m_device->GetHandle(), *mesh, batch(), m_device->SupportsRayQuery())};
             }
-            const bool unlimitedTextures = m_texturePreparation->PendingCount() > kTextureBacklog;
+            // A backlog as large as a map's first load stages for longer, though never without a limit:
+            // 64 large textures took over 50 ms of one frame.
+            const bool backlog = m_texturePreparation->PendingCount() > kTextureBacklog;
+            const double textureBudgetMs = backlog ? std::max(stagingBudgetMs, 10.0) : stagingBudgetMs;
             size_t stagedTextures = 0;
+            // The floor yields to a hard limit too: textures that each took a new memory block or a large
+            // copy made the floor alone a 50 ms frame.
+            constexpr double kStagingHardLimitMs = 15.0;
             while (stagedTextures < kStagedTexturesPerFrame &&
-                   (unlimitedTextures || stagedTextures < kMinStagedTexturesPerFrame || elapsedMs() < stagingBudgetMs))
+                   (stagedTextures == 0 || ((stagedTextures < kMinStagedTexturesPerFrame || elapsedMs() < textureBudgetMs) && elapsedMs() < kStagingHardLimitMs)))
             {
                 std::vector<TexturePreparationResult> completed = m_texturePreparation->TakeCompleted(kStagedTexturesPerGroup);
                 if (completed.empty())
@@ -4034,6 +4091,7 @@ void VulkanRenderer::AbandonPendingTextures()
     // Staged textures are referenced by no descriptor set; they go once the batches uploading them have
     // run.
     m_sceneUploadPending = false;
+    m_requestedRevisions.clear();
     m_uploadBatches.clear();
     ReleasePreparedBuffers();
     m_stagedTextures.clear();
@@ -4183,7 +4241,8 @@ void VulkanRenderer::ApplyRenderContent(
                 // More draws than the per-draw buffers hold: larger ones, with every draw of the old
                 // content and the new written in, so either can be drawn from them.
                 // Every view's, as each draws from its own.
-                const uint32_t capacity = std::max({m_drawSlotWatermark, m_view.uniformBuffer ? m_view.uniformBuffer->GetDrawCapacity() * 3 / 2 : 0u, 256u});
+                const uint32_t capacity = std::max(
+                    {m_drawSlotWatermark, m_drawSlotReserve, m_view.uniformBuffer ? m_view.uniformBuffer->GetDrawCapacity() * 2 : 0u, 256u});
                 const auto grow = [&](const VulkanSceneView& view)
                 {
                     // The old content's draws, then the new ones.

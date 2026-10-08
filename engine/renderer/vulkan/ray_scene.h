@@ -303,6 +303,20 @@ class VulkanRayScene
     };
     VkDescriptorSetLayout m_materialSetLayout = VK_NULL_HANDLE;
     std::unique_ptr<VulkanDescriptorPoolList> m_materialPools;
+    // The averaging's output, the materials buffer, in one set of its own: a larger buffer is one set
+    // written again, not every slot's (tens of thousands on a map, with every material averaged again).
+    VkDescriptorSetLayout m_materialOutputLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_materialOutputPool = VK_NULL_HANDLE;
+    VkDescriptorSet m_materialOutputSet = VK_NULL_HANDLE;
+    void WriteMaterialOutputSet();
+    // A grown materials buffer's contents, copied from the old one by the next Record (which then
+    // retires it).
+    struct MaterialCopy
+    {
+        Buffer source;
+        VkDeviceSize bytes = 0;
+    };
+    MaterialCopy m_materialCopy;
     std::vector<MaterialSlot> m_materialSlots;
     uint32_t m_materialCapacity = 0;
     std::vector<uint32_t> m_dirtyMaterialSlots;

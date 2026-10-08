@@ -473,6 +473,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     VulkanRetireQueue m_retireQueue;
     std::vector<uint32_t> m_freeDrawSlots;
     uint32_t m_drawSlotWatermark = 0;
+    // The draws the per-draw buffers grow to at once when they must grow: for a change committing over
+    // several frames, four times what it holds (a streamed map's first load keeps adding cells), rather
+    // than growing at each step (every growth writes every live draw and replaces the ray materials).
+    uint32_t m_drawSlotReserve = 0;
     uint64_t m_commitSerial = 0;
     // The GPU buffers made for each CPU mesh, for a new submesh of a mesh already uploaded: kept
     // between commits (rebuilding it from every live submesh cost 2.5 ms a change on a map). The
@@ -514,6 +518,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Keys the workers could not decode; their slots use the default texture.
     std::unordered_set<std::string> m_failedTextureKeys;
     bool m_sceneUploadPending = false;
+    // The new submeshes whose textures and buffers a change already asked for: a later change asks only
+    // for its own (walking every pending submesh's textures again took 5 to 15 ms each time a cell
+    // arrived while a large change waited). Pruned as they commit.
+    std::unordered_set<uint64_t> m_requestedRevisions;
     // Texture files requested since the last commit, for the progress status.
     size_t m_texturesRequested = 0;
     struct TextureUploadStats

@@ -137,21 +137,34 @@ void VulkanMemoryPool::Free(VkDevice device, VulkanPooledMemory& allocation)
     }
 
     std::lock_guard lock(g_mutex);
-    VulkanMemoryBlock* block = allocation.block;
-    block->ranges.Free(allocation.offset, allocation.size);
-    if (block->ranges.Empty())
+    allocation.block->ranges.Free(allocation.offset, allocation.size);
+    allocation = {};
+}
+
+size_t VulkanMemoryPool::ReleaseEmptyBlocks(VkDevice device, size_t keep, size_t maxRelease)
+{
+    std::vector<std::unique_ptr<VulkanMemoryBlock>> released;
+    {
+        std::lock_guard lock(g_mutex);
+        size_t empty = 0;
+        for (auto block = g_blocks.begin(); block != g_blocks.end() && released.size() < maxRelease;)
+        {
+            if ((*block)->device != device || !(*block)->ranges.Empty() || ++empty <= keep)
+            {
+                ++block;
+                continue;
+            }
+            released.push_back(std::move(*block));
+            block = g_blocks.erase(block);
+        }
+    }
+    // Outside the pool's lock: the workers' allocations do not wait on the driver.
+    for (const std::unique_ptr<VulkanMemoryBlock>& block : released)
     {
         vkFreeMemory(block->device, block->memory, nullptr);
         g_committedBytes -= kBlockSize;
-        g_blocks.erase(std::find_if(
-            g_blocks.begin(),
-            g_blocks.end(),
-            [block](const std::unique_ptr<VulkanMemoryBlock>& candidate)
-            {
-                return candidate.get() == block;
-            }));
     }
-    allocation = {};
+    return released.size();
 }
 
 uint64_t VulkanMemoryPool::CommittedBytes()

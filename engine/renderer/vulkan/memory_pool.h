@@ -22,8 +22,10 @@ struct VulkanPooledMemory
 // actually requested. Blocks are 64 MiB; a request of 16 MiB or more gets its own allocation.
 // Buffers and images come from separate blocks, which keeps linear and optimal-tiling resources
 // apart without having to honour bufferImageGranularity; buffers whose device address shaders or
-// acceleration structure builds use come from blocks allocated with the device address flag. Thread-safe. A block is freed as soon as
-// its last range is, so nothing is left to release before the device is destroyed.
+// acceleration structure builds use come from blocks allocated with the device address flag. Thread-safe. A block whose last range
+// is freed stays for the next allocations: vkFreeMemory of a block took about a millisecond of the
+// driver's lock, and bottom-level compaction emptied dozens of blocks a frame while filling new ones.
+// ReleaseEmptyBlocks gives the spares back a few at a time, and all of them before the device goes.
 namespace VulkanMemoryPool
 {
 enum class Resource
@@ -41,8 +43,14 @@ VulkanPooledMemory Allocate(
     VkMemoryPropertyFlags properties,
     Resource resource);
 
-// Releases the range and resets it to empty. Safe on an empty range.
+// Releases the range and resets it to empty. Safe on an empty range. A dedicated allocation is freed
+// now; a block left empty is kept (ReleaseEmptyBlocks).
 void Free(VkDevice device, VulkanPooledMemory& allocation);
+
+// Frees up to maxRelease of the device's empty blocks beyond the first keep of them; returns how many
+// it freed. Once a frame with a small maxRelease, and with keep 0 and no limit before the device is
+// destroyed.
+size_t ReleaseEmptyBlocks(VkDevice device, size_t keep, size_t maxRelease);
 
 // The device memory the pool holds from the driver (whole blocks and dedicated allocations): the
 // scene's buffers, textures and acceleration structures, which is what world streaming budgets.

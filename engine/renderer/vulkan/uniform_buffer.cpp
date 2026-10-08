@@ -604,18 +604,13 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
         std::memset(m_mappedClusterBuffers[i], 0, static_cast<size_t>(kClusterBytes));
     }
 
-    // Every slot starts as a default material with identity transforms; WriteDrawSlot fills the ones
-    // drawn.
+    // A slot is written (WriteDrawSlot) when a draw takes it, and only drawn slots are read: the rest
+    // is left as it is (filling a map's tens of thousands of slots with defaults took tens of
+    // milliseconds whenever the buffers grew).
     const VkDeviceSize materialBytes = sizeof(GpuMaterialData) * m_motionSlotCount;
     CreateMappedBuffer(materialBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_materialBuffer, m_materialMemory, m_mappedMaterialBuffer);
     const VkDeviceSize transformBytes = sizeof(GpuTextureTransforms) * m_motionSlotCount;
     CreateMappedBuffer(transformBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_textureTransformBuffer, m_textureTransformMemory, m_mappedTextureTransformBuffer);
-    const GpuMaterialData defaultMaterial{};
-    const GpuTextureTransforms defaultTransforms{};
-    for (uint32_t slot = 0; slot < m_motionSlotCount; ++slot)
-    {
-        WriteDrawSlot(slot, defaultMaterial, defaultTransforms);
-    }
 }
 
 uint32_t VulkanUniformBuffer::GetDrawCapacity() const
