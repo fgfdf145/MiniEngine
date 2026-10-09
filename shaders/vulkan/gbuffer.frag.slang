@@ -6,13 +6,14 @@
 #include "material_uv.slang"
 #include "specular_aa.slang"
 #include "anisotropy_common.slang"
+#include "specialization.slang"
 
-[[vk::constant_id(0)]] const bool kAlphaMask = false;
+SPECIALIZATION_BOOL(0, kAlphaMask);
 // A deferred decal (MaterialPipelineSetConfig::decal): the outputs carry the base colour's alpha,
 // which the pipeline blends albedo, metallic, roughness and emission by; it writes nothing else.
-[[vk::constant_id(2)]] const bool kDecal = false;
+SPECIALIZATION_BOOL(2, kDecal);
 // The draw is a Blend item (MaterialAlphaMode::Blend).
-[[vk::constant_id(3)]] const bool kBlendItem = false;
+SPECIALIZATION_BOOL(3, kBlendItem);
 
 // Compiled twice more for the path traced layer of the forward-shaded surfaces
 // (VulkanPathTraceLayerPass, docs/design/2026-10-08-path-tracing-missing-effects-design.md):
@@ -65,15 +66,15 @@ static const float PATH_TRACE_LAYER_MIN_ALPHA = 0.05;
 // lighting pass reconstructs it from depth, so the input is deliberately not declared here.
 struct FragmentInput
 {
-    [[vk::location(0)]] float3 fragColor;
-    [[vk::location(1)]] float2 fragTexCoord;
-    [[vk::location(2)]] float3 fragWorldNormal;
-    [[vk::location(3)]] float4 fragWorldTangent;
-    [[vk::location(5)]] float4 fragCurrClip;
-    [[vk::location(6)]] float4 fragPrevClip;
-    [[vk::location(7)]] nointerpolation uint fragDrawSlot;
-    [[vk::location(8)]] float2 fragTexCoord1;
-    [[vk::location(10)]] float3 fragObjectPosition;
+    [[vk::location(0)]] float3 fragColor : TEXCOORD0;
+    [[vk::location(1)]] float2 fragTexCoord : TEXCOORD1;
+    [[vk::location(2)]] float3 fragWorldNormal : TEXCOORD2;
+    [[vk::location(3)]] float4 fragWorldTangent : TEXCOORD3;
+    [[vk::location(5)]] float4 fragCurrClip : TEXCOORD5;
+    [[vk::location(6)]] float4 fragPrevClip : TEXCOORD6;
+    [[vk::location(7)]] nointerpolation uint fragDrawSlot : TEXCOORD7;
+    [[vk::location(8)]] float2 fragTexCoord1 : TEXCOORD8;
+    [[vk::location(10)]] float3 fragObjectPosition : TEXCOORD10;
     float4 fragCoord : SV_Position;
     bool frontFacing : SV_IsFrontFace;
 };

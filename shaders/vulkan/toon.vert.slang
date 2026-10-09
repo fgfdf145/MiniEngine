@@ -1,24 +1,27 @@
+#include "specialization.slang"
+
 // The toon passes' vertex stage (toon_pass.h): an anime character's surface, or under kOutline its
 // outline, the hull pushed out along the smoothed normal (Anime Outline's vertex stage).
-[[vk::constant_id(0)]] const bool kOutline = false;
+SPECIALIZATION_BOOL(0, kOutline);
 
 #define TOON_VERTEX_STAGE
 #include "shader_helpers.slang"
+#include "draw_parameters.slang"
 #include "toon_common.slang"
 
 [[vk::binding(2, 0)]] StructuredBuffer<float4x4> previousModels;
 
 struct VertexInput
 {
-    [[vk::location(0)]] float3 inPosition;
-    [[vk::location(2)]] float2 inTexCoord;
-    [[vk::location(3)]] float3 inNormal;
-    [[vk::location(5)]] float2 inTexCoord1;
-    [[vk::location(6)]] float3 inOutlineNormal;
+    [[vk::location(0)]] float3 inPosition : POSITION;
+    [[vk::location(2)]] float2 inTexCoord : TEXCOORD;
+    [[vk::location(3)]] float3 inNormal : NORMAL;
+    [[vk::location(5)]] float2 inTexCoord1 : SECOND_TEXCOORD;
+    [[vk::location(6)]] float3 inOutlineNormal : OUTLINE_NORMAL;
     // Where this vertex was last frame (VulkanBuffer::GetPreviousPositionHandle), and the draw's model
     // matrix then (by its firstInstance, as triangle.vert reads it): the motion the toon pass writes.
-    [[vk::location(7)]] float3 inPreviousPosition;
-    uint instanceIndex : SV_VulkanInstanceID;
+    [[vk::location(7)]] float3 inPreviousPosition : PREVIOUS_POSITION;
+    DRAW_INSTANCE_INDEX_FIELDS;
 };
 
 struct VertexOutput
@@ -26,19 +29,19 @@ struct VertexOutput
     // The same expression as triangle.vert's, so an opaque surface lands on the depth the geometry
     // pass wrote for it; invariant like it (MINIENGINE_INVARIANT_POSITION_SHADERS).
     float4 position : SV_Position;
-    [[vk::location(0)]] float3 fragWorldPosition;
+    [[vk::location(0)]] float3 fragWorldPosition : TEXCOORD0;
     // The shading normal, which the face normal fix bends toward the face's forward.
-    [[vk::location(1)]] float3 fragWorldNormal;
-    [[vk::location(2)]] float2 fragTexCoord;
-    [[vk::location(3)]] float2 fragTexCoord1;
+    [[vk::location(1)]] float3 fragWorldNormal : TEXCOORD1;
+    [[vk::location(2)]] float2 fragTexCoord : TEXCOORD2;
+    [[vk::location(3)]] float2 fragTexCoord1 : TEXCOORD3;
     // The smoothed normal, which the contact shadow may follow (_DepthTexShadowIgnoreLightDir).
-    [[vk::location(4)]] float3 fragSmoothNormal;
+    [[vk::location(4)]] float3 fragSmoothNormal : TEXCOORD4;
     // The vertex normal unbent, which the outline is coloured by.
-    [[vk::location(5)]] float3 fragGeometryNormal;
-    [[vk::location(6)]] nointerpolation uint fragToonIndex;
+    [[vk::location(5)]] float3 fragGeometryNormal : TEXCOORD5;
+    [[vk::location(6)]] nointerpolation uint fragToonIndex : TEXCOORD6;
     // Unjittered clip positions now and last frame, for the velocity (as triangle.vert's).
-    [[vk::location(7)]] float4 fragCurrClip;
-    [[vk::location(8)]] float4 fragPrevClip;
+    [[vk::location(7)]] float4 fragCurrClip : TEXCOORD7;
+    [[vk::location(8)]] float4 fragPrevClip : TEXCOORD8;
 };
 
 [shader("vertex")]
@@ -108,6 +111,6 @@ VertexOutput main(VertexInput input)
     output.fragTexCoord1 = input.inTexCoord1;
     output.fragToonIndex = drawData.toonIndex;
     output.fragCurrClip = mul(ubo.viewProjNoJitter, worldPosition);
-    output.fragPrevClip = mul(ubo.prevViewProj, mul(previousModels[input.instanceIndex], float4(input.inPreviousPosition, 1.0)));
+    output.fragPrevClip = mul(ubo.prevViewProj, mul(previousModels[DRAW_INSTANCE_INDEX(input)], float4(input.inPreviousPosition, 1.0)));
     return output;
 }

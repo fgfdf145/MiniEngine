@@ -1,7 +1,9 @@
-[[vk::constant_id(0)]] const bool kAlphaMask = false;
+#include "specialization.slang"
+
+SPECIALIZATION_BOOL(0, kAlphaMask);
 // The scatter pre-pass (VulkanScatterPass): writes the light entering a scattering surface and its
 // draw slot instead of the shaded colour.
-[[vk::constant_id(1)]] const bool kScatterPrepass = false;
+SPECIALIZATION_BOOL(1, kScatterPrepass);
 
 #include "shader_helpers.slang"
 #include "scene_common.slang"
@@ -64,15 +66,15 @@
 
 struct FragmentInput
 {
-    [[vk::location(0)]] float3 fragColor;
-    [[vk::location(1)]] float2 fragTexCoord;
-    [[vk::location(2)]] float3 fragWorldNormal;
-    [[vk::location(3)]] float4 fragWorldTangent;
-    [[vk::location(4)]] float3 fragWorldPosition;
-    [[vk::location(7)]] nointerpolation uint fragDrawSlot;
-    [[vk::location(8)]] float2 fragTexCoord1;
-    [[vk::location(10)]] float3 fragObjectPosition;
-    [[vk::location(9)]] nointerpolation float3 fragModelScale;
+    [[vk::location(0)]] float3 fragColor : TEXCOORD0;
+    [[vk::location(1)]] float2 fragTexCoord : TEXCOORD1;
+    [[vk::location(2)]] float3 fragWorldNormal : TEXCOORD2;
+    [[vk::location(3)]] float4 fragWorldTangent : TEXCOORD3;
+    [[vk::location(4)]] float3 fragWorldPosition : TEXCOORD4;
+    [[vk::location(7)]] nointerpolation uint fragDrawSlot : TEXCOORD7;
+    [[vk::location(8)]] float2 fragTexCoord1 : TEXCOORD8;
+    [[vk::location(10)]] float3 fragObjectPosition : TEXCOORD10;
+    [[vk::location(9)]] nointerpolation float3 fragModelScale : TEXCOORD9;
     float4 fragCoord : SV_Position;
     bool frontFacing : SV_IsFrontFace;
 };

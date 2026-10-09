@@ -1,16 +1,18 @@
+#include "specialization.slang"
+
 // The toon prepass (toon_pass.h): an anime character's linear view depth, the depth texture the toon
 // pass's rim light and contact shadow read, and the eye mask. As Unity's depth-only pass, the face
 // is written a little farther than it is, so the nose and the hair on the face cast the contact
 // shadow and not the face onto itself.
-[[vk::constant_id(0)]] const bool kOutline = false;
+SPECIALIZATION_BOOL(0, kOutline);
 
 #include "toon_common.slang"
 
 struct FragmentInput
 {
-    [[vk::location(0)]] float3 fragWorldPosition;
-    [[vk::location(2)]] float2 fragTexCoord;
-    [[vk::location(6)]] nointerpolation uint fragToonIndex;
+    [[vk::location(0)]] float3 fragWorldPosition : TEXCOORD0;
+    [[vk::location(2)]] float2 fragTexCoord : TEXCOORD2;
+    [[vk::location(6)]] nointerpolation uint fragToonIndex : TEXCOORD6;
 };
 
 struct FragmentOutput

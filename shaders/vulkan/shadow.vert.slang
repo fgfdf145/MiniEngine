@@ -14,16 +14,16 @@ struct ShadowConstants
 
 struct VertexInput
 {
-    [[vk::location(0)]] float3 inPosition;
-    [[vk::location(2)]] float2 inTexCoord;
-    [[vk::location(5)]] float2 inTexCoord1;
+    [[vk::location(0)]] float3 inPosition : POSITION;
+    [[vk::location(2)]] float2 inTexCoord : TEXCOORD;
+    [[vk::location(5)]] float2 inTexCoord1 : SECOND_TEXCOORD;
 };
 
 struct VertexOutput
 {
     float4 position : SV_Position;
-    [[vk::location(0)]] float2 fragTexCoord;
-    [[vk::location(1)]] float2 fragTexCoord1;
+    [[vk::location(0)]] float2 fragTexCoord : TEXCOORD0;
+    [[vk::location(1)]] float2 fragTexCoord1 : TEXCOORD1;
 };
 
 [shader("vertex")]

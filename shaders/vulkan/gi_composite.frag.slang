@@ -14,7 +14,7 @@
 
 struct FragmentInput
 {
-    [[vk::location(0)]] float2 fragTexCoord;
+    [[vk::location(0)]] float2 fragTexCoord : TEXCOORD0;
 };
 
 struct FragmentOutput

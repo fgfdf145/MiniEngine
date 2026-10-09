@@ -22,7 +22,7 @@ struct ShadowConstants
 [[vk::binding(76, 0)]] SamplerState blendMaskTextureSampler;
 
 [shader("fragment")]
-void main([[vk::location(0)]] float2 fragTexCoord, [[vk::location(1)]] float2 fragTexCoord1)
+void main([[vk::location(0)]] float2 fragTexCoord : TEXCOORD0, [[vk::location(1)]] float2 fragTexCoord1 : TEXCOORD1)
 {
     // Layer B and the mask sample untransformed, as in the main passes.
     float3 uv = float3(shadowData.baseColorTransformRow0.w > 0.5 ? fragTexCoord1 : fragTexCoord, 1.0);

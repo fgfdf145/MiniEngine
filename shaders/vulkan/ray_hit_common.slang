@@ -4,6 +4,8 @@
 // textures (the ray texture table, VulkanRayScene::GetTextureSet). Only the ray query variants of a
 // shader have it. Include after scene_common.slang, ray_tracing_common.slang, material_common.slang and
 // material_uv.slang. The buffers are read through pointers, which need the device's shaderInt64.
+// DXIL has no pointers: the DXIL build (MINIENGINE_DXIL) reads them as raw buffers from the
+// shader-visible descriptor heap instead (see RayMeshGeometry).
 
 #ifndef RAY_HIT_COMMON_SLANG
 #define RAY_HIT_COMMON_SLANG
@@ -32,17 +34,21 @@
 #define RAY_TEXTURE_EMISSIVE 3u
 #define RAY_TEXTURE_NORMAL 4u
 
-// RayMeshGeometry in ray_scene.cpp: the mesh's vertex and index buffer addresses.
+// RayMeshGeometry in ray_scene.cpp: the mesh's vertex and index buffer addresses. In the DXIL build
+// .x is instead the descriptor heap index of a raw (ByteAddressBuffer) view of the buffer, which a
+// Direct3D 12 backend would write; .y is unused there.
 struct RayMeshGeometry
 {
     uint2 vertices;
     uint2 indices;
 };
+#ifndef MINIENGINE_DXIL
 // A device address from the two 32-bit halves RayMeshGeometry stores.
 uint64_t RayDeviceAddress(uint2 address)
 {
     return uint64_t(address.x) | (uint64_t(address.y) << 32);
 }
+#endif
 [[vk::binding(6, RAY_SCENE_SET)]] StructuredBuffer<RayMeshGeometry> rayMeshGeometries;
 // Each leaf triangle's index in its mesh's index list / 3, laid out as meshTriangles.
 [[vk::binding(7, RAY_SCENE_SET)]] StructuredBuffer<uint> raySourceTriangles;
@@ -64,31 +70,58 @@ float4 RayTextureSampleLevel(uint drawSlot, uint slotTexture, float2 uv, float l
 // The three corners of a hit triangle, as indices into its mesh's vertex buffer.
 struct RayHitCorners
 {
+#ifdef MINIENGINE_DXIL
+    uint vertexBuffer;
+#else
     float* vertices;
+#endif
     uint3 index;
 };
 
 RayHitCorners RayHitCornersOf(uint instance, uint triangle)
 {
     RayMeshGeometry geometry = rayMeshGeometries[rayInstances[instance].data.w >> RAY_INSTANCE_MESH_SHIFT];
+#ifdef MINIENGINE_DXIL
+    ByteAddressBuffer indices = ResourceDescriptorHeap[NonUniformResourceIndex(geometry.indices.x)];
+    uint source = raySourceTriangles[triangle] * 3u;
+    RayHitCorners corners;
+    corners.vertexBuffer = geometry.vertices.x;
+    corners.index = indices.Load3(source * 4u);
+#else
     uint* indices = (uint*)RayDeviceAddress(geometry.indices);
     uint source = raySourceTriangles[triangle] * 3u;
     RayHitCorners corners;
     corners.vertices = (float*)RayDeviceAddress(geometry.vertices);
     corners.index = uint3(indices[source], indices[source + 1u], indices[source + 2u]);
+#endif
     return corners;
 }
+
+#ifdef MINIENGINE_DXIL
+ByteAddressBuffer RayVertexBuffer(RayHitCorners corners)
+{
+    return ResourceDescriptorHeap[NonUniformResourceIndex(corners.vertexBuffer)];
+}
+#endif
 
 float2 RayCornerVec2(RayHitCorners corners, uint corner, uint offset)
 {
     uint base = corners.index[corner] * RAY_VERTEX_FLOATS + offset;
+#ifdef MINIENGINE_DXIL
+    return asfloat(RayVertexBuffer(corners).Load2(base * 4u));
+#else
     return float2(corners.vertices[base], corners.vertices[base + 1u]);
+#endif
 }
 
 float3 RayCornerVec3(RayHitCorners corners, uint corner, uint offset)
 {
     uint base = corners.index[corner] * RAY_VERTEX_FLOATS + offset;
+#ifdef MINIENGINE_DXIL
+    return asfloat(RayVertexBuffer(corners).Load3(base * 4u));
+#else
     return float3(corners.vertices[base], corners.vertices[base + 1u], corners.vertices[base + 2u]);
+#endif
 }
 
 // A vertex attribute at the hit: barycentrics are v1's and v2's weights, as RayHit has them.
@@ -235,7 +268,11 @@ float3 RayHitMappedNormal(RayHit hit, RayHitSurface surface, float footprintWidt
         return surface.normal;
     }
     tangent *= rsqrt(tangentLength2);
+#ifdef MINIENGINE_DXIL
+    float handedness = asfloat(RayVertexBuffer(corners).Load((corners.index[0] * RAY_VERTEX_FLOATS + RAY_VERTEX_TANGENT + 3u) * 4u)) < 0.0 ? -1.0 : 1.0;
+#else
     float handedness = corners.vertices[corners.index[0] * RAY_VERTEX_FLOATS + RAY_VERTEX_TANGENT + 3u] < 0.0 ? -1.0 : 1.0;
+#endif
     float3 bitangent = cross(surface.normal, tangent) * (handedness * faceSign);
     float3 mapped = DecodeNormalMap(RayTexture(surface, material, RAY_TEXTURE_NORMAL, 1u, footprintWidth, cosTheta));
     mapped.xy = RotateMaterialTangentXy(material, surface.drawSlot, 1u, mapped.xy) * material.surfaceFactors.z;

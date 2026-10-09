@@ -19,7 +19,7 @@ struct SkyConstants
 [[vk::binding(28, 0)]] Texture2D cloudTarget;
 
 [shader("fragment")]
-float4 main([[vk::location(0)]] float2 fragTexCoord, float4 fragCoord : SV_Position) : SV_Target0
+float4 main([[vk::location(0)]] float2 fragTexCoord : TEXCOORD0, float4 fragCoord : SV_Position) : SV_Target0
 {
     uint mode = EnvironmentMode();
     if (mode == ENVIRONMENT_NONE)

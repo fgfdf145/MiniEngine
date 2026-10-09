@@ -1,3 +1,5 @@
+#include "specialization.slang"
+
 // The toon pass (toon_pass.h): an anime character's cel shading as AnimateApp's "Anime Forward"
 // pass computes it, or under kOutline its outline's colour ("Anime Outline"). See
 // docs/design/2026-10-07-yuki-toon-shading-design.md for the shader this follows.
@@ -5,7 +7,7 @@
 // The shading is in the shader's own units, where the main light is about 1 (Unity's directional
 // light at intensity 1, its colour ToonLight.color) and the result is the albedo where lit; the
 // light's luminance then takes it into the scene's radiance, the pre-exposure into the HDR target.
-[[vk::constant_id(0)]] const bool kOutline = false;
+SPECIALIZATION_BOOL(0, kOutline);
 
 #include "shader_helpers.slang"
 #include "scene_common.slang"
@@ -20,15 +22,15 @@
 
 struct FragmentInput
 {
-    [[vk::location(0)]] float3 fragWorldPosition;
-    [[vk::location(1)]] float3 fragWorldNormal;
-    [[vk::location(2)]] float2 fragTexCoord;
-    [[vk::location(3)]] float2 fragTexCoord1;
-    [[vk::location(4)]] float3 fragSmoothNormal;
-    [[vk::location(5)]] float3 fragGeometryNormal;
-    [[vk::location(6)]] nointerpolation uint fragToonIndex;
-    [[vk::location(7)]] float4 fragCurrClip;
-    [[vk::location(8)]] float4 fragPrevClip;
+    [[vk::location(0)]] float3 fragWorldPosition : TEXCOORD0;
+    [[vk::location(1)]] float3 fragWorldNormal : TEXCOORD1;
+    [[vk::location(2)]] float2 fragTexCoord : TEXCOORD2;
+    [[vk::location(3)]] float2 fragTexCoord1 : TEXCOORD3;
+    [[vk::location(4)]] float3 fragSmoothNormal : TEXCOORD4;
+    [[vk::location(5)]] float3 fragGeometryNormal : TEXCOORD5;
+    [[vk::location(6)]] nointerpolation uint fragToonIndex : TEXCOORD6;
+    [[vk::location(7)]] float4 fragCurrClip : TEXCOORD7;
+    [[vk::location(8)]] float4 fragPrevClip : TEXCOORD8;
     float4 fragCoord : SV_Position;
     bool frontFacing : SV_IsFrontFace;
 };

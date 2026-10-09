@@ -19,7 +19,7 @@ float3 SrgbToLinear(float3 encoded)
 
 // The vertex shader's output block: colour at location 0, UV at location 1.
 [shader("fragment")]
-float4 main([[vk::location(0)]] float4 inColor, [[vk::location(1)]] float2 inUV) : SV_Target0
+float4 main([[vk::location(0)]] float4 inColor : COLOR0, [[vk::location(1)]] float2 inUV : TEXCOORD0) : SV_Target0
 {
     float4 color = float4(SrgbToLinear(inColor.rgb), inColor.a) * _Texture.Sample(_Sampler, inUV);
     float3 rec2020 = Rec709ToRec2020(max(color.rgb, float3(0.0)));

@@ -9,7 +9,7 @@
 
 struct FragmentInput
 {
-    [[vk::location(0)]] float2 fragTexCoord;
+    [[vk::location(0)]] float2 fragTexCoord : TEXCOORD0;
 };
 
 // As gbuffer.frag, plus the plane's depth.

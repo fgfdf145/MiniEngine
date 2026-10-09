@@ -61,36 +61,86 @@ uint BufferLength<T>(StructuredBuffer<T> buffer)
     return count;
 }
 
-// GLSL's inverse (GLSL.std.450 MatrixInverse).
+// GLSL's inverse (GLSL.std.450 MatrixInverse). Other targets (the DXIL build) take the adjugate:
+// the rows' pairwise cross products are the inverse's columns times the determinant.
 float3x3 Inverse(float3x3 m)
 {
-    return spirv_asm { result:$$float3x3 = OpExtInst glsl450 MatrixInverse $m };
+    __target_switch
+    {
+    case spirv:
+        return spirv_asm { result:$$float3x3 = OpExtInst glsl450 MatrixInverse $m };
+    default:
+        float3 c0 = cross(m[1], m[2]);
+        float3 c1 = cross(m[2], m[0]);
+        float3 c2 = cross(m[0], m[1]);
+        return transpose(float3x3(c0, c1, c2)) / dot(m[0], c0);
+    }
 }
 
-// GLSL's packing functions, as the same GLSL.std.450 instructions.
+// GLSL's packing functions, as the same GLSL.std.450 instructions; elsewhere written out as the GLSL
+// specification defines them (round to nearest, the first component in the low bits).
 uint PackUnorm4x8(float4 v)
 {
-    return spirv_asm { result:$$uint = OpExtInst glsl450 PackUnorm4x8 $v };
+    __target_switch
+    {
+    case spirv:
+        return spirv_asm { result:$$uint = OpExtInst glsl450 PackUnorm4x8 $v };
+    default:
+        uint4 u = uint4(round(saturate(v) * 255.0));
+        return u.x | (u.y << 8) | (u.z << 16) | (u.w << 24);
+    }
 }
 float4 UnpackUnorm4x8(uint p)
 {
-    return spirv_asm { result:$$float4 = OpExtInst glsl450 UnpackUnorm4x8 $p };
+    __target_switch
+    {
+    case spirv:
+        return spirv_asm { result:$$float4 = OpExtInst glsl450 UnpackUnorm4x8 $p };
+    default:
+        return float4((uint4(p) >> uint4(0u, 8u, 16u, 24u)) & 0xffu) / 255.0;
+    }
 }
 uint PackSnorm2x16(float2 v)
 {
-    return spirv_asm { result:$$uint = OpExtInst glsl450 PackSnorm2x16 $v };
+    __target_switch
+    {
+    case spirv:
+        return spirv_asm { result:$$uint = OpExtInst glsl450 PackSnorm2x16 $v };
+    default:
+        int2 i = int2(round(clamp(v, -1.0, 1.0) * 32767.0));
+        return (uint(i.x) & 0xffffu) | (uint(i.y) << 16);
+    }
 }
 float2 UnpackSnorm2x16(uint p)
 {
-    return spirv_asm { result:$$float2 = OpExtInst glsl450 UnpackSnorm2x16 $p };
+    __target_switch
+    {
+    case spirv:
+        return spirv_asm { result:$$float2 = OpExtInst glsl450 UnpackSnorm2x16 $p };
+    default:
+        int2 i = int2(p << 16, p) >> 16;
+        return clamp(float2(i) / 32767.0, -1.0, 1.0);
+    }
 }
 uint PackHalf2x16(float2 v)
 {
-    return spirv_asm { result:$$uint = OpExtInst glsl450 PackHalf2x16 $v };
+    __target_switch
+    {
+    case spirv:
+        return spirv_asm { result:$$uint = OpExtInst glsl450 PackHalf2x16 $v };
+    default:
+        return f32tof16(v.x) | (f32tof16(v.y) << 16);
+    }
 }
 float2 UnpackHalf2x16(uint p)
 {
-    return spirv_asm { result:$$float2 = OpExtInst glsl450 UnpackHalf2x16 $p };
+    __target_switch
+    {
+    case spirv:
+        return spirv_asm { result:$$float2 = OpExtInst glsl450 UnpackHalf2x16 $p };
+    default:
+        return float2(f16tof32(p), f16tof32(p >> 16));
+    }
 }
 
 // textureSize / imageSize.

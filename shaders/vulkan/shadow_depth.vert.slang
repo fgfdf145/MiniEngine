@@ -8,7 +8,7 @@ struct ShadowConstants
 [[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData;
 
 [shader("vertex")]
-float4 main([[vk::location(0)]] float3 inPosition) : SV_Position
+float4 main([[vk::location(0)]] float3 inPosition : POSITION) : SV_Position
 {
     return mul(shadowData.lightModelViewProjection, float4(inPosition, 1.0));
 }
