@@ -106,6 +106,8 @@ add_library(engine_editor
     ui/panels/scene_panel.h
     ui/panels/suspension_rigs_panel.cpp
     ui/panels/suspension_rigs_panel.h
+    ui/panels/flex_ring_tyre_panel.cpp
+    ui/panels/flex_ring_tyre_panel.h
     ui/panels/theme_panel.cpp
     ui/panels/theme_panel.h
     ui/panels/vehicle_panel.cpp
@@ -180,6 +182,7 @@ target_link_libraries(engine_editor
         engine_audio
         engine_logic
         engine_physics
+        engine_tyre
         engine_asset
         engine_platform
         engine_scene

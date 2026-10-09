@@ -1,0 +1,9 @@
+quantity,unit,value
+wheel_load_at_first_deflection,N,2870.9691
+vertical_secant,N/m,287096.91
+tire_long_stiffn,N/m,609060.75
+tire_lat_stiffn,N/m,229873.15
+tire_tors_stiffn,N m/rad,1563.2972
+Fz_decr_trans_cleat,%,30.741172
+Fz_decr_long_cleat (10 mm),%,100
+Fz_decr_6deg_cam,%,17.938305

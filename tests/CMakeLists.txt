@@ -2178,6 +2178,34 @@ add_test(
 
 set_target_properties(miniengine_capture_state_tests PROPERTIES FOLDER "Tests")
 
+# The flexible ring tyre (engine/tyre/flex_ring): numerics against closed forms, statics, the fit,
+# rolling, cleats and the C interface (the shared library, copied next to the test).
+add_executable(miniengine_flex_ring_tests
+    flex_ring_tests.cpp
+)
+miniengine_group_target_sources(miniengine_flex_ring_tests)
+
+target_link_libraries(miniengine_flex_ring_tests
+    PRIVATE
+        engine_tyre
+        miniengine_flex_ring_c
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_flex_ring_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_flex_ring_tests>
+            $<TARGET_FILE_DIR:miniengine_flex_ring_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.flex_ring
+    COMMAND miniengine_flex_ring_tests
+)
+set_target_properties(miniengine_flex_ring_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_tyre_tests
     tyre_tests.cpp
 )
@@ -2780,6 +2808,34 @@ add_test(
 )
 
 set_target_properties(miniengine_task_job_system_tests PROPERTIES FOLDER "Tests")
+
+# The editor's Flex Ring Tyre panel, headless (MINIENGINE_UI_SNAPSHOT_DIR: PNGs of its tabs).
+add_executable(miniengine_flex_ring_window_tests
+    flex_ring_window_tests.cpp
+    imgui_software_raster.h
+)
+miniengine_group_target_sources(miniengine_flex_ring_window_tests)
+
+target_link_libraries(miniengine_flex_ring_window_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_flex_ring_window_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_flex_ring_window_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_flex_ring_window_tests>
+            $<TARGET_FILE_DIR:miniengine_flex_ring_window_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.flex_ring_window
+    COMMAND miniengine_flex_ring_window_tests
+)
+set_target_properties(miniengine_flex_ring_window_tests PROPERTIES FOLDER "Tests")
 
 add_executable(miniengine_vehicle_tyres_panel_tests
     vehicle_tyres_panel_tests.cpp

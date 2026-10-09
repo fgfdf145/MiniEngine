@@ -1,0 +1,121 @@
+[MDI_HEADER]
+FILE_TYPE = 'tir'
+FILE_VERSION = 3.0
+FILE_FORMAT = 'ASCII'
+$ MiniEngine flexible ring tyre (FTire item names and units, docs/design/2026-10-09-flex-ring-tyre-design.md)
+[UNITS]
+LENGTH = 'mm'
+FORCE = 'N'
+ANGLE = 'deg'
+MASS = 'kg'
+TIME = 's'
+PRESSURE = 'bar'
+[FTIRE_DATA]
+$ ---- Size and geometry
+tire_name = 'R34 Semislicks (flexible ring)'    $ [] Name of the tyre
+tire_source = 'Assetto Corsa ks_nissan_skyline_r34 compound 1 Semislicks; structure literature-typical'    $ [] Where the data come from
+rolling_circumference = 0    $ [mm] 2 pi r_belt; 0: outer radius less the tread
+unloaded_radius = 326.6    $ [mm] Outer radius, inflated, at rest; 0: from the size
+tire_section_width = 245    $ [mm] Nominal section width
+tire_aspect_ratio = 29.63265306    $ [%] Section height over width
+rim_diameter = 20    $ [inch] Rim diameter
+rim_width = 8.5    $ [inch] Distance between the rim flanges
+belt_width = 0    $ [mm] Belt width; 0: 95 % of the tread width
+tread_width = 223.22    $ [mm] Tread width that can touch the road; 0: from the section
+belt_lat_curvature_radius = 1000    $ [mm] Lateral curvature radius of the outer belt layer
+rel_tread_shoulder_width = 0    $ [%] Shoulder width over the tread width, each side
+rel_min_tread_shoulder_height = 100    $ [%] Tread depth at the shoulder's end over the full depth
+speed_symbol = 'ZR'    $ [] Speed symbol (Y, ZR, ... or km/h)
+$ ---- Mass and pressure
+tire_mass = 10.5    $ [kg] Total tyre mass
+free_mass_percentage = 70    $ [%] Share of the mass on the belt nodes; 0: from f2
+inflation_pressure = 1.9305328    $ [bar] Pressure of the measurements
+$ ---- Structure: static
+first_deflection = 10    $ [mm] First static deflection on a flat road
+stat_wheel_load_at_first_defl = 2870.98    $ [N] Wheel load at the first deflection
+second_deflection = 20    $ [mm] Second static deflection; 0: none
+stat_wheel_load_at_second_defl = 5741.96    $ [N] Wheel load at the second deflection
+max_radial_progressivity = 85    $ [%] Bound of the radial element's slope increase
+$ ---- Structure: dynamic stiffening and hysteresis
+rad_dynamic_stiffening = 10    $ [%] Radial stiffness gain at high speed
+tang_dynamic_stiffening = 10    $ [%] Tangential stiffness gain at high speed
+lat_dynamic_stiffening = 10    $ [%] Lateral stiffness gain at high speed
+time_const_dynamic_stiffening = 0.003    $ [s] Maxwell elements' damper over spring
+radial_hysteretic_stiffening = 0    $ [%] Radial short-term stiffness increase on reversing
+radial_hysteresis_force = 0    $ [N] Radial hysteresis loop width
+tang_hysteretic_stiffening = 0    $ [%] Tangential short-term stiffness increase
+tang_hysteresis_force = 0    $ [N] Tangential hysteresis loop width
+lat_hysteretic_stiffening = 0    $ [%] Lateral short-term stiffness increase
+lat_hysteresis_force = 0    $ [N] Lateral hysteresis loop width
+belt_extension_due_to_vmax = 1.5    $ [%] Rolling circumference growth at the maximum speed
+belt_extension_damp = 2    $ [%] Damping of the belt extension, of critical
+$ ---- Structure: modal
+f1 = 72.8    $ [Hz] In-plane rotation mode, unloaded, fixed rim
+f2 = 84.8    $ [Hz] In-plane translation mode
+f3 = 0    $ [Hz] Out-of-plane translation mode; 0: use belt_torsion_stiffn
+f4 = 54.3    $ [Hz] Out-of-plane rotation (tilt) mode
+D1 = 0.034    $ [-] Modal damping of mode 1
+D2 = 0.028    $ [-] Modal damping of mode 2
+D4 = 0.044    $ [-] Modal damping of mode 4
+f5 = 108    $ [Hz] First in-plane bending mode; 0: use the bending stiffness
+belt_in_plane_bend_stiffn = 0    $ [N m^2] In-plane bending stiffness of the uninflated belt
+f6 = 112    $ [Hz] First out-of-plane bending mode; 0: use the bending stiffness
+belt_out_of_plane_bend_stiffn = 0    $ [N m^2] Out-of-plane bending stiffness, inflated
+$ ---- Belt torsion and lateral bending
+belt_torsion_stiffn = 100    $ [N/deg] Torsion stiffness to the rim per unit belt length (when f3 is 0)
+belt_twist_stiffn = 5    $ [N m^2/deg] Twist stiffness between adjacent segments
+belt_torsion_twist_damp = 5    $ [%] Torsion damping, of critical
+belt_lat_bend_stiffn = 40    $ [N m] Lateral bending stiffness per unit circumferential length
+belt_lat_bend_damp = 0.001    $ [s] Lateral bending damping over stiffness
+belt_lat_bend_stiffn_long_coupl = 1    $ [-] Smoothing of lateral bending between segments
+belt_torsion_lat_displ_coupl = 0    $ [deg/mm] Segment torsion per lateral displacement
+belt_torsion_oop_bend_coupl = 1    $ [-] Rotation of the bending axes with torsion
+$ ---- Tread
+tread_depth = 5    $ [mm] Groove depth, new
+tread_depth_actual = 0    $ [mm] Groove depth now (operating condition); 0: new
+tread_base_height = 3    $ [mm] Rubber between belt and groove bottoms
+stiffness_tread_rubber = 60    $ [Shore A] Tread rubber hardness
+Youngs_mod_tread_rubber = 0    $ [N/mm^2] Tread rubber modulus; 0: from Shore A
+stiffn_progr_tread_rubber = 0    $ [%] Radial tread stiffness increase at zero height
+tread_positive = 80    $ [%] Share of the footprint in contact
+tread_pattern_shape_factor_tang = 1    $ [-] Shear modulus factor, G = f E / 3
+lat_to_long_tread_stiffn_ratio = 1    $ [-] Lateral over longitudinal tread shear stiffness
+damping_tread_rubber = 0.0002    $ [s] Tread rubber damping over elasticity
+$ ---- Friction
+max_friction_velocity = 0.05    $ [m/s] Sliding speed of maximum friction
+sliding_velocity = 2    $ [m/s] Sliding speed of the sliding friction
+blocking_velocity = 20    $ [m/s] Sliding speed of the blocking friction
+low_ground_pressure = 0.01    $ [bar] Low ground pressure
+med_ground_pressure = 2    $ [bar] Medium ground pressure
+high_ground_pressure = 10    $ [bar] High ground pressure
+mu_adhesion_at_low_p = 1.42158    $ [-] Adhesion (at rest) friction, low pressure
+mu_max_at_low_p = 1.4784432    $ [-] Maximum friction, low pressure
+mu_sliding_at_low_p = 1.2225588    $ [-] Sliding friction, low pressure
+mu_blocking_at_low_p = 0.929144688    $ [-] Blocking friction, low pressure
+mu_adhesion_at_med_p = 1.29    $ [-] Adhesion friction, medium pressure
+mu_max_at_med_p = 1.3416    $ [-] Maximum friction, medium pressure
+mu_sliding_at_med_p = 1.1094    $ [-] Sliding friction, medium pressure
+mu_blocking_at_med_p = 0.843144    $ [-] Blocking friction, medium pressure
+mu_adhesion_at_high_p = 0.98298    $ [-] Adhesion friction, high pressure
+mu_max_at_high_p = 1.0222992    $ [-] Maximum friction, high pressure
+mu_sliding_at_high_p = 0.8453628    $ [-] Sliding friction, high pressure
+mu_blocking_at_high_p = 0.642475728    $ [-] Blocking friction, high pressure
+$ ---- Numerical settings
+number_belt_segments = 80    $ [-] Belt segments (nodes)
+number_blocks_per_belt_segm = 50    $ [-] Contact blocks per segment
+number_tread_strips = 10    $ [-] Lateral strips of blocks
+tread_discretization_type = 1    $ [-] 0 herring-bone, 1 pseudo-random strips
+number_belt_bend_shape_funct = 4    $ [-] Lateral bending shape functions
+maximum_time_step = 0.0005    $ [s] Largest internal step
+maximum_angle_increment = 1    $ [deg] Largest rim rotation per step
+BDF_parameter = 0.55    $ [-] 0 explicit, 0.5 trapezoidal, 1 implicit Euler
+Jacobian_update_cycle_length = 1    $ [-] Steps between Jacobian updates
+contact_processor_bound = 35    $ [%] Height above the lowest point checked for contact, of the diameter
+high_precision_tang_plane = 1    $ [-] 1: road plane from three heights, 0: belt normal
+[MINIENGINE]
+$ ---- MiniEngine settings
+newton_iterations = 1    $ [-] Newton iterations per step
+pressure_force_fraction = 0.5    $ [-] Share of p times area applied on the belt
+rim_flange_clearance = 0    $ [mm] Belt deflection reaching the rim flange; 0: 70 % of the section height
+rim_flange_stiffness_factor = 20    $ [-] Flange contact stiffness over radial stiffness
+gravity = 1    $ [-] 1: gravity on the belt nodes
