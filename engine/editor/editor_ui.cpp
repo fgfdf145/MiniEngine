@@ -15,6 +15,7 @@
 #include "ui/panels/input_monitor_panel.h"
 #include "ui/panels/scene_panel.h"
 #include "ui/panels/suspension_rigs_panel.h"
+#include "ui/panels/flex_ring_tyre_panel.h"
 #include "ui/panels/theme_panel.h"
 #include "ui/panels/vehicle_panel.h"
 #include "ui/panels/viewport_panel.h"
@@ -88,6 +89,7 @@ void EditorUiController::RegisterWindows()
     m_windows.Register<InputMonitorPanel>();
     m_windows.Register<VehiclePanel>();
     m_windows.Register<SuspensionRigsPanel>();
+    m_windows.Register<FlexRingTyrePanel>();
     m_windows.Register<DrivePathsPanel>();
     m_windows.Register<QuadRecordingPanel>();
     m_windows.Register<PhotoModePanel>();
