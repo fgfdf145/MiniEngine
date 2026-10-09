@@ -4894,7 +4894,9 @@ glm::mat3 VulkanRenderer::UpdateWhiteBalance(RenderFramePacket& frame)
 
 void VulkanRenderer::UpdateAutoExposure(VulkanSceneView& view, Camera& camera, const RenderFramePacket& frame, uint32_t frameSlot)
 {
-    const AutoExposureSettings& settings = camera.autoExposure;
+    // The scene's own stops (a white studio) on top of the camera's.
+    AutoExposureSettings settings = camera.autoExposure;
+    settings.compensationEv += frame.environment.exposureCompensationEv;
     // Whatever sets the EV below, the next frame adapts from it.
     struct RememberExposure
     {

@@ -1,0 +1,132 @@
+# A white photo studio for showing a car and judging rendering: an infinity cove (white walls curving
+# into a light grey floor, no edges), soft box area lights and the Skyline R34 in the middle, like a
+# maker's press photo. Overhead box (bonnet and roof highlight), key box front-right, fill front-left,
+# a panel above the back wall washing the backdrop white; the open top and front see a dim grey Ambient
+# light. The white walls' bounce comes from the DDGI probes (and ray traced reflections or path tracing,
+# where on). exposure_compensation_ev keeps the auto exposure from metering the white studio to grey.
+# Written by tools/render_scenes/make_vehicle_studio.py, which says how to change the cove and lights.
+# A good view: camera 4.2, 1.0, 4.6, yaw -132, pitch -3, fov 40 (front three quarters, the car's nose
+# to the left). Needs the cove at assets/models/studio_cove (tests/fixtures/render_scenes/models/studio_cove,
+# from scripts/install-render-scenes.*) and the car imported from Assetto Corsa at
+# assets/skyline_r34_vspec (not in git: the game's content), run from the repository's root.
+scene:
+  version: 3
+  selected_entity_uuid: 57d10c0e-1a2b-4c3d-8e4f-000000000102
+  selected_entity: 1
+entities:
+  - entity_uuid: 57d10c0e-1a2b-4c3d-8e4f-000000000101
+    tag: Studio cove
+    model:
+      display_name: studio_cove.gltf
+      source_path: assets/models/studio_cove/studio_cove.gltf
+      source_uuid: 57d10c0e-1a2b-4c3d-8e4f-000000000001
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 57d10c0e-1a2b-4c3d-8e4f-000000000102
+    tag: skyline_r34_vspec
+    model:
+      display_name: skyline_r34_vspec.gltf
+      source_path: assets/skyline_r34_vspec/skyline_r34_vspec.gltf
+      source_uuid: 35d02ab2-1e85-4424-bcb6-174ffc06be03
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 180, 0]
+      scale: [1, 1, 1]
+lights:
+  - entity_uuid: 57d10c0e-1a2b-4c3d-8e4f-000000000200
+    tag: Overhead box
+    light_type: area
+    color: [1, 1, 1]
+    intensity: 220000
+    range: 40
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [4, 7]
+    cast_shadows: true
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 5.2, 0]
+      rotation: [-90, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 57d10c0e-1a2b-4c3d-8e4f-000000000201
+    tag: Key box
+    light_type: area
+    color: [1, 1, 1]
+    intensity: 130000
+    range: 40
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [3, 2]
+    cast_shadows: true
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [6, 3, 5.5]
+      rotation: [-22.6938, 45.1842, 16.5229]
+      scale: [1, 1, 1]
+  - entity_uuid: 57d10c0e-1a2b-4c3d-8e4f-000000000202
+    tag: Fill box
+    light_type: area
+    color: [1, 1, 1]
+    intensity: 40000
+    range: 40
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [3, 2]
+    cast_shadows: true
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [-7, 2.6, 4]
+      rotation: [-25.4077, -57.6819, -21.8715]
+      scale: [1, 1, 1]
+  - entity_uuid: 57d10c0e-1a2b-4c3d-8e4f-000000000203
+    tag: Backdrop light
+    light_type: area
+    color: [1, 1, 1]
+    intensity: 1.5e+06
+    range: 40
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [20, 5]
+    cast_shadows: true
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 10.5, -7.5]
+      rotation: [-90, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 57d10c0e-1a2b-4c3d-8e4f-000000000204
+    tag: Studio ambient
+    light_type: ambient
+    color: [1, 1, 1]
+    intensity: 60
+    range: 40
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [1, 1]
+    cast_shadows: false
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 4, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: none
+  exposure_compensation_ev: 3.3
+editor:
+  gizmo:
+    operation: combined
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

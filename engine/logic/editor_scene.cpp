@@ -224,6 +224,8 @@ SceneEnvironment ReadEnvironment(const YAML::Node& node)
         return environment;
     }
     environment.mode = EnvironmentModeFromString(node["mode"].as<std::string>("none"));
+    // Absent in scenes saved before it existed: no change to the camera's compensation.
+    environment.exposureCompensationEv = node["exposure_compensation_ev"].as<float>(environment.exposureCompensationEv);
 
     // A missing sub-node keeps its defaults; subscripting one would throw.
     const YAML::Node atmosphereNode = node["atmosphere"];
@@ -327,6 +329,7 @@ void EmitEnvironment(YAML::Emitter& emitter, const SceneEnvironment& environment
 {
     emitter << YAML::Key << "environment" << YAML::Value << YAML::BeginMap;
     emitter << YAML::Key << "mode" << YAML::Value << EnvironmentModeToString(environment.mode);
+    emitter << YAML::Key << "exposure_compensation_ev" << YAML::Value << environment.exposureCompensationEv;
     emitter << YAML::Key << "atmosphere" << YAML::Value << YAML::BeginMap;
     const AtmosphereSettings& atmosphere = environment.atmosphere;
     EmitVec3(emitter, "ground_albedo", atmosphere.groundAlbedo);

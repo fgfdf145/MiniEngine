@@ -30,6 +30,7 @@ SceneEnvironment MakeEnvironment()
 {
     SceneEnvironment environment{};
     environment.mode = EnvironmentMode::Hdri;
+    environment.exposureCompensationEv = 3.25f;
     environment.atmosphere.groundAlbedo = glm::vec3(0.25f, 0.5f, 0.125f);
     environment.atmosphere.groundPlane = true;
     environment.atmosphere.seamlessHorizon = true;
@@ -258,6 +259,32 @@ void MissingTimeOfDayNodeLoadsAsOff()
     Require(loaded.environment.clouds == MakeEnvironment().clouds, "the clouds before it still load");
     Require(loaded.environment.timeOfDay == TimeOfDaySettings{}, "a scene without time_of_day must load with the defaults");
     Require(!loaded.environment.timeOfDay.enabled, "and the default is off");
+}
+
+// A scene saved before the scene's own exposure compensation existed: no key reads as no change.
+void MissingExposureCompensationLoadsAsZero()
+{
+    std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
+    world->SetEnvironment(MakeEnvironment());
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_scene_environment_noexposure.yaml";
+    SaveEditorSceneDataToFile(world->CaptureSceneData(), path.string());
+    std::string yaml;
+    {
+        std::ifstream in(path);
+        yaml.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    const size_t begin = yaml.find("\n  exposure_compensation_ev:");
+    const size_t end = begin == std::string::npos ? begin : yaml.find('\n', begin + 1);
+    Require(begin != std::string::npos && end != std::string::npos, "the saved scene has an exposure_compensation_ev key");
+    yaml.erase(begin, end - begin);
+    {
+        std::ofstream out(path, std::ios::trunc);
+        out << yaml;
+    }
+    const SerializedSceneData loaded = LoadEditorSceneDataFromFile(path.string());
+    std::filesystem::remove(path);
+    Require(loaded.environment.mode == EnvironmentMode::Hdri, "the rest of the environment still loads");
+    Require(loaded.environment.exposureCompensationEv == 0.0f, "a scene without exposure_compensation_ev adds no stops");
 }
 
 bool Near(float a, float b, float tolerance)
@@ -536,6 +563,7 @@ int main()
         MissingCloudsNodeLoadsAsOff();
         MissingSeamlessHorizonLoadsAsOff();
         MissingTimeOfDayNodeLoadsAsOff();
+        MissingExposureCompensationLoadsAsZero();
         SunFollowsNorthernArc();
         TimeOfDayClamps();
         SunDirectionInWorld();
