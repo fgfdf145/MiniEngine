@@ -101,6 +101,11 @@ struct PathFollowerSettings
     float lookaheadMax = 40.0f;
     // The fastest the steering moves, in full locks per second, as a driver's hands would.
     float steerRate = 2.5f;
+    // Pure pursuit steers as if the tyres did not slip, so a car that understeers runs wide of a bend
+    // it holds: the lateral error's integral (m s) times this adds steering (radians at the wheels),
+    // up to lateralIntegralLimitDegrees either way.
+    float lateralIntegralGain = 0.008f;
+    float lateralIntegralLimitDegrees = 6.0f;
     // The speed aimed for is the plan's this far ahead in time, so the controller reacts a little early.
     float speedPreviewSeconds = 0.3f;
     // Throttle per m/s under the target speed, and the integral's gain (per metre: m/s times seconds).
@@ -153,6 +158,8 @@ struct PathFollowerState
     int lap = 0;
     float steering = 0.0f;
     float speedIntegral = 0.0f;
+    // The lateral error's integral (m s), as the steering takes it.
+    float lateralIntegral = 0.0f;
     float stuckSeconds = 0.0f;
     PathFollowerStatus status = PathFollowerStatus::Running;
     std::string failure;

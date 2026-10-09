@@ -50,6 +50,7 @@ VehicleControls ComputePathFollowControls(
 
 - **投影**：车（后轴中心）投到折线上，从上一帧的位置附近找（窗口 ±50 m），闭合曲线跨过终点时圈数 +1。得到弧长 s、横向误差（右正）、航向误差。
 - **转向：pure pursuit**。预瞄距离 L = clamp(L0 + T·v, Lmin, Lmax)，默认 L0 = 3 m，T = 0.8 s，范围 4–40 m。目标点在 s + L，转到车身坐标里得到夹角 α，前轮转角 δ = atan(2·轴距·sin α / L)，除以最大转角得到 −1…1。再加转向速率限制（默认 2.5 个满舵/秒，像人手）。不经过转向辅助：测的是车，不是辅助。
+- **横向误差积分**：pure pursuit 按不打滑的几何转向，车一转向不足就会在弯里持续偏外。所以再加横向误差的积分（增益 0.008 rad/(m·s)，上限 6°），只在车速 > 2 m/s 时累积。增益 0.03 时会以约 8 s 周期振荡 ±0.8 m；0.004–0.012 都能收敛到约 2 cm。
 - **速度：PI**。目标速度取前方 v·0.3 s 处（提前一点反应），误差 e = v_target − v：
   - 油门 = clamp(kp·e + I, 0, 1)，积分只在不刹车时累积，有上下限；
   - 刹车 = clamp(−kb·(e + 死区), 0, 1)，刹车时积分清零；
@@ -58,14 +59,25 @@ VehicleControls ComputePathFollowControls(
 
 单元测试用运动学自行车模型（带一阶转向滞后和简单纵向模型）跑圆、双移线、闭合圈：误差收敛、速度跟得上、终点停住、偏离太远判失败。
 
+## 实测（R34，BeamNG 网格地图，Release）
+
+| 测试 | 结果 |
+|---|---|
+| 双移线（偏移 3.5 m），60 km/h | 完成，横向误差 RMS 0.23 m，最大 0.60 m，停在终点 |
+| 半径 30 m 圆，50 km/h，2 圈 | 完成，RMS 0.26 m（只用 pure pursuit 时 1.08 m），横向 0.69 g |
+| 同一条路径跑两次 | 逐帧完全相同 |
+| 重放圆的日志 | 1825 帧每一列都完全相同 |
+
+无头跑时用 `--viewport-size 320x180`：全分辨率下光追预热时每帧 1–1.7 s，一次要 6 分钟；小视口只要 24 s。
+
 ## 驾驶日志（CSV）与重放
 
 `engine/editor/services/vehicle_drive_log.*`：
 
 - 每帧一行：`time, dt, x, y, z, yaw_deg, speed_kmh, target_kmh, s_m, lap, lateral_error_m, heading_error_deg, throttle, brake, steering, hand_brake, gear_shifts, clutch_pedal, manual_gearbox, gear, rpm, long_g, lat_g, yaw_rate_dps, body_slip_deg, abs, tc, wheels_on_ground`。
-- 文件头注释行 `# start x y z yaw_deg` 记下起点位姿，`# path name` 记下轨迹名。
+- 文件头注释行 `# start x y z qw qx qy qz` 记下放车时的精确位姿（不是读回的位姿），`# step_seconds` 记物理步长，`# car`、`# path` 记车和轨迹名，文件末尾 `# summary` 是总结。
 - 加速度用两帧世界速度差分（位姿差 / dt），再投到车身前向和右向。
-- **重放**只读控制列（throttle…manual_gearbox）和 dt：每帧用记录的 dt 推进物理，所以和录制时的物理步完全一样；控制是转向辅助之后的值，重放时不再过辅助。重放开始时把车放回日志里的起点。
+- **重放**只读控制列（throttle…manual_gearbox）、dt 和 steps（这一帧的物理步数，用 `PhysicsWorld::RunSteps` 原样执行，并带上录制时累加器剩下的时间，这样读回的插值位姿也一样）：每帧用记录的 dt 推进物理，所以和录制时的物理步完全一样；控制是转向辅助之后的值，重放时不再过辅助。重放开始时把车放回日志里的起点。
 - 录制从按下按钮时 Reset 开始（车回起点），保证重放的初始状态一致。
 
 ## 接入驾驶服务

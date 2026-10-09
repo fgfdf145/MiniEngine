@@ -535,6 +535,8 @@ void Reset(RendererSharedState& state)
         if (session->replay.has_value())
         {
             session->replay->frame = 0;
+            session->replay->clock = 0.0f;
+            session->replay->carry = 0.0f;
         }
         session->runStats = DriveRunStats{};
         session->runStats.followedPath = session->pathFollow.has_value();
@@ -627,9 +629,11 @@ void BeginRun(VehicleDriveSession& session)
     session.lastVelocity.reset();
 }
 
+// The pose the drive started from, exactly as the car was put there (not the pose read back, which
+// the body's frame rounds): a replay put there starts as the drive did.
 DriveLogHeader LogHeader(const VehicleDriveSession& session)
 {
-    const PhysicsPose pose = session.physics->GetVehiclePose(session.vehicle);
+    const PhysicsPose& pose = session.startPose;
     DriveLogHeader header;
     header.startPosition = pose.position;
     header.startRotation = pose.rotation;
@@ -1187,7 +1191,16 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
         {
             if (!replayHolds)
             {
-                steps = session->physics->RunSteps(replaySteps);
+                // The carry as the recording's Update left it: its frame's time added, its steps' taken.
+                float& carry = session->replay->carry;
+                const float step = session->physics->GetStepSeconds();
+                carry += deltaSeconds;
+                for (int taken = 0; taken < replaySteps; ++taken)
+                {
+                    carry -= step;
+                }
+                carry = std::clamp(carry, 0.0f, step);
+                steps = session->physics->RunSteps(replaySteps, carry);
                 ++session->replay->frame;
             }
         }

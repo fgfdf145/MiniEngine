@@ -37,6 +37,8 @@ struct BicycleCar
     float wheelAngle = 0.0f;
     float wheelbase = 2.6f;
     float maxSteerDegrees = 35.0f;
+    // Above 0 the car understeers: its path curves as tan(wheel angle) / (wheelbase + this * speed^2).
+    float understeerGradient = 0.0f;
 
     glm::vec3 Forward() const
     {
@@ -65,7 +67,7 @@ struct BicycleCar
         const float accel = controls.throttle * 4.0f - controls.brake * 9.0f * (speed > 0.0f ? 1.0f : 0.0f) - 0.0004f * speed * speed;
         speed = std::max(speed + accel * dt, 0.0f);
         // Steering right turns the heading down (+X is the car's left).
-        heading -= speed / wheelbase * std::tan(wheelAngle) * dt;
+        heading -= speed / (wheelbase + understeerGradient * speed * speed) * std::tan(wheelAngle) * dt;
         rearAxle += glm::dvec3(Forward()) * static_cast<double>(speed * dt);
     }
 };
@@ -87,6 +89,8 @@ struct RunResult
     float maxLateralError = 0.0f;
     float maxLateralErrorAfterSettling = 0.0f;
     float topSpeed = 0.0f;
+    // On the last lap of a closed path.
+    float lastLapMaxLateralError = 0.0f;
     glm::dvec3 end{0.0};
 };
 
@@ -105,6 +109,10 @@ RunResult Run(const DrivePathTrack& track, BicycleCar car, float maxSeconds, con
             result.maxLateralErrorAfterSettling = std::max(result.maxLateralErrorAfterSettling, std::abs(output.lateralError));
         }
         result.topSpeed = std::max(result.topSpeed, car.speed);
+        if (track.closed && output.lap == track.laps - 1)
+        {
+            result.lastLapMaxLateralError = std::max(result.lastLapMaxLateralError, std::abs(output.lateralError));
+        }
     }
     result.end = car.Origin();
     return result;
@@ -195,6 +203,23 @@ void FollowsACircleForItsLaps()
     Require(result.topSpeed > 40.0f / 3.6f * 0.95f && result.topSpeed < 40.0f / 3.6f * 1.05f, "top speed " + std::to_string(result.topSpeed * 3.6f) + " km/h");
     // Two laps of 188 m at 11.1 m/s, plus getting up to speed.
     Require(result.seconds > 30.0f && result.seconds < 45.0f, "two laps took " + std::to_string(result.seconds) + " s");
+}
+
+void HoldsACircleWhenTheCarUndersteers()
+{
+    // At 50 km/h on a 30 m radius this car needs about half as much lock again as the geometry says.
+    const DrivePathTrack track = BuildDrivePathTrack(Circle(30.0, 12, 50.0f, 3));
+    BicycleCar car = CarAtStart(track);
+    car.understeerGradient = 0.007f;
+    const RunResult result = Run(track, car, 120.0f);
+    Require(result.state.status == PathFollowerStatus::Finished, "the understeering circle ends " + std::string(PathFollowerStatusName(result.state.status)));
+    PathFollowerSettings pursuitOnly;
+    pursuitOnly.lateralIntegralGain = 0.0f;
+    const RunResult plain = Run(track, car, 120.0f, pursuitOnly);
+    std::cout << "understeering circle: off by " << result.maxLateralErrorAfterSettling << " m at most, " << result.lastLapMaxLateralError
+              << " m on the last lap (" << plain.lastLapMaxLateralError << " m with pure pursuit alone)\n";
+    Require(plain.maxLateralErrorAfterSettling > 0.5f, "the test car does not understeer enough to matter");
+    Require(result.lastLapMaxLateralError < 0.3f, "the integral leaves it " + std::to_string(result.lastLapMaxLateralError) + " m off on the last lap");
 }
 
 void FollowsALaneChangeAndStops()
@@ -307,6 +332,7 @@ int main()
         StraightPathBrakesToItsEnd();
         SpeedCapsAndScale();
         FollowsACircleForItsLaps();
+        HoldsACircleWhenTheCarUndersteers();
         FollowsALaneChangeAndStops();
         FailsWhenFarOff();
         StartJustBehindAClosedStartCountsNoLap();

@@ -226,6 +226,9 @@ struct VehicleReplayRun
     size_t frame = 0;
     // In real time: the time gone that the next frame has not yet been played for.
     float clock = 0.0f;
+    // The time the recording's physics carried over after the last frame played (its frames' times less
+    // its steps'), so the poses read back fall between steps where the recording's did.
+    float carry = 0.0f;
 };
 
 // A model being driven as a car: the physics world built for it, and what to put back when it stops.

@@ -508,7 +508,15 @@ VehicleControls ComputePathFollowControls(
     const float ahead = glm::dot(toTarget, input.forward);
     const float reach = std::max(std::sqrt(across * across + ahead * ahead), 0.1f);
     const float alpha = std::atan2(across, ahead);
-    const float wheelAngle = std::atan(2.0f * input.wheelbase * std::sin(alpha) / reach);
+    // And the lateral error's integral against understeer (oversteer), held while the car crawls.
+    if (std::abs(speed) > 2.0f && state.status == PathFollowerStatus::Running)
+    {
+        const float limit = glm::radians(settings.lateralIntegralLimitDegrees) / std::max(settings.lateralIntegralGain, 1.0e-6f);
+        state.lateralIntegral = std::clamp(state.lateralIntegral + projection.lateralError * deltaSeconds, -limit, limit);
+    }
+    // To the right of the path, the car steers left.
+    const float wheelAngle =
+        std::atan(2.0f * input.wheelbase * std::sin(alpha) / reach) - settings.lateralIntegralGain * state.lateralIntegral;
     const float wantedSteering = std::clamp(glm::degrees(wheelAngle) / std::max(input.maxSteerDegrees, 1.0f), -1.0f, 1.0f);
     const float maxSteerChange = settings.steerRate * std::max(deltaSeconds, 0.0f);
     state.steering += std::clamp(wantedSteering - state.steering, -maxSteerChange, maxSteerChange);

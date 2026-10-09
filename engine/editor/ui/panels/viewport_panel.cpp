@@ -1340,10 +1340,12 @@ void ViewportPanel::OnGui(EditorContext& context)
             *viewportRect.drawList, viewportRect.origin, viewportRect.size, matrices.projection * matrices.view, state.vehicleRigStatus.linkage, UiScale());
     }
     // The drive paths (and where a car following one steers for); a click may select or place a point.
+    // (Absent where the window manager has no Drive Paths panel, as in a panel's own test.)
+    DrivePathsPanel* drivePaths = context.windows.Find<DrivePathsPanel>();
     bool drivePathClick = false;
-    if (viewportUi && viewportRect.drawList != nullptr)
+    if (viewportUi && viewportRect.drawList != nullptr && drivePaths != nullptr)
     {
-        drivePathClick = context.windows.Get<DrivePathsPanel>().DrawViewportOverlay(
+        drivePathClick = drivePaths->DrawViewportOverlay(
             context, *viewportRect.drawList, viewportRect.origin, viewportRect.size, viewportRect.hovered, UiScale());
     }
     DrawVideoRecordingIndicator(viewportRect, UiScale(), state.videoRecording);
@@ -1383,8 +1385,8 @@ void ViewportPanel::OnGui(EditorContext& context)
     if (state.commands.gizmos)
     {
         if (!DrawDriverWristGizmo(scene, state, matrices, viewportRect, UiScale(), result) &&
-            (viewportRect.drawList == nullptr ||
-             !context.windows.Get<DrivePathsPanel>().DrawPointGizmo(context, *viewportRect.drawList, viewportRect.origin, viewportRect.size, UiScale())))
+            (viewportRect.drawList == nullptr || drivePaths == nullptr ||
+             !drivePaths->DrawPointGizmo(context, *viewportRect.drawList, viewportRect.origin, viewportRect.size, UiScale())))
         {
             DrawGizmoOverlay(scene, matrices, viewportRect, m_gizmoDragSnapState, UiScale());
         }
