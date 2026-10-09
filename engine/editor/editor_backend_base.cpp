@@ -100,6 +100,37 @@ RenderBackendType EditorRenderBackendBase::GetBackendType() const
     return m_backendType;
 }
 
+bool EditorRenderBackendBase::AllowQuit()
+{
+    if (m_quitConfirmed)
+    {
+        return true;
+    }
+    UpdateSceneUnsaved(true);
+    if (!m_sceneUnsaved)
+    {
+        return true;
+    }
+    State().editorUi.AskAboutUnsavedChangesBeforeQuit();
+    return false;
+}
+
+void EditorRenderBackendBase::UpdateSceneUnsaved(bool now)
+{
+    const auto time = std::chrono::steady_clock::now();
+    if (!now && time < m_nextUnsavedCheck)
+    {
+        return;
+    }
+    m_nextUnsavedCheck = time + std::chrono::milliseconds(500);
+    const bool unsaved = SceneIoService::HasUnsavedChanges(State());
+    if (unsaved != m_sceneUnsaved)
+    {
+        LOG_INFO("{}", unsaved ? "The scene has unsaved changes" : "The scene is as saved");
+    }
+    m_sceneUnsaved = unsaved;
+}
+
 void EditorRenderBackendBase::HandleEvent(const SDL_Event& event)
 {
     State().input.HandleEvent(event);
@@ -312,6 +343,17 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     if (actions.previewAudioPath.has_value())
     {
         PreviewAudio(*actions.previewAudioPath);
+    }
+    if (actions.selectedSceneSavePath.has_value() || actions.selectedSceneLoadPath.has_value() || actions.newScene || actions.clearScene)
+    {
+        m_nextUnsavedCheck = {};
+    }
+    if (actions.quitConfirmed)
+    {
+        m_quitConfirmed = true;
+        SDL_Event quit{};
+        quit.type = SDL_EVENT_QUIT;
+        SDL_PushEvent(&quit);
     }
 
     State().vehicleDrive.camera = uiFrame.vehicleCamera;
@@ -1438,6 +1480,8 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     State().editorUi.SetForcedViewportExtent(State().fixedViewportExtent);
     State().editorUi.SetAudioStatus(State().audioStatus);
     State().editorUi.SetProcessStatus(State().processStatus);
+    UpdateSceneUnsaved(false);
+    State().editorUi.SetSceneUnsaved(m_sceneUnsaved);
     EditorUiFrameResult result = State().editorUi.Draw(
         State().camera,
         State().viewportMatrices,

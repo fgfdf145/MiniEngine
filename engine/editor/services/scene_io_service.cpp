@@ -2,6 +2,8 @@
 
 #include "entity_edit_service.h"
 #include "scene_renderables.h"
+#include "vehicle_drive_service.h"
+#include "vehicle_rig_service.h"
 
 #include <engine/editor/renderer_shared_state.h>
 
@@ -181,6 +183,7 @@ bool PumpAsyncSceneLoad(RendererSharedState& state)
         state.GetEditorWorld().ApplySceneData(sceneData);
         RebuildSceneRenderables(state);
         state.GetEditorWorld().SetSceneFilePath(sceneLoad.path);
+        MarkSceneSaved(state);
         state.lastSceneIoError.clear();
         renderablesDirty = true;
         LOG_INFO("Loaded scene successfully: {}", sceneLoad.path);
@@ -214,6 +217,7 @@ void SaveScene(RendererSharedState& state, const std::string& path)
 {
     ExportSceneSnapshot(state, path);
     state.GetEditorWorld().SetSceneFilePath(path);
+    MarkSceneSaved(state);
     state.lastSceneIoError.clear();
     LOG_INFO("Saved scene successfully: {}", path);
 }
@@ -226,6 +230,7 @@ void NewScene(RendererSharedState& state)
     state.GetEditorWorld().SetSceneFilePath("");
     RebuildSceneRenderables(state);
     state.lastSceneIoError.clear();
+    MarkSceneSaved(state);
     LOG_INFO("Started a new scene");
 }
 
@@ -236,6 +241,59 @@ void ClearScene(RendererSharedState& state)
     state.GetEditorWorld().Clear();
     RebuildSceneRenderables(state);
     LOG_INFO("Cleared the scene");
+}
+
+std::string SceneFingerprint(RendererSharedState& state)
+{
+    SerializedSceneData sceneData;
+    VehicleDriveService::RunWithVehicleAtStart(state, [&]
+                                               {
+                                                   VehicleRigService::RunWithRigAtStart(state, [&]
+                                                                                        {
+                                                                                            sceneData = state.GetEditorWorld().CaptureSceneData();
+                                                                                        });
+                                               });
+    sceneData.selectedEntityUuid.clear();
+    sceneData.selectedEntityIndex = 0;
+    sceneData.gizmo = GizmoSettings{};
+    if (sceneData.environment.timeOfDay.enabled && sceneData.environment.timeOfDay.timeScale > 0.0f)
+    {
+        sceneData.environment.timeOfDay.hours = 0.0f;
+    }
+    const IEditorWorld& world = state.GetEditorWorld();
+    const ViewportDragPreviewState& preview = state.viewportDragPreview;
+    const std::string previewUuid = preview.active && world.IsValidEntity(preview.entity) ? world.GetEntityUuid(preview.entity) : std::string{};
+    std::erase_if(sceneData.entities, [&](const SerializedEntityData& entity)
+                  {
+                      return !previewUuid.empty() && entity.entityUuid == previewUuid;
+                  });
+    for (SerializedEntityData& entity : sceneData.entities)
+    {
+        if (!entity.driverVehicleUuid.empty())
+        {
+            entity.transform = TransformComponent{};
+        }
+    }
+    return SerializeEditorSceneData(sceneData);
+}
+
+void MarkSceneSaved(RendererSharedState& state)
+{
+    state.savedSceneFingerprint = SceneFingerprint(state);
+}
+
+bool HasUnsavedChanges(RendererSharedState& state)
+{
+    if (state.asyncSceneLoad.IsActive())
+    {
+        return false;
+    }
+    if (!state.savedSceneFingerprint.has_value())
+    {
+        MarkSceneSaved(state);
+        return false;
+    }
+    return SceneFingerprint(state) != *state.savedSceneFingerprint;
 }
 }
 }

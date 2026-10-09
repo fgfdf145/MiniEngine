@@ -138,6 +138,11 @@ struct EditorUiActions
     bool takePhoto = false;
     bool newScene = false;        // confirmed by the user
     bool clearScene = false;      // confirmed by the user
+    // The user chose what becomes of the scene's unsaved changes (UnsavedChangesModal): a scene opened
+    // or started this frame goes ahead without asking again.
+    bool discardUnsavedChanges = false;
+    // The user chose to close the editor after being asked about unsaved changes: it closes.
+    bool quitConfirmed = false;
     bool clearSelectedBaseColorTexture = false;
     // Play mode (VehicleDriveService): drive the selected model as a car, and stop, pause, step,
     // reset or recover it.
@@ -373,6 +378,13 @@ class EditorUiController
     {
         m_state.processStatus = std::move(status);
     }
+    // Whether the scene differs from its file (SceneIoService::HasUnsavedChanges). Set before Draw.
+    void SetSceneUnsaved(bool unsaved)
+    {
+        m_state.sceneUnsaved = unsaved;
+    }
+    // The window is to close with unsaved changes: asks about them first (UnsavedChangesModal).
+    void AskAboutUnsavedChangesBeforeQuit();
 
   private:
     // Every window the editor has, in drawing order; the panels' order is the Window menu's.

@@ -179,4 +179,6 @@ class IEditorWorld : public ISceneWorld
 std::unique_ptr<IEditorWorld> CreateEditorWorld();
 SerializedSceneData LoadEditorSceneDataFromFile(const std::string& path);
 void SaveEditorSceneDataToFile(const SerializedSceneData& sceneData, const std::string& path);
+// The scene file's text for the scene data, as SaveEditorSceneDataToFile writes it.
+std::string SerializeEditorSceneData(const SerializedSceneData& sceneData);
 }

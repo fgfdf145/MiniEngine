@@ -162,6 +162,9 @@ struct RendererSharedState
     AsyncAssetImport asyncImport;
     std::string lastModelLoadError;
     std::string lastSceneIoError;
+    // The scene as last loaded, saved or started new (SceneIoService::SceneFingerprint), which the
+    // scene now is compared with for unsaved changes; unset until the first comparison takes it.
+    std::optional<std::string> savedSceneFingerprint;
     // Progress of a scene change waiting on background texture preparation, such as
     // "Preparing textures: 12 of 72"; empty when nothing is pending. Written by the render backend.
     std::string sceneUploadStatus;

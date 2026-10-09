@@ -83,6 +83,8 @@ add_library(engine_editor
     ui/modals/kn5_import_modal.h
     ui/modals/scene_reset_modal.cpp
     ui/modals/scene_reset_modal.h
+    ui/modals/unsaved_changes_modal.cpp
+    ui/modals/unsaved_changes_modal.h
     ui/panels/asset_browser_panel.cpp
     ui/panels/asset_browser_panel.h
     ui/panels/camera_panel.cpp

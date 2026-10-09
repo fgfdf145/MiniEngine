@@ -831,6 +831,18 @@ int EditorApplication::Run()
             window.SetLiveResizeHandler({});
         }
     } liveResizeHandlerReset{window};
+    window.SetQuitGuard([&renderer]()
+                        {
+                            return renderer->AllowQuit();
+                        });
+    struct QuitGuardReset
+    {
+        Window& window;
+        ~QuitGuardReset()
+        {
+            window.SetQuitGuard({});
+        }
+    } quitGuardReset{window};
 
     while (!window.ShouldClose())
     {

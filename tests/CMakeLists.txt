@@ -1529,6 +1529,31 @@ add_test(
 )
 set_target_properties(miniengine_material_live_edit_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_scene_unsaved_tests
+    scene_unsaved_tests.cpp
+)
+miniengine_group_target_sources(miniengine_scene_unsaved_tests)
+
+target_link_libraries(miniengine_scene_unsaved_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_scene_unsaved_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_scene_unsaved_tests>
+            $<TARGET_FILE_DIR:miniengine_scene_unsaved_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.scene_unsaved
+    COMMAND miniengine_scene_unsaved_tests
+)
+set_target_properties(miniengine_scene_unsaved_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_command_registry_tests
     command_registry_tests.cpp
 )

@@ -5,6 +5,7 @@
 #include "ui/modals/import_conflict_modal.h"
 #include "ui/modals/kn5_import_modal.h"
 #include "ui/modals/scene_reset_modal.h"
+#include "ui/modals/unsaved_changes_modal.h"
 #include "ui/panels/asset_browser_panel.h"
 #include "ui/panels/camera_panel.h"
 #include "ui/panels/drive_paths_panel.h"
@@ -97,6 +98,7 @@ void EditorUiController::RegisterWindows()
     m_windows.Register<KeyboardShortcutsWindow>();
     // Modals, drawn last so they are over everything else.
     m_windows.Register<SceneResetModal>();
+    m_windows.Register<UnsavedChangesModal>();
     m_windows.Register<Kn5ImportModal>();
     m_windows.Register<ImportConflictModal>();
     m_windows.Register<AboutModal>();
@@ -116,7 +118,15 @@ void EditorUiController::RegisterCommands()
     EditorSceneCommands scene;
     scene.newScene = [this]
     {
-        m_windows.Get<SceneResetModal>().Ask(SceneResetModal::Reset::New);
+        // With unsaved changes the question is what becomes of them; without, whether to start again.
+        if (m_state.sceneUnsaved)
+        {
+            m_windows.Get<UnsavedChangesModal>().Ask(UnsavedChangesModal::Then::NewScene);
+        }
+        else
+        {
+            m_windows.Get<SceneResetModal>().Ask(SceneResetModal::Reset::New);
+        }
     };
     scene.clearScene = [this]
     {
@@ -334,6 +344,13 @@ EditorUiFrameResult EditorUiController::Draw(
 
     // Every window, panel and modal. Over the fullscreen viewport only those that draw there.
     m_windows.TickAndDraw(context, fullscreen);
+    // Another scene asked for (File > Open, the Scene panel, the asset browser) while this one has
+    // unsaved changes: asked about them first.
+    if (result.actions.selectedSceneLoadPath.has_value() && m_state.sceneUnsaved && !result.actions.discardUnsavedChanges)
+    {
+        m_windows.Get<UnsavedChangesModal>().Ask(UnsavedChangesModal::Then::OpenScene, *result.actions.selectedSceneLoadPath);
+        result.actions.selectedSceneLoadPath.reset();
+    }
 
     const bool windowToggled = previousOpen != m_windows.CapturePanelOpenState() || previousAutoLayout != m_state.commands.autoLayout;
     // The Theme panel sets engineSettingsChanged itself when the palette changes.
@@ -463,6 +480,11 @@ void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& bef
             m_commandActions.pauseVehicleDrive = m_state.commands.playState == PlayState::Paused;
         }
     }
+}
+
+void EditorUiController::AskAboutUnsavedChangesBeforeQuit()
+{
+    m_windows.Get<UnsavedChangesModal>().Ask(UnsavedChangesModal::Then::Quit);
 }
 
 void EditorUiController::HandleFileCommands(EditorContext& context)
