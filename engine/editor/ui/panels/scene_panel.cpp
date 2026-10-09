@@ -3,7 +3,7 @@
 #include <engine/editor/editor_ui.h>
 #include <engine/editor/ui/editor_ui_internal.h>
 #include <engine/editor/ui/framework/editor_window_manager.h>
-#include <engine/editor/ui/windows/model_processor_window.h>
+#include <engine/editor/ui/windows/material_editor_window.h>
 #include <engine/editor/services/model_animation_service.h>
 
 #include <engine/asset/asset_registry.h>
@@ -941,9 +941,9 @@ void ScenePanel::OnGui(EditorContext& context)
                 ImGui::BeginDisabled(model.sourcePath.empty());
                 if (ImGui::Button("Edit Materials"))
                 {
-                    context.windows.Get<ModelProcessorWindow>().OpenModel(context, model.sourcePath, true);
+                    context.windows.Get<MaterialEditorWindow>().OpenModel(context, model.sourcePath, true);
                 }
-                ImGui::SetItemTooltip("Opens the model's materials in Model Preview, its paint selected; edits show here as they are made.");
+                ImGui::SetItemTooltip("Opens the model's materials in the Material Editor, its paint selected; edits show here as they are made.");
                 ImGui::EndDisabled();
 
                 if (metadata.modelLightCount > 0)

@@ -334,7 +334,8 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     }
     State().input.SetViewportInteractionRegion(
         uiFrame.viewportInteractionRect,
-        uiFrame.viewportAllowsMouseInteraction);
+        uiFrame.viewportAllowsMouseInteraction,
+        uiFrame.viewportMouseOver);
 
     const EditorUiActions& actions = uiFrame.actions;
     std::string& modelError = State().lastModelLoadError;

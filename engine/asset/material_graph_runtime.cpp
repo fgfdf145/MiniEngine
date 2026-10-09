@@ -308,18 +308,20 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
     const std::string outputNodeName =
         materialName.empty() ? std::string("Material Output") : materialName + " Output";
 
+    // Nodes are kept by id: AddNode's pointer is into graph.nodes, which the next AddNode may move.
     MaterialShaderNode* outputNode = AddNode(
         graph,
         MaterialShaderNodeType::Output,
         outputNodeName.c_str(),
         layout.outputNode);
     outputNode->pbr = pbr;
+    const uint32_t outputNodeId = outputNode->id;
 
-    MaterialShaderNode* primarySurfaceNode = AddNode(
+    const uint32_t primarySurfaceNodeId = AddNode(
         graph,
         MaterialShaderNodeType::Surface,
         "Primary Surface",
-        layout.primarySurfaceNode);
+        layout.primarySurfaceNode)->id;
 
     auto addTextureChain = [&](const std::string& path,
                                const char* label,
@@ -356,7 +358,7 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
             textureLabels[index],
             primaryTextures[index].first,
             OffsetPosition(layout.primarySurfaceNode, -320.0f, static_cast<float>(index) * 92.0f - 60.0f),
-            primarySurfaceNode->id);
+            primarySurfaceNodeId);
     }
 
     const bool hasSecondaryLayer =
@@ -371,25 +373,26 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
 
     if (!hasSecondaryLayer)
     {
-        AddLink(graph, primarySurfaceNode->id, kSurfaceOutputSlot, outputNode->id, "surface");
+        AddLink(graph, primarySurfaceNodeId, kSurfaceOutputSlot, outputNodeId, "surface");
         return graph;
     }
 
-    MaterialShaderNode* secondarySurfaceNode = AddNode(
+    const uint32_t secondarySurfaceNodeId = AddNode(
         graph,
         MaterialShaderNodeType::Surface,
         "Secondary Surface",
-        layout.secondarySurfaceNode);
+        layout.secondarySurfaceNode)->id;
     MaterialShaderNode* blendNode = AddNode(
         graph,
         MaterialShaderNodeType::Blend,
         "Blend",
         layout.blendNode);
     blendNode->scalarValue = blendGraph.blendFactor;
+    const uint32_t blendNodeId = blendNode->id;
 
-    AddLink(graph, primarySurfaceNode->id, kSurfaceOutputSlot, blendNode->id, "surface_a");
-    AddLink(graph, secondarySurfaceNode->id, kSurfaceOutputSlot, blendNode->id, "surface_b");
-    AddLink(graph, blendNode->id, kSurfaceOutputSlot, outputNode->id, "surface");
+    AddLink(graph, primarySurfaceNodeId, kSurfaceOutputSlot, blendNodeId, "surface_a");
+    AddLink(graph, secondarySurfaceNodeId, kSurfaceOutputSlot, blendNodeId, "surface_b");
+    AddLink(graph, blendNodeId, kSurfaceOutputSlot, outputNodeId, "surface");
 
     const std::array<std::pair<const char*, std::string>, 6> secondaryTextures = {{{"base_color", blendGraph.secondaryBaseColorTexturePath},
                                                                                    {"normal", blendGraph.secondaryNormalTexturePath},
@@ -404,7 +407,7 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
             textureLabels[index],
             secondaryTextures[index].first,
             OffsetPosition(layout.secondarySurfaceNode, -320.0f, static_cast<float>(index) * 92.0f - 60.0f),
-            secondarySurfaceNode->id);
+            secondarySurfaceNodeId);
     }
 
     if (!blendGraph.blendMaskTexturePath.empty())
@@ -415,7 +418,7 @@ MaterialShaderGraph BuildDefaultMaterialShaderGraph(
             "Blend Mask Texture",
             OffsetPosition(layout.blendNode, -280.0f, 28.0f));
         maskTextureNode->texturePath = blendGraph.blendMaskTexturePath;
-        AddLink(graph, maskTextureNode->id, kTextureOutputSlot, blendNode->id, "mask");
+        AddLink(graph, maskTextureNode->id, kTextureOutputSlot, blendNodeId, "mask");
     }
 
     return graph;

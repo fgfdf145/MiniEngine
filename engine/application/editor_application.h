@@ -124,6 +124,8 @@ struct EditorApplicationOptions
     std::optional<std::filesystem::path> driveLog;
     // --physics-rate HZ: the physics' fixed steps per second (the Vehicle panel's Physics Rate), 60 to 4000.
     std::optional<int> physicsRateHz;
+    // --material-editor MODEL: opens the Material Editor on the model (its paint selected) at startup.
+    std::optional<std::string> materialEditorModel;
     // --no-audio: opens no playback device. Scripted runs (--frames) open none either: their sounds
     // are mixed into nothing.
     bool audioDisabled = false;

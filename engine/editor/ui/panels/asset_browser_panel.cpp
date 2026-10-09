@@ -10,7 +10,7 @@
 #include <engine/editor/ui/framework/editor_window_manager.h>
 #include <engine/editor/ui/modals/import_conflict_modal.h>
 #include <engine/editor/ui/modals/kn5_import_modal.h>
-#include <engine/editor/ui/windows/model_processor_window.h>
+#include <engine/editor/ui/windows/material_editor_window.h>
 
 #include <IconsPhosphor.h>
 #include <imgui.h>
@@ -115,7 +115,7 @@ void AssetBrowserPanel::OnGui(EditorContext& context)
     {
         // The model processor saves material edits next to the model it
         // opened; follow the rename so they land beside the renamed file.
-        context.windows.Get<ModelProcessorWindow>().OnAssetRenamed(renamed.oldPath, renamed.newPath);
+        context.windows.Get<MaterialEditorWindow>().OnAssetRenamed(renamed.oldPath, renamed.newPath);
         result.actions.renamedAssets.push_back(renamed);
     }
 }

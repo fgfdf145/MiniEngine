@@ -42,6 +42,7 @@ add_subdirectory(engine/editor)
 add_subdirectory(engine/application)
 add_subdirectory(app)
 add_subdirectory(tools/suspension_rigs)
+add_subdirectory(tools/flex_ring)
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
@@ -64,6 +65,7 @@ foreach(_miniengine_pch_directory IN ITEMS
     engine/application
     app
     tools/suspension_rigs
+    tools/flex_ring
 )
     miniengine_directory_pch("${_miniengine_pch_directory}")
 endforeach()

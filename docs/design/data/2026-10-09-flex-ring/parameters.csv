@@ -1,0 +1,40 @@
+name,unit,value
+segments,-,80
+blocks per segment,-,50
+belt radius,m,0.3186
+outer radius,m,0.3266
+rim radius,m,0.254
+belt width,m,0.212059
+tread width,m,0.22322
+belt lateral curvature radius,m,1
+chord,m,0.025016355
+node mass,kg,0.091875
+belt mass,kg,7.35
+rim-fixed tyre mass,kg,3.15
+node torsion inertia,kg m^2,0.00034429406
+radial stiffness per node,N/m,64026.557
+radial progressivity,-,-0.9
+radial progression scale,m,0.01
+tangential stiffness per node,N/m,19222.942
+lateral stiffness per node,N/m,7567.7965
+radial damping per node,N s/m,2.6249515
+tangential damping per node,N s/m,2.8577058
+lateral damping per node,N s/m,2.6414015
+Maxwell radial stiffness,N/m,6402.6557
+Maxwell time,s,0.003
+torsion stiffness per node,N m/rad,143.33315
+torsion damping per node,N m s/rad,0.022214579
+twist stiffness,N m/rad,11451.664
+belt extension stiffness,N/m,31629718
+belt extension damping,N s/m,48.216017
+in-plane bending EI,N m^2,0.0001
+out-of-plane bending EI,N m^2,3633.6713
+lateral bending EI per segment,N m^2,1.0006542
+pressure force per node,N,539.15787
+measured pressure,Pa,193053.28
+flange clearance,m,0.05082
+tread modulus,Pa,3695472.7
+block area,m^2,0.00011171172
+block radial stiffness (crown),N/m,41282.763
+max step,s,0.0005
+max angle increment,deg,1
