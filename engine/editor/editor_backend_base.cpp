@@ -3,6 +3,7 @@
 #include "services/capture_state.h"
 #include "services/entity_edit_service.h"
 #include "services/model_import_service.h"
+#include "services/photo_mode.h"
 #include "services/quad_recording.h"
 #include "services/scene_io_service.h"
 #include "services/scene_renderables.h"
@@ -39,6 +40,8 @@ namespace me
 
 namespace
 {
+std::filesystem::path BuildCapturePath(const char* prefix, const char* extension);
+
 // Runs one action the UI asked for. A failure goes to `error`, where the UI shows it, and to the
 // log as "Failed to <what>: <reason>"; the frame's other actions still run.
 template <typename Action>
@@ -276,6 +279,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     State().renderDebug = uiFrame.renderDebug;
     State().quadRecording = uiFrame.quadRecording;
     State().quadRecordingPreview = uiFrame.quadRecordingPreview;
+    State().photoMode = uiFrame.photoMode;
     if (AudioEngine* const audio = State().audio.get())
     {
         audio->SetMasterVolume(uiFrame.audio.EffectiveVolume());
@@ -339,6 +343,44 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                     {
                         const entt::entity selected = EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
                         VehicleDriveService::Start(State(), selected, uiFrame.vehicleTuning);
+                    });
+    }
+    if (actions.followDrivePath.has_value() || actions.replayDriveLog.has_value())
+    {
+        RunUiAction(State().vehicleDrive.lastError, "drive by itself", [&]
+                    {
+                        if (!State().vehicleDrive.session)
+                        {
+                            VehicleRigService::Stop(State());
+                            const entt::entity selected = EditorWorld().HasSelection() ? EditorWorld().GetSelectedEntity() : entt::null;
+                            VehicleDriveService::Start(State(), selected, uiFrame.vehicleTuning);
+                        }
+                        if (actions.followDrivePath.has_value())
+                        {
+                            VehicleDriveService::StartPathFollow(State(), actions.followDrivePath->path, actions.followDrivePath->track);
+                        }
+                        else
+                        {
+                            VehicleDriveService::StartReplay(State(), std::filesystem::path(*actions.replayDriveLog));
+                        }
+                    });
+    }
+    if (actions.stopDriveAutomation)
+    {
+        VehicleDriveService::StopAutomation(State());
+    }
+    if (actions.driveLog.has_value())
+    {
+        RunUiAction(State().vehicleDrive.lastError, "write the drive down", [&]
+                    {
+                        if (*actions.driveLog)
+                        {
+                            VehicleDriveService::StartDriveLog(State(), BuildCapturePath("drive", ".csv"), true);
+                        }
+                        else
+                        {
+                            VehicleDriveService::StopDriveLog(State());
+                        }
                     });
     }
     if (actions.pauseVehicleDrive.has_value())
@@ -534,6 +576,10 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
         ToggleQuadRecordingFromEditor();
     }
     UpdateQuadRecording();
+    if (actions.takePhoto)
+    {
+        TakePhotoFromEditor();
+    }
     if (const auto& savePath = actions.selectedSceneSavePath)
     {
         RunUiAction(sceneError, fmt::format("save scene '{}'", *savePath), [&]
@@ -622,6 +668,83 @@ void EditorRenderBackendBase::CaptureViewportWithState()
     catch (const std::exception& error)
     {
         LOG_ERROR("Failed to capture the viewport to '{}': {}", path.string(), error.what());
+    }
+}
+
+bool EditorRenderBackendBase::TakePhoto(const PhotoRequest& request, std::string& error)
+{
+    if (m_photo.has_value())
+    {
+        error = "A photo is already being made";
+        return false;
+    }
+    PhotoModeSettings asked;
+    asked.width = request.width;
+    asked.height = request.height;
+    asked.warmupFrames = request.warmupFrames;
+    const PhotoModeSettings clamped = ClampPhotoModeSettings(asked);
+    PhotoInProgress photo;
+    photo.request = request;
+    photo.request.width = clamped.width;
+    photo.request.height = clamped.height;
+    photo.request.warmupFrames = clamped.warmupFrames;
+    m_photo = photo;
+    PhotoStatus& status = State().photoStatus;
+    status = PhotoStatus{};
+    status.rendering = true;
+    status.framesTotal = photo.request.warmupFrames;
+    status.width = photo.request.width;
+    status.height = photo.request.height;
+    LOG_INFO(
+        "Photo: {}x{} after {} frames to '{}'", photo.request.width, photo.request.height, photo.request.warmupFrames, request.path.string());
+    return true;
+}
+
+void EditorRenderBackendBase::TakePhotoFromEditor()
+{
+    const PhotoModeSettings settings = ClampPhotoModeSettings(State().photoMode);
+    PhotoRequest request;
+    request.path = BuildCapturePath("photo", ".png");
+    request.width = settings.width;
+    request.height = settings.height;
+    request.warmupFrames = settings.warmupFrames;
+    std::string error;
+    if (!TakePhoto(request, error))
+    {
+        PhotoStatus& status = State().photoStatus;
+        status.message = error;
+        status.messageIsError = true;
+        status.messageTime = std::chrono::steady_clock::now();
+        LOG_WARN("Photo: {}", error);
+    }
+}
+
+void EditorRenderBackendBase::FinishPhoto()
+{
+    if (!m_photo.has_value() || m_photo->framesQueued < m_photo->request.warmupFrames)
+    {
+        return;
+    }
+    const PhotoRequest request = m_photo->request;
+    m_photo.reset();
+    PhotoStatus& status = State().photoStatus;
+    status.rendering = false;
+    status.messageTime = std::chrono::steady_clock::now();
+    try
+    {
+        if (request.path.has_parent_path())
+        {
+            std::filesystem::create_directories(request.path.parent_path());
+        }
+        CapturePhotoView(request.path);
+        status.message = fmt::format("Saved {} x {} to {}", request.width, request.height, request.path.string());
+        status.messageIsError = false;
+    }
+    catch (const std::exception& error)
+    {
+        status.message = fmt::format("The photo was not saved: {}", error.what());
+        status.messageIsError = true;
+        LOG_ERROR("Photo: could not write '{}': {}", request.path.string(), error.what());
     }
 }
 
@@ -946,6 +1069,8 @@ std::optional<EditorRenderBackendBase::QuadRecordingTarget> EditorRenderBackendB
 
 void EditorRenderBackendBase::UpdateCaptureViews()
 {
+    // The frame before this one was the photo's last: save it before the views are placed again.
+    FinishPhoto();
     m_captureViews.clear();
     State().quadRecordingTarget.clear();
     const std::optional<QuadRecordingTarget> target = FindQuadRecordingTarget();
@@ -953,16 +1078,20 @@ void EditorRenderBackendBase::UpdateCaptureViews()
     {
         State().quadRecordingTarget = target->name;
     }
-    if (!target.has_value() || (!m_quadRecording && !State().quadRecordingPreview))
+    const bool useZeroToOneDepth = UsesZeroToOneDepth(m_backendType);
+    const bool invertRenderYAxis = UsesInvertedRenderYAxis(m_backendType);
+    const auto setMatrices = [&](SceneCaptureView& view)
     {
-        return;
-    }
+        view.matrices.view = view.camera.GetViewMatrix();
+        view.matrices.projection = view.camera.GetProjectionMatrix(view.extent, false, useZeroToOneDepth);
+        view.matrices.renderProjection =
+            view.camera.GetProjectionMatrix(view.extent, invertRenderYAxis, useZeroToOneDepth, UsesReverseRenderDepth(m_backendType));
+    };
+    const bool quadCameras = target.has_value() && (m_quadRecording || State().quadRecordingPreview);
     // The pictures keep the sizes a recording started with; where the cameras are follows the
     // window as it is edited.
     const QuadRecordingSettings live = ClampQuadRecordingSettings(State().quadRecording);
-    const bool useZeroToOneDepth = UsesZeroToOneDepth(m_backendType);
-    const bool invertRenderYAxis = UsesInvertedRenderYAxis(m_backendType);
-    for (size_t index = 0; index < kQuadCameraCount; ++index)
+    for (size_t index = 0; quadCameras && index < kQuadCameraCount; ++index)
     {
         QuadCameraSettings camera = live.cameras[index];
         if (m_quadRecording)
@@ -973,11 +1102,28 @@ void EditorRenderBackendBase::UpdateCaptureViews()
         SceneCaptureView view;
         view.extent = RenderExtent{camera.width, camera.height};
         view.camera = PlaceQuadCamera(State().camera, target->pose, camera);
-        view.matrices.view = view.camera.GetViewMatrix();
-        view.matrices.projection = view.camera.GetProjectionMatrix(view.extent, false, useZeroToOneDepth);
-        view.matrices.renderProjection =
-            view.camera.GetProjectionMatrix(view.extent, invertRenderYAxis, useZeroToOneDepth, UsesReverseRenderDepth(m_backendType));
+        setMatrices(view);
         m_captureViews.push_back(view);
+    }
+
+    // The photo's view, last: the viewport's camera, framed inside the viewport at the photo's
+    // aspect, at the exposure the viewport shows.
+    if (m_photo.has_value())
+    {
+        SceneCaptureView view;
+        view.photo = true;
+        view.extent = RenderExtent{m_photo->request.width, m_photo->request.height};
+        const float photoAspect = static_cast<float>(view.extent.width) / static_cast<float>(view.extent.height);
+        view.camera = PlacePhotoCamera(State().camera, m_viewportAspect, photoAspect);
+        setMatrices(view);
+        m_captureViews.push_back(view);
+        ++m_photo->framesQueued;
+        PhotoStatus& status = State().photoStatus;
+        status.rendering = true;
+        status.framesRendered = m_photo->framesQueued;
+        status.framesTotal = m_photo->request.warmupFrames;
+        status.width = m_photo->request.width;
+        status.height = m_photo->request.height;
     }
 }
 
@@ -1028,6 +1174,10 @@ void EditorRenderBackendBase::UpdateKhronosReferenceFraming(RenderExtent extent)
 void EditorRenderBackendBase::UpdateViewportMatrices(RenderExtent extent)
 {
     UpdateKhronosReferenceFraming(extent);
+    if (extent.width > 0 && extent.height > 0)
+    {
+        m_viewportAspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+    }
     const bool useZeroToOneDepth = UsesZeroToOneDepth(m_backendType);
     const bool invertRenderYAxis = UsesInvertedRenderYAxis(m_backendType);
     State().viewportMatrices.view = State().camera.GetViewMatrix();
@@ -1052,6 +1202,7 @@ EditorUiFrameResult EditorRenderBackendBase::DrawEditorUi(ImTextureID viewportTe
     State().editorUi.SetDriverGrips(State().vehicleDrivers.grips);
     State().editorUi.SetVideoRecordingStatus(State().videoRecording);
     State().editorUi.SetQuadRecordingStatus(State().quadRecordingIndicator, State().quadRecordingTarget);
+    State().editorUi.SetPhotoStatus(State().photoStatus);
     State().editorUi.SetForcedViewportExtent(State().fixedViewportExtent);
     State().editorUi.SetAudioStatus(State().audioStatus);
     State().editorUi.SetProcessStatus(State().processStatus);

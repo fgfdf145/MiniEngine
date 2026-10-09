@@ -834,10 +834,11 @@ void TestWheelStateReportsTyrePhysics()
 // gear and the throttle shut, the car's driven wheels slow only by what the engine takes back through
 // the clutch: an engine dragging 300 Nm at 5000 rpm takes far more than the physics engine's own small
 // drag on its revs. The wheels themselves no longer lose spin of their own.
-float WheelSpinLostOnTheCoast(float coastTorque)
+float WheelSpinLostOnTheCoast(float coastTorque, bool drivetrainLosses = false)
 {
     PhysicsWorld world;
     VehicleSettings tuning;
+    tuning.drivetrainLosses.enabled = drivetrainLosses;
     tuning.gearRatios = {1.0f};
     tuning.finalDriveRatio = 1.0f;
     tuning.tractionControlGrip = 0.0f;
@@ -864,6 +865,128 @@ void TestEngineBrakingFromTheData()
     std::cout << "throttle shut for 2 s in the air: the driven wheels lose " << plain << " rad/s on the physics engine's drag, " << coasting
               << " with 300 Nm of engine braking\n";
     Require(coasting > 2.0f * plain && coasting > 20.0f, "the data's engine braking slows the wheels");
+}
+
+// The drivetrain's efficiency by gear (VehicleDrivetrainLosses): the gearbox's, the final drive's and with a centre
+// differential the transfer case's; the torque that keeps the wheels at that share driving and asks it of them on the
+// overrun; and an axle's spin drag.
+void TestDrivetrainEfficiencyByGear()
+{
+    VehicleSettings settings;
+    Require(DrivetrainEfficiency(settings, 2.0f) == 1.0f && ReferenceDrivetrainEfficiency(settings) == 1.0f, "off, nothing is lost");
+    settings.drivetrainLosses.enabled = true;
+    RequireNear(DrivetrainEfficiency(settings, 3.83f), 0.96f * 0.96f, 1e-6f, "an indirect gear: the gearbox's and the final drive's");
+    RequireNear(DrivetrainEfficiency(settings, -3.28f), 0.96f * 0.96f, 1e-6f, "reverse is indirect too");
+    RequireNear(DrivetrainEfficiency(settings, 1.0f), 0.985f * 0.96f, 1e-6f, "the direct gear");
+    Require(DrivetrainEfficiency(settings, 0.0f) == 1.0f, "neutral passes nothing to lose");
+    RequireNear(ReferenceDrivetrainEfficiency(settings), 0.9216f, 1e-6f, "the reference is an indirect gear");
+    settings.drive = VehicleDrive::AllWheel;
+    settings.centreDrive = VehicleCentreDrive::Differential;
+    RequireNear(DrivetrainEfficiency(settings, 2.0f), 0.96f * 0.96f * 0.97f, 1e-6f, "a centre differential's transfer case");
+    settings.centreDrive = VehicleCentreDrive::Coupling;
+    RequireNear(DrivetrainEfficiency(settings, 2.0f), 0.96f * 0.96f, 1e-6f, "a coupling's front takes its own");
+
+    RequireNear(DrivetrainLossTorque(100.0f, 0.9f), -10.0f, 1e-4f, "driving, the wheels get 90 of 100");
+    RequireNear(DrivetrainLossTorque(-90.0f, 0.9f), -10.0f, 1e-4f, "on the overrun 90 of drag asks 100 of the wheels");
+    Require(DrivetrainLossTorque(100.0f, 1.0f) == 0.0f, "efficiency 1 loses nothing");
+    RequireNear(DrivetrainSpinTorque(settings.drivetrainLosses, -100.0f), 3.0f + 0.04f * 100.0f, 1e-5f, "spin drag either way");
+
+    // 100 Nm flat to 6000 rpm: 62.8 kW at 6000.
+    RequireNear(PeakCurvePower({{1000.0f, 100.0f}, {6000.0f, 100.0f}, {7000.0f, 0.0f}}), 100.0f * 6000.0f * 2.0f * std::numbers::pi_v<float> / 60.0f, 1.0f,
+                "a curve's peak power");
+}
+
+VehicleCarSpec MakeBoxsterSpec();
+
+// With the losses on, the game's curve (the wheels' in an indirect gear) becomes the crank's; off, it is kept.
+void TestCarSpecCurveBecomesTheCranks()
+{
+    VehicleSettings tuning;
+    tuning.drivetrainLosses.enabled = true;
+    const VehicleSettings applied = ApplyCarSpec(tuning, MakeBoxsterSpec());
+    const float efficiency = 0.96f * 0.96f;
+    RequireNear(applied.maxEngineTorque, 386.0f / efficiency, 1e-2f, "the peak at the crank");
+    RequireNear(applied.torqueCurve[3].y, 386.0f / efficiency, 1e-2f, "and every point of the curve");
+    Require(std::abs(ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec()).maxEngineTorque - 386.0f) < 1e-3f, "off, the game's curve as it is");
+    const VehicleSettings own = ApplyCarSpec(tuning, VehicleCarSpec{});
+    Require(own.maxEngineTorque == tuning.maxEngineTorque && own.torqueCurve.empty(), "a tuning's own curve is the crank's already");
+}
+
+// Time from 8 to 14 m/s in one indirect gear on a flat 100 Nm, with the engine light enough not to matter and no air,
+// and the drivetrain's loss telemetry at the end.
+float TimeThroughTheGear(bool losses, float spinTorque, float spinTorquePerSpeed, VehicleTelemetry& telemetry, float& wheelRadius)
+{
+    VehicleSettings tuning;
+    tuning.gearRatios = {3.0f};
+    tuning.finalDriveRatio = 4.0f;
+    tuning.maxEngineTorque = 100.0f;
+    tuning.torqueCurve = {{0.0f, 100.0f}, {7000.0f, 100.0f}};
+    tuning.maxRpm = 7000.0f;
+    tuning.engineInertia = 0.05f;
+    tuning.launchRpm = 0.0f;
+    tuning.tractionControlGrip = 0.0f;
+    // No drag of the body's: it would be a share of the drive that the losses do not scale.
+    tuning.linearDamping = 0.0f;
+    tuning.drivetrainLosses.enabled = losses;
+    tuning.drivetrainLosses.spinTorque = spinTorque;
+    tuning.drivetrainLosses.spinTorquePerSpeed = spinTorquePerSpeed;
+    PhysicsWorld world;
+    AddGroundMesh(world);
+    const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning);
+    wheelRadius = settings.wheelRadius;
+    const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    VehicleControls controls;
+    controls.throttle = 1.0f;
+    world.SetVehicleControls(car, controls);
+    constexpr float kFrame = 1.0f / 144.0f;
+    float from = -1.0f;
+    for (float time = 0.0f; time < 30.0f; time += kFrame)
+    {
+        world.Update(kFrame);
+        telemetry = world.GetVehicleTelemetry(car);
+        if (from < 0.0f && telemetry.forwardSpeed >= 8.0f)
+        {
+            from = time;
+        }
+        if (telemetry.forwardSpeed >= 14.0f)
+        {
+            return from >= 0.0f ? time - from : 0.0f;
+        }
+    }
+    return 30.0f;
+}
+
+// The wheels get the indirect gear's share of the engine's torque: the car takes 1 / 0.9216 the time through the
+// gear on the same engine. The spin drag and the meshes' loss show in the telemetry at what they should take.
+void TestDrivetrainLossesSlowTheCar()
+{
+    VehicleTelemetry telemetry;
+    float radius = 0.0f;
+    const float lossless = TimeThroughTheGear(false, 0.0f, 0.0f, telemetry, radius);
+    Require(telemetry.drivetrainMeshLossKw == 0.0f && telemetry.drivetrainSpinLossKw == 0.0f, "off, nothing is lost");
+    const float meshed = TimeThroughTheGear(true, 0.0f, 0.0f, telemetry, radius);
+    std::cout << "8-14 m/s in one gear: " << lossless << " s lossless, " << meshed << " s through the meshes (ratio " << lossless / meshed << ")\n";
+    RequireNear(lossless / meshed, 0.9216f, 0.015f, "the wheels get the gear's efficiency of the engine's torque");
+    const float engineSpeed = telemetry.engineRpm * 2.0f * std::numbers::pi_v<float> / 60.0f;
+    RequireNear(telemetry.drivetrainMeshLossKw, (1.0f - 0.9216f) * 100.0f * engineSpeed * 0.001f, 0.1f, "the meshes' loss in the telemetry");
+
+    const float spinning = TimeThroughTheGear(true, 3.0f, 0.04f, telemetry, radius);
+    const float wheelSpeed = telemetry.forwardSpeed / radius;
+    const float spinPower = (3.0f + 0.04f * wheelSpeed) * wheelSpeed * 0.001f;
+    std::cout << "with the spin drag " << spinning << " s; at " << telemetry.forwardSpeed << " m/s it takes " << telemetry.drivetrainSpinLossKw << " kW\n";
+    RequireNear(telemetry.drivetrainSpinLossKw, spinPower, 0.1f * spinPower, "the driven axle's spin drag");
+    Require(spinning > meshed, "and slows the car a little more");
+}
+
+// On the overrun the wheels give the engine's drag over the efficiency, and the spin drag besides: they lose more
+// of their spin than through a lossless drivetrain.
+void TestOverrunThroughTheLosses()
+{
+    const float lossless = WheelSpinLostOnTheCoast(300.0f);
+    const float lossy = WheelSpinLostOnTheCoast(300.0f, true);
+    std::cout << "throttle shut for 2 s in the air on 300 Nm of engine braking: " << lossless << " rad/s lost lossless, " << lossy << " through the losses\n";
+    Require(lossy > 1.03f * lossless, "the overrun brakes harder through the losses");
 }
 
 // A turbo's boost as the game has it: (throttle * rpm / reference)^gamma of the maximum, held to the
@@ -3469,6 +3592,10 @@ int main()
         TestWheelStateReportsTyrePhysics();
         TestFastWheelsRollTheRightWay();
         TestEngineBrakingFromTheData();
+        TestDrivetrainEfficiencyByGear();
+        TestCarSpecCurveBecomesTheCranks();
+        TestDrivetrainLossesSlowTheCar();
+        TestOverrunThroughTheLosses();
         TestTurboSpoolsWithItsLag();
         TestCarDataGivesDifferentialAndTyreSensitivity();
         TestTyreDataTermsFollowTheGame();

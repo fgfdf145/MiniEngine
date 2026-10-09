@@ -61,7 +61,7 @@ uint32_t ParsePositiveFrameCount(std::string_view value)
     return frameCount;
 }
 
-RenderExtent ParseViewportSize(std::string_view value)
+RenderExtent ParseViewportSize(std::string_view value, std::string_view argument = "--viewport-size")
 {
     const size_t separator = value.find('x');
     uint32_t width = 0;
@@ -72,7 +72,7 @@ RenderExtent ParseViewportSize(std::string_view value)
         std::from_chars(value.data() + separator + 1, value.data() + value.size(), height).ec == std::errc{};
     if (!parsed || width == 0 || height == 0 || width > 16384 || height > 16384)
     {
-        throw std::runtime_error("--viewport-size requires WIDTHxHEIGHT, for example 667x541");
+        throw std::runtime_error(std::string(argument) + " requires WIDTHxHEIGHT, for example 667x541");
     }
     return RenderExtent{width, height};
 }
@@ -259,6 +259,24 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--photo")
+        {
+            options.photoPath = std::filesystem::path(std::string(ReadRequiredArgument(i, argc, argv, argument)));
+            continue;
+        }
+
+        if (argument == "--photo-size")
+        {
+            options.photoSize = ParseViewportSize(ReadRequiredArgument(i, argc, argv, argument), argument);
+            continue;
+        }
+
+        if (argument == "--photo-warmup")
+        {
+            options.photoWarmupFrames = ParsePositiveFrameCount(ReadRequiredArgument(i, argc, argv, argument));
+            continue;
+        }
+
         if (argument == "--quad-record")
         {
             options.quadRecordPath = std::filesystem::path(std::string(ReadRequiredArgument(i, argc, argv, argument)));
@@ -301,6 +319,34 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             const std::string_view gltf = ReadRequiredArgument(i, argc, argv, argument);
             const std::string_view folder = ReadRequiredArgument(i, argc, argv, argument);
             options.adoptCarTyres.emplace_back(std::string(gltf), std::string(folder));
+            continue;
+        }
+
+        if (argument == "--follow-path")
+        {
+            options.followPath = std::string(ReadRequiredArgument(i, argc, argv, argument));
+            continue;
+        }
+
+        if (argument == "--path-speed-scale")
+        {
+            options.pathSpeedScale = ParseFloatList<1>(ReadRequiredArgument(i, argc, argv, argument), argument)[0];
+            if (!(options.pathSpeedScale > 0.0f))
+            {
+                throw std::runtime_error("--path-speed-scale requires a number above 0");
+            }
+            continue;
+        }
+
+        if (argument == "--replay-drive")
+        {
+            options.replayDrive = std::filesystem::path(std::string(ReadRequiredArgument(i, argc, argv, argument)));
+            continue;
+        }
+
+        if (argument == "--drive-log")
+        {
+            options.driveLog = std::filesystem::path(std::string(ReadRequiredArgument(i, argc, argv, argument)));
             continue;
         }
 
@@ -447,6 +493,14 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         throw std::runtime_error("Unknown argument: " + std::string(argument));
     }
 
+    if ((options.followPath.has_value() || options.replayDrive.has_value() || options.driveLog.has_value()) && !options.driveEntity.has_value())
+    {
+        throw std::runtime_error("--follow-path, --replay-drive and --drive-log need --drive");
+    }
+    if (options.followPath.has_value() && options.replayDrive.has_value())
+    {
+        throw std::runtime_error("--follow-path and --replay-drive cannot go together");
+    }
     return options;
 }
 
@@ -684,7 +738,10 @@ int EditorApplication::Run()
     bool countingStarted = false;
     bool recordingStarted = false;
     bool quadRecordingStarted = false;
+    bool photoStarted = false;
     bool driveStarted = false;
+    const bool automatedDrive = m_options.followPath.has_value() || m_options.replayDrive.has_value();
+    int exitCode = 0;
     if (m_options.driveControls.has_value())
     {
         VehicleControls controls;
@@ -763,6 +820,27 @@ int EditorApplication::Run()
                 throw std::runtime_error("--drive: the scene has no entity named '" + *m_options.driveEntity + "' (it has " + names + ")");
             }
             VehicleDriveService::Start(*sharedState, *found, VehicleDriveService::DefaultTuning());
+            if (m_options.followPath.has_value())
+            {
+                DrivePathTrackSettings track;
+                track.speedScale = m_options.pathSpeedScale;
+                VehicleDriveService::StartPathFollow(*sharedState, *m_options.followPath, track);
+            }
+            else if (m_options.replayDrive.has_value())
+            {
+                VehicleDriveService::StartReplay(*sharedState, *m_options.replayDrive);
+            }
+            sharedState->vehicleDrive.fixedFrameStep = automatedDrive;
+            if (m_options.driveLog.has_value())
+            {
+                VehicleDriveService::StartDriveLog(*sharedState, *m_options.driveLog, !automatedDrive);
+            }
+        }
+        // A path run or replay ends the run when it ends.
+        if (automatedDrive && driveStarted && sharedState->vehicleDrive.automationResult.has_value())
+        {
+            exitCode = *sharedState->vehicleDrive.automationResult ? 0 : 3;
+            break;
         }
         // The recording starts once a frame counts, with the frame after it: the viewport has its
         // size only once a frame has been drawn.
@@ -791,6 +869,21 @@ int EditorApplication::Run()
             if (!renderer->StartQuadRecording(request, error))
             {
                 throw std::runtime_error("Cannot record to '" + m_options.quadRecordPath->string() + "': " + error);
+            }
+        }
+        if (m_options.photoPath.has_value() && !waiting && !photoStarted)
+        {
+            photoStarted = true;
+            const PhotoModeSettings saved = ClampPhotoModeSettings(sharedState->engineSettings.photoMode);
+            IRenderBackend::PhotoRequest request;
+            request.path = *m_options.photoPath;
+            request.width = m_options.photoSize.has_value() ? m_options.photoSize->width : saved.width;
+            request.height = m_options.photoSize.has_value() ? m_options.photoSize->height : saved.height;
+            request.warmupFrames = m_options.photoWarmupFrames.value_or(saved.warmupFrames);
+            std::string error;
+            if (!renderer->TakePhoto(request, error))
+            {
+                throw std::runtime_error("Cannot take the photo '" + m_options.photoPath->string() + "': " + error);
             }
         }
         // The camera moves only on the frames that count, so it starts from where it was placed.
@@ -831,9 +924,20 @@ int EditorApplication::Run()
         }
     }
 
+    VehicleDriveService::StopDriveLog(*sharedState);
     // Also when the window was closed before the last frame: the file is finished either way.
     renderer->StopVideoRecording();
     renderer->StopQuadRecording();
+    if (m_options.photoPath.has_value() && (!photoStarted || renderer->IsTakingPhoto()))
+    {
+        LOG_ERROR("--photo: the run ended before the photo was saved; give --frames more than its warm-up frames");
+        exitCode = exitCode == 0 ? 4 : exitCode;
+    }
+    else if (m_options.photoPath.has_value() && !std::filesystem::exists(*m_options.photoPath))
+    {
+        // Its view could not be made or read back; the log says why.
+        exitCode = exitCode == 0 ? 4 : exitCode;
+    }
     if (m_options.maxFrames > 0)
     {
         renderer->LogFrameTimings();
@@ -853,6 +957,6 @@ int EditorApplication::Run()
         renderer->CaptureDdgiReference(reference);
     }
 
-    return 0;
+    return exitCode;
 }
 }

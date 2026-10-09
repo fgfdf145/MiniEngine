@@ -221,6 +221,30 @@ void WriteQuadRecordingSettings(std::ostream& output, const QuadRecordingSetting
     output << "  },\n";
 }
 
+void LoadPhotoModeSettings(const YAML::Node& node, PhotoModeSettings& settings)
+{
+    if (!node || !node.IsMap())
+    {
+        return;
+    }
+    settings.width = static_cast<uint32_t>(std::max(1, ReadIntOrDefault(node["width"], static_cast<int>(settings.width))));
+    settings.height = static_cast<uint32_t>(std::max(1, ReadIntOrDefault(node["height"], static_cast<int>(settings.height))));
+    settings.warmupFrames =
+        static_cast<uint32_t>(std::max(1, ReadIntOrDefault(node["warmup_frames"], static_cast<int>(settings.warmupFrames))));
+    settings.framingGuide = ReadBoolOrDefault(node["framing_guide"], settings.framingGuide);
+    settings = ClampPhotoModeSettings(settings);
+}
+
+void WritePhotoModeSettings(std::ostream& output, const PhotoModeSettings& settings)
+{
+    output << "  \"photo_mode\": {\n";
+    output << "    \"width\": " << settings.width << ",\n";
+    output << "    \"height\": " << settings.height << ",\n";
+    output << "    \"warmup_frames\": " << settings.warmupFrames << ",\n";
+    output << "    \"framing_guide\": " << JsonBool(settings.framingGuide) << "\n";
+    output << "  },\n";
+}
+
 void LoadOptionalUiScale(const YAML::Node& node, std::optional<float>& value)
 {
     if (!node || !node.IsScalar())
@@ -572,6 +596,7 @@ bool LoadEngineSettings(const std::filesystem::path& path, EngineSettings& setti
         }
         LoadProcessSettings(root["process"], settings.process);
         LoadQuadRecordingSettings(root["quad_recording"], settings.quadRecording);
+        LoadPhotoModeSettings(root["photo_mode"], settings.photoMode);
 
         return true;
     }
@@ -661,6 +686,7 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         output << "  },\n";
         WriteProcessSettings(output, settings.process);
         WriteQuadRecordingSettings(output, settings.quadRecording);
+        WritePhotoModeSettings(output, settings.photoMode);
         WriteViewSettings(output, settings.view);
         output << "}\n";
 

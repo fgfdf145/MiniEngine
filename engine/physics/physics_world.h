@@ -148,6 +148,10 @@ struct VehicleTelemetry
     // positive), and the rear wheels' steer angle (degrees, right positive) for a car with rear steering.
     float centreCouplingTorque = 0.0f;
     float rearSteerDegrees = 0.0f;
+    // The power the drivetrain lost in the last step (VehicleSettings::drivetrainLosses; kW): in the gears'
+    // meshes, and to churning and the bearings.
+    float drivetrainMeshLossKw = 0.0f;
+    float drivetrainSpinLossKw = 0.0f;
     // The turbos' boost together now (the torque is the engine's times one plus it); 0 without turbos.
     float turboBoost = 0.0f;
     // The most any wheel on the ground turns slower than the road under it (the slip ratio's braking
@@ -288,6 +292,11 @@ class PhysicsWorld
     // slow to keep up with real time (a debug build, a heavy car) then runs in slow motion instead of
     // taking the frame rate down with it.
     int Update(float deltaSeconds, float wallBudgetSeconds = 0.0f);
+    // Runs exactly `count` fixed steps (at most MaxStepsPerUpdate), whatever time was carried over, and
+    // then carries `carrySeconds` (under a step) over instead, which places the poses read back between
+    // the last two steps as Update would have: a replayed drive takes the steps its recording took, frame
+    // by frame, and reads back as it did. Returns how many ran.
+    int RunSteps(int count, float carrySeconds = 0.0f);
 
   private:
     struct Impl;

@@ -2,6 +2,7 @@ add_library(engine_scene
     material_alpha.cpp
     material_graph.h
     scene_components.h
+    scene_drive_path.h
     scene_environment.h
     scene_minimap.h
     scene_streaming.h

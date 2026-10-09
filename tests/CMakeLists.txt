@@ -1705,6 +1705,64 @@ add_test(
 
 set_target_properties(miniengine_video_recorder_tests PROPERTIES FOLDER "Tests")
 
+# Photo Mode (docs/design/2026-10-09-photo-mode-design.md): where the photo sits in the viewport, its
+# camera, its GPU memory estimate and its settings in the settings file. Nothing is rendered.
+add_executable(miniengine_photo_mode_tests
+    photo_mode_tests.cpp
+)
+miniengine_group_target_sources(miniengine_photo_mode_tests)
+
+target_link_libraries(miniengine_photo_mode_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_photo_mode_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_photo_mode_tests>
+            $<TARGET_FILE_DIR:miniengine_photo_mode_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.photo_mode
+    COMMAND miniengine_photo_mode_tests
+)
+
+set_target_properties(miniengine_photo_mode_tests PROPERTIES FOLDER "Tests")
+
+# The Photo Mode panel drawn headless in its states, written as PNGs with MINIENGINE_UI_SNAPSHOT_DIR
+# set. Links engine_editor for the panel.
+add_executable(miniengine_photo_mode_panel_tests
+    photo_mode_panel_tests.cpp
+    imgui_software_raster.h
+)
+miniengine_group_target_sources(miniengine_photo_mode_panel_tests)
+
+target_link_libraries(miniengine_photo_mode_panel_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_photo_mode_panel_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_photo_mode_panel_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_photo_mode_panel_tests>
+            $<TARGET_FILE_DIR:miniengine_photo_mode_panel_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.photo_mode_panel
+    COMMAND miniengine_photo_mode_panel_tests
+)
+
+set_target_properties(miniengine_photo_mode_panel_tests PROPERTIES FOLDER "Tests")
+
 # The quad recording (docs/design/2026-10-07-quad-vehicle-recording-design.md): its canvas layouts,
 # the camera names written on it, where its cameras sit around a car, and its settings in the
 # settings file. Links engine_editor for the cameras and the settings; nothing is rendered.
@@ -2236,6 +2294,60 @@ add_test(
 )
 
 set_target_properties(miniengine_steering_assist_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_drive_path_tests
+    drive_path_tests.cpp
+)
+miniengine_group_target_sources(miniengine_drive_path_tests)
+
+target_link_libraries(miniengine_drive_path_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_drive_path_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_drive_path_tests>
+            $<TARGET_FILE_DIR:miniengine_drive_path_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.drive_path
+    COMMAND miniengine_drive_path_tests
+)
+
+set_target_properties(miniengine_drive_path_tests PROPERTIES FOLDER "Tests")
+
+add_executable(miniengine_drive_paths_panel_tests
+    drive_paths_panel_tests.cpp
+    imgui_software_raster.h
+)
+miniengine_group_target_sources(miniengine_drive_paths_panel_tests)
+
+target_link_libraries(miniengine_drive_paths_panel_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_drive_paths_panel_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_drive_paths_panel_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_drive_paths_panel_tests>
+            $<TARGET_FILE_DIR:miniengine_drive_paths_panel_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.drive_paths_panel
+    COMMAND miniengine_drive_paths_panel_tests
+)
+
+set_target_properties(miniengine_drive_paths_panel_tests PROPERTIES FOLDER "Tests")
 
 add_executable(miniengine_asset_browser_window_tests
     asset_browser_window_tests.cpp
