@@ -20,8 +20,19 @@
 # 13.78 m) and in Vice City (game (-379.5, -479), road at 4.04 m after the offset).
 # Everything comes from the converter in C:\Project\GTASA MAP (tools/stream_bundle.py with GTA_GAME=sa,
 # iii or vc; tools/water.py) and is not in git; the car is imported from Assetto Corsa at
-# assets/skyline_r34_vspec. The minimap is the three games' radar maps placed the same way
-# (tools/world_radar.py -> out/gta_radar.png, copied to assets/maps/gta_radar.png, also not in git).
+# assets/skyline_r34_vspec. The minimap is the three games' radar maps placed the same way, with the
+# bridges drawn in (tools/world_radar.py --install, which reads them from this file; out/gta_radar.png,
+# copied to assets/maps/gta_radar.png, also not in git).
+#
+# Two pairs of GTA bridges (assets/models/gta_bridge, tools/render_scenes/make_gta_bridge.py) join the
+# maps across the sea, each pair end to end with its joint out at sea. Liberty City - San Fierro: from
+# Portland's south quay yard where its jetty starts (-4740, 10.82, 1149) to the edge of San Fierro's coast
+# highway south of the causeway (-2947, 11.08, 1340), the pad on the road's raised sea-side lip; 1834 m,
+# so both are stretched 1.36 along their length. Los Santos - Vice City: from the shoulder of the east
+# coast freeway, between two palms (2897, 10.08, 1407), due east to Escobar airport's apron (4217, 7.83,
+# 1407), 1320 m at their own size. The ends were chosen so nothing of the maps comes up through a deck
+# and the roads meet the pads within a few cm (the lip excepted). drive_paths cross each pair both ways
+# (--drive skyline_r34_vspec --follow-path bridge_west_lc_to_sf, ...).
 scene:
   version: 3
   selected_entity_uuid: 48dd7e44-337d-4601-bb55-8703ba763ef7
@@ -267,6 +278,54 @@ entities:
       translation: [5620.5, 4.06, 479]
       rotation: [0, 90, 0]
       scale: [1, 1, 1]
+  - entity_uuid: 9beaf541-ae6a-4cd6-84f4-aa8055126a05
+    tag: Bridge Liberty City - San Fierro (west)
+    model:
+      display_name: gta_bridge.gltf
+      source_path: assets/models/gta_bridge/gta_bridge.gltf
+      source_uuid: a26c400c-96e6-4806-9088-0b959d67e2a0
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [-4740, 10.82, 1149]
+      rotation: [0, -6.08052, 0.00826]
+      scale: [1.36602, 1, 1]
+  - entity_uuid: e7f3c16b-3be5-4673-9321-558924aad017
+    tag: Bridge Liberty City - San Fierro (east)
+    model:
+      display_name: gta_bridge.gltf
+      source_path: assets/models/gta_bridge/gta_bridge.gltf
+      source_uuid: a26c400c-96e6-4806-9088-0b959d67e2a0
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [-3843.5, 10.95, 1244.5]
+      rotation: [0, -6.08052, 0.00826]
+      scale: [1.36602, 1, 1]
+  - entity_uuid: fe615d1c-680b-4d68-b901-a91fd30ca33a
+    tag: Bridge Los Santos - Vice City (west)
+    model:
+      display_name: gta_bridge.gltf
+      source_path: assets/models/gta_bridge/gta_bridge.gltf
+      source_uuid: a26c400c-96e6-4806-9088-0b959d67e2a0
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [2897, 10.084, 1407]
+      rotation: [0, 0, -0.09784]
+      scale: [1, 1, 1]
+  - entity_uuid: 46ddd0f8-6c51-4d0f-854b-e3c8d694898c
+    tag: Bridge Los Santos - Vice City (east)
+    model:
+      display_name: gta_bridge.gltf
+      source_path: assets/models/gta_bridge/gta_bridge.gltf
+      source_uuid: a26c400c-96e6-4806-9088-0b959d67e2a0
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [3557, 8.957, 1407]
+      rotation: [0, 0, -0.09784]
+      scale: [1, 1, 1]
 lights:
   - entity_uuid: 41b8d4af-b0a9-4c60-8804-999f21e90086
     tag: Sun
@@ -317,6 +376,138 @@ minimap:
   image: assets/maps/gta_radar.png
   world_min: [-8500, -3500]
   world_max: [8500, 3500]
+drive_paths:
+  - name: bridge_west_lc_to_sf
+    closed: false
+    speed_kmh: 60
+    points:
+      - [-4559.75, 10.79, 823.25, 20]
+      - [-4571.25, 10.79, 824.75, 20]
+      - [-4581.75, 10.79, 820.75, 20]
+      - [-4593.75, 10.79, 820.75, 20]
+      - [-4604.25, 10.79, 825.75, 20]
+      - [-4612.25, 10.79, 834.75, 20]
+      - [-4615.25, 10.79, 845.75, 20]
+      - [-4618.25, 10.79, 856.75, 20]
+      - [-4623.75, 10.79, 866.75, 20]
+      - [-4625.25, 10.79, 878.25, 20]
+      - [-4627.75, 10.79, 889.25, 20]
+      - [-4631.25, 10.79, 900.25, 20]
+      - [-4631.25, 10.84, 912.25, 20]
+      - [-4631.25, 10.88, 924.25, 20]
+      - [-4639.25, 10.88, 933.25, 20]
+      - [-4639.25, 10.88, 945.25, 20]
+      - [-4639.25, 10.88, 957.25, 20]
+      - [-4637.25, 10.88, 968.75, 20]
+      - [-4636.75, 10.88, 980.75, 20]
+      - [-4634.25, 10.88, 992.25, 20]
+      - [-4632.25, 10.88, 1003.75, 20]
+      - [-4632.25, 10.88, 1015.75, 20]
+      - [-4638.75, 10.88, 1025.25, 20]
+      - [-4643.25, 11.03, 1035.75, 20]
+      - [-4644.75, 11.06, 1047.25, 20]
+      - [-4645.25, 11.06, 1059.25, 20]
+      - [-4652.25, 11.05, 1067.25, 20]
+      - [-4664.25, 11.05, 1067.75, 20]
+      - [-4674.75, 11.04, 1071.75, 20]
+      - [-4684.75, 11.26, 1077.25, 20]
+      - [-4693.25, 10.92, 1085.75, 20]
+      - [-4693.25, 10.82, 1097.75, 20]
+      - [-4705.00, 10.82, 1119.00, 15]
+      - [-4728.00, 10.82, 1125.00, 15]
+      - [-4748.00, 10.82, 1131.00, 15]
+      - [-4756.00, 10.82, 1139.00, 15]
+      - [-4753.00, 10.82, 1147.50, 15]
+      - [-4740.37, 10.82, 1152.48, 20]
+      - [-4725.46, 10.82, 1154.07, 40]
+      - [-4715.51, 10.82, 1155.13, 90]
+      - [-4292.12, 10.88, 1200.23, 90]
+      - [-3843.87, 10.95, 1247.98, 90]
+      - [-3395.62, 11.02, 1295.73, 90]
+      - [-2972.23, 11.08, 1340.83, 90]
+      - [-2947.37, 11.08, 1343.48, 40]
+      - [-2940.50, 10.80, 1352.00, 30]
+      - [-2942.00, 10.75, 1372.00, 30]
+      - [-2943.50, 10.55, 1392.00, 30]
+  - name: bridge_west_sf_to_lc
+    closed: false
+    speed_kmh: 60
+    points:
+      - [-2938.50, 10.60, 1306.00, 30]
+      - [-2940.00, 10.78, 1324.00, 20]
+      - [-2946.63, 11.08, 1336.52, 25]
+      - [-2971.49, 11.08, 1333.87, 90]
+      - [-3394.88, 11.02, 1288.77, 90]
+      - [-3843.13, 10.95, 1241.02, 90]
+      - [-4291.38, 10.88, 1193.27, 90]
+      - [-4714.77, 10.82, 1148.17, 90]
+      - [-4724.71, 10.82, 1147.11, 30]
+      - [-4739.63, 10.82, 1145.52, 20]
+      - [-4751.00, 10.82, 1141.00, 15]
+      - [-4752.00, 10.82, 1130.00, 15]
+      - [-4741.00, 10.82, 1121.00, 15]
+      - [-4716.00, 10.82, 1118.00, 15]
+      - [-4692.75, 10.82, 1109.25, 20]
+      - [-4693.25, 10.82, 1097.75, 20]
+      - [-4693.25, 10.92, 1085.75, 20]
+      - [-4684.75, 11.26, 1077.25, 20]
+      - [-4674.75, 11.04, 1071.75, 20]
+      - [-4664.25, 11.05, 1067.75, 20]
+      - [-4652.25, 11.05, 1067.25, 20]
+      - [-4645.25, 11.06, 1059.25, 20]
+      - [-4644.75, 11.06, 1047.25, 20]
+      - [-4643.25, 11.03, 1035.75, 20]
+      - [-4638.75, 10.88, 1025.25, 20]
+      - [-4632.25, 10.88, 1015.75, 20]
+      - [-4632.25, 10.88, 1003.75, 20]
+      - [-4634.25, 10.88, 992.25, 20]
+      - [-4636.75, 10.88, 980.75, 20]
+      - [-4637.25, 10.88, 968.75, 20]
+      - [-4639.25, 10.88, 957.25, 20]
+      - [-4639.25, 10.88, 945.25, 20]
+      - [-4639.25, 10.88, 933.25, 20]
+      - [-4631.25, 10.88, 924.25, 20]
+      - [-4631.25, 10.84, 912.25, 20]
+      - [-4631.25, 10.79, 900.25, 20]
+      - [-4627.75, 10.79, 889.25, 20]
+      - [-4625.25, 10.79, 878.25, 20]
+      - [-4623.75, 10.79, 866.75, 20]
+      - [-4618.25, 10.79, 856.75, 20]
+      - [-4615.25, 10.79, 845.75, 20]
+      - [-4612.25, 10.79, 834.75, 20]
+      - [-4604.25, 10.79, 825.75, 20]
+      - [-4593.75, 10.79, 820.75, 20]
+      - [-4581.75, 10.79, 820.75, 20]
+      - [-4571.25, 10.79, 824.75, 20]
+      - [-4559.75, 10.79, 823.25, 20]
+  - name: bridge_east_ls_to_vc
+    closed: false
+    speed_kmh: 60
+    points:
+      - [2891.00, 10.00, 1440.00, 30]
+      - [2892.00, 10.04, 1424.00, 20]
+      - [2897.00, 10.08, 1410.50, 25]
+      - [2922.00, 10.04, 1410.50, 90]
+      - [3227.00, 9.52, 1410.50, 90]
+      - [3557.00, 8.96, 1410.50, 90]
+      - [3887.00, 8.39, 1410.50, 90]
+      - [4192.00, 7.87, 1410.50, 90]
+      - [4217.00, 7.83, 1410.50, 40]
+      - [4257.00, 7.76, 1410.50, 30]
+  - name: bridge_east_vc_to_ls
+    closed: false
+    speed_kmh: 60
+    points:
+      - [4257.00, 7.76, 1403.50, 40]
+      - [4217.00, 7.83, 1403.50, 50]
+      - [4192.00, 7.87, 1403.50, 90]
+      - [3887.00, 8.39, 1403.50, 90]
+      - [3557.00, 8.96, 1403.50, 90]
+      - [3227.00, 9.52, 1403.50, 90]
+      - [2922.00, 10.04, 1403.50, 90]
+      - [2897.00, 10.08, 1403.50, 25]
+      - [2891.50, 10.04, 1392.00, 20]
+      - [2891.00, 10.00, 1370.00, 30]
 editor:
   gizmo:
     operation: combined
