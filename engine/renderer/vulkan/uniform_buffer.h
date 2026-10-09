@@ -331,20 +331,27 @@ class VulkanFrameDescriptorSetLayout
 // and their samplers) and never varies with scene content or swapchain size. It is owned separately from
 // VulkanUniformBuffer so that rebuilding descriptor sets for a new texture set — which happens on
 // every model import — does not invalidate the pipelines built against this layout.
+//
+// An NVRHI binding layout at set 1 (the geometry, forward, toon and path traced layer passes; the
+// shadow passes' native pipelines put the same VkDescriptorSetLayout at set 0). Its binding sets come
+// from descriptor pools the layout shares, kMaterialSetsPerPool sets a pool (the overlay port's
+// shared-descriptor-pools patch): a streamed map keeps tens of thousands of material sets, where
+// NVRHI's default pool per binding set would be a pool each.
 class VulkanMaterialDescriptorSetLayout
 {
   public:
-    explicit VulkanMaterialDescriptorSetLayout(VkDevice device);
-    ~VulkanMaterialDescriptorSetLayout();
+    static constexpr uint32_t kMaterialSetsPerPool = 1024;
+
+    explicit VulkanMaterialDescriptorSetLayout(nvrhi::IDevice* device);
 
     VulkanMaterialDescriptorSetLayout(const VulkanMaterialDescriptorSetLayout&) = delete;
     VulkanMaterialDescriptorSetLayout& operator=(const VulkanMaterialDescriptorSetLayout&) = delete;
 
     VkDescriptorSetLayout GetHandle() const;
+    nvrhi::IBindingLayout* Get() const;
 
   private:
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_layout = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_layout;
 };
 
 class VulkanUniformBuffer

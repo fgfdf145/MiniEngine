@@ -1,7 +1,6 @@
 #pragma once
 
 #include "common.h"
-#include "descriptor_pool_list.h"
 #include "uniform_buffer.h"
 
 #include <array>
@@ -19,13 +18,14 @@ namespace me
 // keeps its set and only new materials are written: a streamed map changed a cell every few seconds,
 // and writing every material's set again each time was the most of a change's cost.
 //
-// Sets come from pools that free sets one at a time, and a new pool is made when one runs out. A set
-// made for an upload is pending until a commit retains it; AbandonPending frees those of an upload that
-// failed, so no set outlives textures that never became content.
+// A set is an NVRHI binding set of the material layout, which hands them out from its shared pools
+// (VulkanMaterialDescriptorSetLayout); the native passes bind its VkDescriptorSet. A set made for an
+// upload is pending until a commit retains it; AbandonPending frees those of an upload that failed, so
+// no set outlives textures that never became content.
 class VulkanMaterialSetCache
 {
   public:
-    VulkanMaterialSetCache(VkDevice device, VkDescriptorSetLayout materialSetLayout);
+    VulkanMaterialSetCache(nvrhi::IDevice* device, nvrhi::IBindingLayout* materialSetLayout);
     ~VulkanMaterialSetCache();
 
     VulkanMaterialSetCache(const VulkanMaterialSetCache&) = delete;
@@ -55,19 +55,16 @@ class VulkanMaterialSetCache
     };
     struct Entry
     {
+        nvrhi::BindingSetHandle bindingSet;
         VkDescriptorSet set = VK_NULL_HANDLE;
-        uint32_t pool = 0;
         uint32_t references = 0;
         bool pending = true;
     };
 
     static Key KeyOf(const MaterialTextureBinding& binding);
-    void Free(const Entry& entry);
 
-    static constexpr uint32_t kSetsPerPool = 1024;
-
-    VkDevice m_device = VK_NULL_HANDLE;
-    VulkanDescriptorPoolList m_pools;
+    nvrhi::IDevice* m_device = nullptr;
+    nvrhi::IBindingLayout* m_layout = nullptr;
     std::unordered_map<Key, Entry, KeyHash, KeyEqual> m_entries;
     std::unordered_map<VkDescriptorSet, Key> m_keyOfSet;
     // Sets that dropped to no reference since the last FreeUnreferenced.

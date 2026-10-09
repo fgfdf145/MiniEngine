@@ -1,7 +1,11 @@
 #include "material_set_cache.h"
 
+#include "nvrhi_native.h"
+#include "nvrhi_pass.h"
+
 #include <cstring>
 #include <functional>
+#include <stdexcept>
 
 namespace me
 {
@@ -29,14 +33,9 @@ bool VulkanMaterialSetCache::KeyEqual::operator()(const Key& a, const Key& b) co
     return true;
 }
 
-VulkanMaterialSetCache::VulkanMaterialSetCache(VkDevice device, VkDescriptorSetLayout materialSetLayout)
+VulkanMaterialSetCache::VulkanMaterialSetCache(nvrhi::IDevice* device, nvrhi::IBindingLayout* materialSetLayout)
     : m_device(device),
-      m_pools(
-          device,
-          materialSetLayout,
-          {VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kMaterialTextureBindingCount},
-           VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, kMaterialTextureBindingCount}},
-          kSetsPerPool)
+      m_layout(materialSetLayout)
 {
 }
 
@@ -88,38 +87,25 @@ VkDescriptorSet VulkanMaterialSetCache::Acquire(const MaterialTextureBinding& bi
         return found->second.set;
     }
 
-    Entry entry;
-    const VulkanDescriptorPoolList::Allocation allocation = m_pools.Allocate();
-    entry.set = allocation.set;
-    entry.pool = allocation.pool;
-
-    // Each texture and its sampler from the same image info: Vulkan ignores the sampler of a
-    // SAMPLED_IMAGE write and the view of a SAMPLER one.
-    std::array<VkDescriptorImageInfo, kMaterialTextureBindingCount> imageInfos{};
-    std::array<VkWriteDescriptorSet, 2 * kMaterialTextureBindingCount> writes{};
+    // Each texture (binding b, NVRHI's view of the whole texture, as GetImageView is) and its sampler
+    // (b + kMaterialSamplerBindingOffset).
+    nvrhi::BindingSetDesc desc;
+    desc.bindings.reserve(2 * kMaterialTextureBindingCount);
     for (uint32_t index = 0; index < kMaterialTextureBindingCount; ++index)
     {
-        imageInfos[index] = VkDescriptorImageInfo{key[index].sampler, key[index].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        for (uint32_t sampler = 0; sampler < 2; ++sampler)
+        if (key[index].texture == nullptr || key[index].nvrhiSampler == nullptr)
         {
-            VkWriteDescriptorSet& write = writes[2 * index + sampler];
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = entry.set;
-            write.dstBinding = index + sampler * kMaterialSamplerBindingOffset;
-            write.descriptorType = sampler == 0 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLER;
-            write.descriptorCount = 1;
-            write.pImageInfo = &imageInfos[index];
+            throw std::runtime_error("A material texture binding has no NVRHI texture or sampler");
         }
+        desc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(index, key[index].texture));
+        desc.bindings.push_back(nvrhi::BindingSetItem::Sampler(index + kMaterialSamplerBindingOffset, key[index].nvrhiSampler));
     }
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    Entry entry;
+    entry.bindingSet = CreateNvrhiBindingSet(m_device, desc, m_layout, "Failed to create a material binding set");
+    entry.set = ToNative<VkDescriptorSet>(entry.bindingSet->getNativeObject(nvrhi::ObjectTypes::VK_DescriptorSet));
     m_entries.emplace(key, entry);
     m_keyOfSet.emplace(entry.set, key);
     return entry.set;
-}
-
-void VulkanMaterialSetCache::Free(const Entry& entry)
-{
-    m_pools.Free(VulkanDescriptorPoolList::Allocation{entry.set, entry.pool});
 }
 
 void VulkanMaterialSetCache::Retain(VkDescriptorSet set)
@@ -155,12 +141,14 @@ void VulkanMaterialSetCache::FreeUnreferenced(const std::function<void(std::func
         const auto entry = m_entries.find(key->second);
         if (entry != m_entries.end() && entry->second.references == 0 && !entry->second.pending)
         {
-            const Entry freed = entry->second;
+            // The native passes bound the set without NVRHI seeing it, so the frames that may still
+            // draw with it keep it alive through retire, not NVRHI's own tracking.
+            nvrhi::BindingSetHandle freed = std::move(entry->second.bindingSet);
             m_entries.erase(entry);
             m_keyOfSet.erase(key);
-            retire([this, freed]()
+            retire([freed = std::move(freed)]() mutable
                    {
-                       Free(freed);
+                       freed = nullptr;
                    });
         }
     }
@@ -173,7 +161,6 @@ void VulkanMaterialSetCache::AbandonPending()
     {
         if (entry->second.pending)
         {
-            Free(entry->second);
             m_keyOfSet.erase(entry->second.set);
             entry = m_entries.erase(entry);
             continue;

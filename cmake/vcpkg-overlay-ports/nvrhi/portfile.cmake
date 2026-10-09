@@ -20,6 +20,10 @@ vcpkg_from_github(
         # picks the type as it did before NVRHI), and gives out its VkDeviceMemory for the resources
         # still bound natively (acceleration structures).
         heap-memory-type-and-native.patch
+        # A binding layout can hand out its binding sets from descriptor pools it shares, many sets a
+        # pool, instead of one pool per binding set: the engine keeps a binding set per material, tens
+        # of thousands on the streamed maps.
+        shared-descriptor-pools.patch
 )
 
 if(VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")

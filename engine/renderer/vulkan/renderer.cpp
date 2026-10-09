@@ -409,13 +409,15 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
         // The texture's view with the sampler its slot asks for; slot is the binding's index.
         const auto bind = [&](uint32_t textureIndex, uint32_t slot)
         {
-            return TextureDescriptorBinding{textures[textureIndex]->GetImageView(), samplerCache.GetNative(slots.samplers[slot])};
+            const VulkanTexture* texture = textures[textureIndex];
+            return BindTexture(texture->GetImageView(), texture->GetNvrhiTexture(), samplerCache.Get(slots.samplers[slot]));
         };
         // The detail maps come outside glTF's texture slots: always the default sampler (repeat,
         // linear, mipmapped), which their tiling needs.
         const auto bindDefault = [&](uint32_t textureIndex)
         {
-            return TextureDescriptorBinding{textures[textureIndex]->GetImageView(), samplerCache.GetNative(TextureSampler{})};
+            const VulkanTexture* texture = textures[textureIndex];
+            return BindTexture(texture->GetImageView(), texture->GetNvrhiTexture(), samplerCache.Get(TextureSampler{}));
         };
         bindings.push_back(MaterialTextureBinding{
             bind(slots.baseColor, 0),
@@ -2341,8 +2343,8 @@ void VulkanRenderer::CreateDeviceResources()
     // outliving every VulkanPipelineSet is what lets a rebuild reuse the driver's earlier shader
     // compilation.
     m_frameSetLayout = std::make_unique<VulkanFrameDescriptorSetLayout>(m_nvrhi->Get());
-    m_materialSetLayout = std::make_unique<VulkanMaterialDescriptorSetLayout>(m_device->GetHandle());
-    m_materialSets = std::make_unique<VulkanMaterialSetCache>(m_device->GetHandle(), m_materialSetLayout->GetHandle());
+    m_materialSetLayout = std::make_unique<VulkanMaterialDescriptorSetLayout>(m_nvrhi->Get());
+    m_materialSets = std::make_unique<VulkanMaterialSetCache>(m_nvrhi->Get(), m_materialSetLayout->Get());
     m_stagingChunkPool = std::make_unique<VulkanStagingChunkPool>(m_device->GetHandle());
 
     VkPipelineCacheCreateInfo cacheInfo{};

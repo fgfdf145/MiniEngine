@@ -376,6 +376,27 @@ A/B 的预热帧数：同一个 exe 两次运行，`--wait-for-scene` 开始数�
 采样的在 b + 64 配单独的采样器），迁这些 pass 时不用再拆；每个资源声明都带了和 Vulkan binding 一致的 D3D
 寄存器，push constant 约定为 pass 自己那个 set 的 `PushConstants(0)`，`build_all.py --dxil` 会检查。
 
+### 主线续：材质集上 NVRHI（2026-10-09）
+
+用户选的做法：给 NVRHI 打补丁，让 binding set 从共享、成批的池里分配。第 4 个补丁
+`shared-descriptor-pools.patch`：`BindingLayoutDesc::descriptorSetsPerPool` 非零时，这个 layout 的 binding set
+从它自己维护的池列表里分配（每池那么多个集，`FREE_DESCRIPTOR_SET`，互斥锁保护；从上次成功的池开始找，池满或碎片
+化就跳过，都不行就新建一个池），binding set 析构时把集还给它的池。为零时照旧一个集一个池（上游行为，其它
+layout 不受影响）。上游源码里本来就有 "TODO: move pool to the context instead"。
+
+- `VulkanMaterialDescriptorSetLayout` 换成 NVRHI 的 binding layout（set 1，vertex + pixel，32 个 `Texture_SRV`
+  加 b + 64 的 `Sampler`，每池 1024 个集，和原来的缓存一样）；原生管线拿它的 `VkDescriptorSetLayout`（阴影 pass
+  照旧放在 set 0）。
+- `VulkanMaterialSetCache` 的每个材质集是一个 NVRHI binding set，原生 pass 绑它的 `VK_DescriptorSet`；键照旧是
+  32 个 (view, sampler)，`BuildMaterialTextureBindings` 用 `BindTexture` 把 NVRHI 纹理和采样器也带上
+  （`VulkanTexture` 的视图本来就是整张图、原格式，和 NVRHI 建的视图一致）。不再被引用的集仍经 retire 延迟释放：
+  原生 pass 绑的集 NVRHI 看不见，不能靠它的在途跟踪。
+
+验证：A/B 对比 main（`5d4b3f3`，用同一个打了补丁的 NVRHI DLL 编），10 个场景（road_rt、road_raster、
+materials_raster、materials_pt、toon、transmission_rt 和 4 个 fixture）全部逐像素相同；`MINIENGINE_NVRHI_VALIDATION=1`
+和 Vulkan validation 无报告。开销：GTA 地图 300 帧（5 次上传、1496 个 submesh）的“descriptors and the ray scene”
+合计基线 159–161 ms、新版 164 ms（约 +3%）。
+
 ### 验证工具
 
 `tools/render_ab/`：`ab.py`（A/B 截图，`AB_MODE=exe` 对比 `out/baseline_src` 里编的基线 exe；基线 = 改动前的

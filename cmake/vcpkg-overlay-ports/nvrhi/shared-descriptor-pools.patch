@@ -1,0 +1,217 @@
+diff --git a/include/nvrhi/nvrhi.h b/include/nvrhi/nvrhi.h
+index 42522dc..cad4824 100644
+--- a/include/nvrhi/nvrhi.h
++++ b/include/nvrhi/nvrhi.h
+@@ -2016,6 +2016,12 @@ namespace nvrhi
+         std::vector<BindingLayoutItem> bindings;
+         VulkanBindingOffsets bindingOffsets;
+ 
++        // Vulkan: when non-zero, the binding sets of this layout come from descriptor pools the layout
++        // shares, each with room for this many sets, instead of a descriptor pool of their own; a
++        // destroyed binding set gives its descriptor set back to its pool. For layouts with many
++        // binding sets, such as one per material.
++        uint32_t descriptorSetsPerPool = 0;
++
+         BindingLayoutDesc& setVisibility(ShaderType value) { visibility = value; return *this; }
+         BindingLayoutDesc& setRegisterSpace(uint32_t value) { registerSpace = value; return *this; }
+         BindingLayoutDesc& setRegisterSpaceIsDescriptorSet(bool value) { registerSpaceIsDescriptorSet = value; return *this; }
+@@ -2023,6 +2029,7 @@ namespace nvrhi
+         BindingLayoutDesc& setRegisterSpaceAndDescriptorSet(uint32_t value) { registerSpace = value; registerSpaceIsDescriptorSet = true; return *this; }
+         BindingLayoutDesc& addItem(const BindingLayoutItem& value) { bindings.push_back(value); return *this; }
+         BindingLayoutDesc& setBindingOffsets(const VulkanBindingOffsets& value) { bindingOffsets = value; return *this; }
++        BindingLayoutDesc& setDescriptorSetsPerPool(uint32_t value) { descriptorSetsPerPool = value; return *this; }
+     };
+ 
+     // Bindless layouts allow applications to attach a descriptor table to an unbounded
+diff --git a/src/vulkan/vulkan-backend.h b/src/vulkan/vulkan-backend.h
+index d2d253d..1498ecb 100644
+--- a/src/vulkan/vulkan-backend.h
++++ b/src/vulkan/vulkan-backend.h
+@@ -729,6 +729,11 @@ namespace nvrhi::vulkan
+         // descriptor pool size information per binding set
+         std::vector<vk::DescriptorPoolSize> descriptorPoolSizeInfo;
+ 
++        // The pools shared by this layout's binding sets when desc.descriptorSetsPerPool is non-zero.
++        vk::Result allocateSharedDescriptorSet(vk::DescriptorSet& set, uint32_t& poolIndex);
++        void freeSharedDescriptorSet(vk::DescriptorSet set, uint32_t poolIndex);
++        vk::DescriptorPool getSharedDescriptorPool(uint32_t poolIndex);
++
+         BindingLayout(const VulkanContext& context, const BindingLayoutDesc& desc);
+         BindingLayout(const VulkanContext& context, const BindlessLayoutDesc& desc);
+         ~BindingLayout() override;
+@@ -741,6 +746,15 @@ namespace nvrhi::vulkan
+ 
+     private:
+         const VulkanContext& m_Context;
++
++        struct SharedDescriptorPool
++        {
++            vk::DescriptorPool pool;
++            uint32_t used = 0;
++        };
++        std::mutex m_SharedPoolMutex;
++        std::vector<SharedDescriptorPool> m_SharedPools;
++        uint32_t m_SharedPoolHint = 0;
+     };
+ 
+     // contains a vk::DescriptorSet
+@@ -753,6 +767,9 @@ namespace nvrhi::vulkan
+         // TODO: move pool to the context instead
+         vk::DescriptorPool descriptorPool;
+         vk::DescriptorSet descriptorSet;
++        // The layout's shared pool the set came from (BindingLayoutDesc::descriptorSetsPerPool), or
++        // ~0u when descriptorPool is the set's own.
++        uint32_t sharedPoolIndex = ~0u;
+ 
+         std::vector<ResourceHandle> resources;
+         static_vector<Buffer*, c_MaxVolatileConstantBuffersPerLayout> volatileConstantBuffers;
+diff --git a/src/vulkan/vulkan-resource-bindings.cpp b/src/vulkan/vulkan-resource-bindings.cpp
+index 2301029..692cabe 100644
+--- a/src/vulkan/vulkan-resource-bindings.cpp
++++ b/src/vulkan/vulkan-resource-bindings.cpp
+@@ -274,6 +274,13 @@ namespace nvrhi::vulkan
+ 
+     BindingLayout::~BindingLayout()
+     {
++        // Every binding set holds a reference to its layout, so the shared pools are empty by now.
++        for (SharedDescriptorPool& shared : m_SharedPools)
++        {
++            m_Context.device.destroyDescriptorPool(shared.pool, m_Context.allocationCallbacks);
++        }
++        m_SharedPools.clear();
++
+         if (descriptorSetLayout)
+         {
+             m_Context.device.destroyDescriptorSetLayout(descriptorSetLayout, m_Context.allocationCallbacks);
+@@ -281,6 +288,80 @@ namespace nvrhi::vulkan
+         }
+     }
+ 
++    vk::Result BindingLayout::allocateSharedDescriptorSet(vk::DescriptorSet& set, uint32_t& poolIndex)
++    {
++        std::lock_guard<std::mutex> lock(m_SharedPoolMutex);
++
++        const uint32_t setsPerPool = desc.descriptorSetsPerPool;
++        auto allocateInfo = vk::DescriptorSetAllocateInfo()
++            .setDescriptorSetCount(1)
++            .setPSetLayouts(&descriptorSetLayout);
++
++        // The pool that gave out the last set first; a pool with room by count can still be too
++        // fragmented to allocate from, and is passed over then.
++        const uint32_t poolCount = uint32_t(m_SharedPools.size());
++        for (uint32_t step = 0; step < poolCount; ++step)
++        {
++            const uint32_t index = (m_SharedPoolHint + step) % poolCount;
++            SharedDescriptorPool& shared = m_SharedPools[index];
++            if (shared.used >= setsPerPool)
++                continue;
++
++            allocateInfo.setDescriptorPool(shared.pool);
++            if (m_Context.device.allocateDescriptorSets(&allocateInfo, &set) == vk::Result::eSuccess)
++            {
++                ++shared.used;
++                poolIndex = index;
++                m_SharedPoolHint = index;
++                return vk::Result::eSuccess;
++            }
++        }
++
++        std::vector<vk::DescriptorPoolSize> poolSizes = descriptorPoolSizeInfo;
++        for (vk::DescriptorPoolSize& size : poolSizes)
++            size.descriptorCount *= setsPerPool;
++
++        auto poolInfo = vk::DescriptorPoolCreateInfo()
++            .setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet)
++            .setPoolSizeCount(uint32_t(poolSizes.size()))
++            .setPPoolSizes(poolSizes.data())
++            .setMaxSets(setsPerPool);
++
++        SharedDescriptorPool shared;
++        vk::Result res = m_Context.device.createDescriptorPool(&poolInfo, m_Context.allocationCallbacks, &shared.pool);
++        if (res != vk::Result::eSuccess)
++            return res;
++
++        allocateInfo.setDescriptorPool(shared.pool);
++        res = m_Context.device.allocateDescriptorSets(&allocateInfo, &set);
++        if (res != vk::Result::eSuccess)
++        {
++            m_Context.device.destroyDescriptorPool(shared.pool, m_Context.allocationCallbacks);
++            return res;
++        }
++
++        shared.used = 1;
++        m_SharedPools.push_back(shared);
++        poolIndex = uint32_t(m_SharedPools.size() - 1);
++        m_SharedPoolHint = poolIndex;
++        return vk::Result::eSuccess;
++    }
++
++    void BindingLayout::freeSharedDescriptorSet(vk::DescriptorSet set, uint32_t poolIndex)
++    {
++        std::lock_guard<std::mutex> lock(m_SharedPoolMutex);
++
++        SharedDescriptorPool& shared = m_SharedPools[poolIndex];
++        (void)m_Context.device.freeDescriptorSets(shared.pool, 1, &set);
++        --shared.used;
++    }
++
++    vk::DescriptorPool BindingLayout::getSharedDescriptorPool(uint32_t poolIndex)
++    {
++        std::lock_guard<std::mutex> lock(m_SharedPoolMutex);
++        return m_SharedPools[poolIndex].pool;
++    }
++
+     static Texture::TextureSubresourceViewType getTextureViewType(Format bindingFormat, Format textureFormat)
+     {
+         Format format = (bindingFormat == Format::UNKNOWN) ? textureFormat : bindingFormat;
+@@ -306,13 +387,27 @@ namespace nvrhi::vulkan
+         const auto& descriptorSetLayout = layout->descriptorSetLayout;
+         const auto& poolSizes = layout->descriptorPoolSizeInfo;
+ 
++        vk::Result res = vk::Result::eSuccess;
++        if (layout->desc.descriptorSetsPerPool != 0)
++        {
++            // from the layout's shared pools
++            res = layout->allocateSharedDescriptorSet(ret->descriptorSet, ret->sharedPoolIndex);
++            if (res != vk::Result::eSuccess)
++            {
++                delete ret;
++            }
++            CHECK_VK_FAIL(res)
++            ret->descriptorPool = layout->getSharedDescriptorPool(ret->sharedPoolIndex);
++        }
++        else
++        {
+         // create descriptor pool to allocate a descriptor from
+         auto poolInfo = vk::DescriptorPoolCreateInfo()
+             .setPoolSizeCount(uint32_t(poolSizes.size()))
+             .setPPoolSizes(poolSizes.data())
+             .setMaxSets(1);
+ 
+-        vk::Result res = m_Context.device.createDescriptorPool(&poolInfo,
++        res = m_Context.device.createDescriptorPool(&poolInfo,
+                                                              m_Context.allocationCallbacks,
+                                                              &ret->descriptorPool);
+         CHECK_VK_FAIL(res)
+@@ -326,6 +421,7 @@ namespace nvrhi::vulkan
+         res = m_Context.device.allocateDescriptorSets(&descriptorSetAllocInfo,
+             &ret->descriptorSet);
+         CHECK_VK_FAIL(res)
++        }
+         
+         // collect all of the descriptor write data
+         std::vector<vk::DescriptorImageInfo> descriptorImageInfo;
+@@ -618,6 +714,13 @@ namespace nvrhi::vulkan
+ 
+     BindingSet::~BindingSet()
+     {
++        if (sharedPoolIndex != ~0u)
++        {
++            checked_cast<BindingLayout*>(layout.Get())->freeSharedDescriptorSet(descriptorSet, sharedPoolIndex);
++            descriptorPool = vk::DescriptorPool();
++            descriptorSet = vk::DescriptorSet();
++            return;
++        }
+         if (descriptorPool)
+         {
+             m_Context.device.destroyDescriptorPool(descriptorPool, m_Context.allocationCallbacks);

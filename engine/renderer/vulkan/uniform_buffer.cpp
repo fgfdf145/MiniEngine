@@ -334,43 +334,30 @@ nvrhi::IBindingLayout* VulkanFrameDescriptorSetLayout::Get() const
     return m_layout;
 }
 
-VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(VkDevice device)
-    : m_device(device)
+VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(nvrhi::IDevice* device)
 {
+    nvrhi::BindingLayoutDesc desc;
+    // The vertex stage too: a toon outline reads its width and the face mask (toon.vert).
+    desc.visibility = nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel;
+    desc.registerSpace = 1;
+    desc.registerSpaceIsDescriptorSet = true;
+    desc.bindingOffsets = ShaderBindingOffsets();
+    desc.descriptorSetsPerPool = kMaterialSetsPerPool;
     // Each texture (binding b) and its sampler (b + kMaterialSamplerBindingOffset).
-    std::array<VkDescriptorSetLayoutBinding, 2 * kMaterialTextureBindingCount> bindings{};
-    for (uint32_t bindingIndex = 0; bindingIndex < kMaterialTextureBindingCount; ++bindingIndex)
+    for (uint32_t binding = 0; binding < kMaterialTextureBindingCount; ++binding)
     {
-        for (uint32_t sampler = 0; sampler < 2; ++sampler)
-        {
-            VkDescriptorSetLayoutBinding& binding = bindings[2 * bindingIndex + sampler];
-            binding.binding = bindingIndex + sampler * kMaterialSamplerBindingOffset;
-            binding.descriptorType = sampler == 0 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLER;
-            binding.descriptorCount = 1;
-            // The vertex stage too: a toon outline reads its width and the face mask (toon.vert).
-            binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        }
+        desc.bindings.push_back(nvrhi::BindingLayoutItem::Texture_SRV(binding));
+        desc.bindings.push_back(nvrhi::BindingLayoutItem::Sampler(binding + kMaterialSamplerBindingOffset));
     }
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-    layoutInfo.pBindings = bindings.data();
-
-    CheckVulkan(
-        vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_layout),
-        "Failed to create material descriptor set layout");
-}
-
-VulkanMaterialDescriptorSetLayout::~VulkanMaterialDescriptorSetLayout()
-{
-    if (m_layout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_layout, nullptr);
-    }
+    m_layout = CreateNvrhiBindingLayout(device, desc, "Failed to create the material binding layout");
 }
 
 VkDescriptorSetLayout VulkanMaterialDescriptorSetLayout::GetHandle() const
+{
+    return ToNative<VkDescriptorSetLayout>(m_layout->getNativeObject(nvrhi::ObjectTypes::VK_DescriptorSetLayout));
+}
+
+nvrhi::IBindingLayout* VulkanMaterialDescriptorSetLayout::Get() const
 {
     return m_layout;
 }
