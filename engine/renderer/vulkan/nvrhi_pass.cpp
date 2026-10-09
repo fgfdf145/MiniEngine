@@ -50,6 +50,89 @@ NvrhiPassScope::~NvrhiPassScope()
     m_commandList->clearState();
 }
 
+void ClearBufferUInt(nvrhi::ICommandList* commandList, nvrhi::IBuffer* buffer, uint32_t value)
+{
+    commandList->setEnableAutomaticBarriers(true);
+    commandList->clearBufferUInt(buffer, value);
+    commandList->setEnableAutomaticBarriers(false);
+}
+
+void ClearTextureFloat(nvrhi::ICommandList* commandList, nvrhi::ITexture* texture, const nvrhi::Color& value)
+{
+    commandList->setEnableAutomaticBarriers(true);
+    commandList->clearTextureFloat(texture, nvrhi::AllSubresources, value);
+    commandList->setEnableAutomaticBarriers(false);
+}
+
+void ClearTextureUInt(nvrhi::ICommandList* commandList, nvrhi::ITexture* texture, uint32_t value)
+{
+    commandList->setEnableAutomaticBarriers(true);
+    commandList->clearTextureUInt(texture, nvrhi::AllSubresources, value);
+    commandList->setEnableAutomaticBarriers(false);
+}
+
+namespace
+{
+nvrhi::BufferHandle CreateBufferOrThrow(nvrhi::IDevice* device, const nvrhi::BufferDesc& desc)
+{
+    nvrhi::BufferHandle buffer = device->createBuffer(desc);
+    if (!buffer)
+    {
+        throw std::runtime_error(std::string("Failed to create the buffer ") + desc.debugName);
+    }
+    return buffer;
+}
+}
+
+nvrhi::BufferHandle CreateDeviceBuffer(nvrhi::IDevice* device, uint64_t byteSize, uint32_t stride, bool uav, const char* name)
+{
+    nvrhi::BufferDesc desc;
+    desc.byteSize = byteSize;
+    desc.structStride = stride;
+    desc.canHaveUAVs = uav;
+    desc.canHaveRawViews = true;
+    desc.debugName = name;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    return CreateBufferOrThrow(device, desc);
+}
+
+nvrhi::BufferHandle CreateUploadBuffer(nvrhi::IDevice* device, uint64_t byteSize, uint32_t stride, const char* name, void** mapped)
+{
+    nvrhi::BufferDesc desc;
+    desc.byteSize = byteSize;
+    desc.structStride = stride;
+    desc.canHaveRawViews = true;
+    desc.cpuAccess = nvrhi::CpuAccessMode::Write;
+    desc.debugName = name;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    nvrhi::BufferHandle buffer = CreateBufferOrThrow(device, desc);
+    *mapped = device->mapBuffer(buffer, nvrhi::CpuAccessMode::Write);
+    if (*mapped == nullptr)
+    {
+        throw std::runtime_error(std::string("Failed to map the buffer ") + name);
+    }
+    return buffer;
+}
+
+nvrhi::BufferHandle CreateReadbackBuffer(nvrhi::IDevice* device, uint64_t byteSize, const char* name, void** mapped)
+{
+    nvrhi::BufferDesc desc;
+    desc.byteSize = byteSize;
+    desc.cpuAccess = nvrhi::CpuAccessMode::Read;
+    desc.debugName = name;
+    desc.initialState = nvrhi::ResourceStates::CopyDest;
+    desc.keepInitialState = true;
+    nvrhi::BufferHandle buffer = CreateBufferOrThrow(device, desc);
+    *mapped = device->mapBuffer(buffer, nvrhi::CpuAccessMode::Read);
+    if (*mapped == nullptr)
+    {
+        throw std::runtime_error(std::string("Failed to map the buffer ") + name);
+    }
+    return buffer;
+}
+
 nvrhi::ShaderHandle CreateNvrhiShader(nvrhi::IDevice* device, nvrhi::ShaderType type, const char* shaderName)
 {
     const std::vector<char> code = ReadSpirvFile(EnginePaths::ShaderRoot() / shaderName);

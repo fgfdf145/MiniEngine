@@ -52,6 +52,22 @@ class NvrhiPassScope
     std::vector<NvrhiSharedBuffer> m_sharedBuffers;
 };
 
+// Clears that need a different state on each backend (Vulkan clears as a copy destination, D3D12
+// through an unordered access or render target view): NVRHI's automatic barriers are on for the clear
+// alone, so the resource must be one NVRHI tracks (keepInitialState, or a scope's shared resource).
+void ClearBufferUInt(nvrhi::ICommandList* commandList, nvrhi::IBuffer* buffer, uint32_t value);
+void ClearTextureFloat(nvrhi::ICommandList* commandList, nvrhi::ITexture* texture, const nvrhi::Color& value);
+void ClearTextureUInt(nvrhi::ICommandList* commandList, nvrhi::ITexture* texture, uint32_t value);
+
+// Buffers as the passes make them. Device-local ones rest as shader resources between frames
+// (keepInitialState); stride, when non-zero, is the element size shaders declare it with
+// (StructuredBuffer<T>, which D3D12 views need), and uav lets them write it. Upload buffers are
+// written by the CPU through mapped (mapped for good) and read by shaders; readback buffers are copy
+// destinations the CPU reads through mapped once the frame that copied has finished.
+nvrhi::BufferHandle CreateDeviceBuffer(nvrhi::IDevice* device, uint64_t byteSize, uint32_t stride, bool uav, const char* name);
+nvrhi::BufferHandle CreateUploadBuffer(nvrhi::IDevice* device, uint64_t byteSize, uint32_t stride, const char* name, void** mapped);
+nvrhi::BufferHandle CreateReadbackBuffer(nvrhi::IDevice* device, uint64_t byteSize, const char* name, void** mapped);
+
 // A SPIR-V shader from the shader folder (EnginePaths::ShaderRoot), entry point main. Throws when
 // the file is missing or NVRHI rejects it.
 nvrhi::ShaderHandle CreateNvrhiShader(nvrhi::IDevice* device, nvrhi::ShaderType type, const char* shaderName);

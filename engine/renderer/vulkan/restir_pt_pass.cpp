@@ -1,7 +1,8 @@
 #include "restir_pt_pass.h"
 
+#include "compute_pass_util.h"
 #include "gpu_timer.h"
-#include "nvrhi_resources.h"
+#include "nvrhi_pass.h"
 #include "ray_scene.h"
 
 #include <engine/renderer/restir_pairing.h>
@@ -54,87 +55,70 @@ constexpr uint32_t kFlagPermutation = 512u;
 constexpr std::array<uint32_t, 3> kPairingSizes = {254u, 230u, 210u};
 constexpr float kPairingSigma = 16.0f;
 constexpr uint32_t kSpatialNeighbours = 3;
-
 // Bytes a pixel: the working and history reservoirs, two surface records, the shifts, the duplication
-// score and the accumulation.
-constexpr VkDeviceSize kReservoirBytes = 64;
-constexpr VkDeviceSize kSurfaceBytes = 32;
-constexpr VkDeviceSize kShiftBytes = 16 * kSpatialNeighbours;
-
+// score and the accumulation. Every record is a uint4 (16 bytes) but the duplication score.
+constexpr uint64_t kReservoirBytes = 64;
+constexpr uint64_t kSurfaceBytes = 32;
+constexpr uint64_t kShiftBytes = 16 * kSpatialNeighbours;
+constexpr uint32_t kRecordStride = 16;
 constexpr uint32_t kSampledBindings = 6;
-constexpr uint32_t kBufferBindings = 8;
-constexpr uint32_t kBindingCount = kSampledBindings + 1 + kBufferBindings;
 
-void ComputeBarrier(VkCommandBuffer commandBuffer)
+void Dispatch(nvrhi::ICommandList* commandList, VkExtent2D extent, uint32_t groupSize)
 {
-    VkMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    vkCmdPipelineBarrier(
-        commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-}
-
-void Dispatch(VkCommandBuffer commandBuffer, VkExtent2D extent, uint32_t groupSize)
-{
-    vkCmdDispatch(commandBuffer, (extent.width + groupSize - 1) / groupSize, (extent.height + groupSize - 1) / groupSize, 1);
+    commandList->dispatch((extent.width + groupSize - 1) / groupSize, (extent.height + groupSize - 1) / groupSize);
 }
 }
 
 VulkanRestirPtPass::VulkanRestirPtPass(
-    VkPhysicalDevice physicalDevice,
-    VkDevice device,
     nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout,
+    nvrhi::IBindingLayout* frameSetLayout,
     const VulkanRayScene& rayScene)
-    : m_physicalDevice(physicalDevice),
-      m_device(device),
-      m_nvrhiDevice(nvrhiDevice)
+    : m_nvrhiDevice(nvrhiDevice)
 {
     (void)targets;
     if (!rayScene.HasHardwareRayTracing())
     {
         return;
     }
-    try
+    using Item = nvrhi::BindingLayoutItem;
+    nvrhi::BindingLayoutDesc desc;
+    desc.visibility = nvrhi::ShaderType::Compute;
+    desc.registerSpace = 2;
+    desc.registerSpaceIsDescriptorSet = true;
+    desc.bindingOffsets = ShaderBindingOffsets();
+    for (uint32_t binding = 0; binding < kSampledBindings; ++binding)
     {
-        std::array<VkDescriptorType, kBindingCount> types{};
-        for (uint32_t binding = 0; binding < kSampledBindings; ++binding)
-        {
-            types[binding] = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        }
-        types[kSampledBindings] = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        for (uint32_t binding = kSampledBindings + 1; binding < kBindingCount; ++binding)
-        {
-            types[binding] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        }
-        m_setLayout = CreateComputeSetLayout(m_device, types);
-        const std::array<VkDescriptorSetLayout, 4> setLayouts = {
-            frameSetLayout, rayScene.GetSetLayout(), m_setLayout, rayScene.GetTextureSetLayout()};
-        CreateComputePipeline(
-            m_device, pipelineCache, setLayouts, "restir_pt_initial.comp.spv", sizeof(RestirPtPushConstants), m_pipelineLayout, m_initialPipeline);
-        m_temporalPipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "restir_pt_temporal.comp.spv");
-        m_spatialShiftPipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "restir_pt_spatial_shift.comp.spv");
-        m_spatialPipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "restir_pt_spatial.comp.spv");
-        m_duplicationPipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "restir_pt_duplication.comp.spv");
+        desc.bindings.push_back(Item::Texture_SRV(binding));
     }
-    catch (...)
+    desc.bindings.push_back(Item::Texture_UAV(6));
+    desc.bindings.push_back(Item::StructuredBuffer_UAV(7));
+    desc.bindings.push_back(Item::StructuredBuffer_UAV(8));
+    desc.bindings.push_back(Item::StructuredBuffer_UAV(9));
+    desc.bindings.push_back(Item::StructuredBuffer_SRV(10));
+    desc.bindings.push_back(Item::StructuredBuffer_UAV(11));
+    desc.bindings.push_back(Item::StructuredBuffer_UAV(12));
+    desc.bindings.push_back(Item::StructuredBuffer_SRV(13));
+    desc.bindings.push_back(Item::StructuredBuffer_UAV(14));
+    desc.bindings.push_back(Item::PushConstants(0, sizeof(RestirPtPushConstants)));
+    m_setLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, desc, "Failed to create the ReSTIR PT binding layout");
+    const auto pipeline = [&](const char* shader)
     {
-        DestroyHandles();
-        throw;
-    }
+        return CreateNvrhiComputePipeline(
+            m_nvrhiDevice, shader, {frameSetLayout, rayScene.GetNvrhiSetLayout(), m_setLayout, rayScene.GetNvrhiTextureSetLayout()});
+    };
+    m_initialPipeline = pipeline("restir_pt_initial.comp.spv");
+    m_temporalPipeline = pipeline("restir_pt_temporal.comp.spv");
+    m_spatialShiftPipeline = pipeline("restir_pt_spatial_shift.comp.spv");
+    m_spatialPipeline = pipeline("restir_pt_spatial.comp.spv");
+    m_duplicationPipeline = pipeline("restir_pt_duplication.comp.spv");
 }
 
-VulkanRestirPtPass::~VulkanRestirPtPass()
-{
-    DestroyHandles();
-}
+VulkanRestirPtPass::~VulkanRestirPtPass() = default;
 
 bool VulkanRestirPtPass::IsAvailable() const
 {
-    return m_duplicationPipeline != VK_NULL_HANDLE;
+    return m_duplicationPipeline != nullptr;
 }
 
 bool VulkanRestirPtPass::Prepare(const SceneRenderTargets& targets)
@@ -173,12 +157,11 @@ void VulkanRestirPtPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    if (!frame.pathTracing.restir || !m_prepared || frame.raySet == VK_NULL_HANDLE || frame.rayTextureSet == VK_NULL_HANDLE)
+    if (!frame.pathTracing.restir || !m_prepared || frame.rayBindingSet == nullptr || frame.rayTextureTable == nullptr)
     {
         return;
     }
     const RestirPtSettings& settings = frame.pathTracing.restirPt;
-
     RestirPtPushConstants constants{};
     constants.extent = glm::uvec2(frame.extent.width, frame.extent.height);
     constants.frameIndex = frame.frameIndex;
@@ -200,14 +183,37 @@ void VulkanRestirPtPass::Record(
     constants.previousCamera = glm::vec4(frame.previousCameraPosition, 1.0f);
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::ScenePathTrace, frame.imageIndex, frame.frameSlot);
-    const VkDescriptorSet passSet = m_descriptorSets.at(slot * 2 + frame.restirPtHistory.writeIndex);
-    const std::array<VkDescriptorSet, 4> sets = {frame.frameDescriptorSet, frame.raySet, passSet, frame.rayTextureSet};
-    vkCmdBindDescriptorSets(
-        commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
+    const uint32_t writeIndex = frame.restirPtHistory.writeIndex;
+    nvrhi::ICommandList* commandList = frame.commandList;
+    nvrhi::ITexture* output = targets.GetTexture(RenderTargetId::ScenePathTrace, slot);
+    // The G-buffer is where the native passes left it; ScenePathTrace is written in GENERAL. The buffers
+    // are this pass's own (NVRHI tracks them): last frame's history and duplication scores reach this
+    // frame's reads through their transitions.
+    const NvrhiPassScope scope(commandList, {{output, nvrhi::ResourceStates::UnorderedAccess}});
+    const std::array<nvrhi::IBuffer*, 6> written = {
+        m_workReservoirs, m_historyReservoirs, m_surfaces[writeIndex], m_shifts, m_duplication, m_accumulation};
+    const auto storeBarrier = [&]()
+    {
+        for (nvrhi::IBuffer* buffer : written)
+        {
+            commandList->setBufferState(buffer, nvrhi::ResourceStates::UnorderedAccess);
+        }
+        commandList->setTextureState(output, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+        commandList->commitBarriers();
+    };
+    commandList->setBufferState(m_surfaces[1u - writeIndex], nvrhi::ResourceStates::ShaderResource);
+    commandList->setBufferState(m_pairing, nvrhi::ResourceStates::ShaderResource);
+    storeBarrier();
 
-    // Last frame's history and duplication scores before anything reads or overwrites them.
-    ComputeBarrier(commandBuffer);
+    nvrhi::ComputeState state;
+    state.bindings = {frame.frameBindingSet, frame.rayBindingSet, m_bindingSets.at(slot * 2 + writeIndex), frame.rayTextureTable};
+    const auto dispatch = [&](nvrhi::IComputePipeline* pipeline, uint32_t groupSize)
+    {
+        state.pipeline = pipeline;
+        commandList->setComputeState(state);
+        commandList->setPushConstants(&constants, sizeof(constants));
+        Dispatch(commandList, frame.extent, groupSize);
+    };
     // Each dispatch is its own GPU timer section; the renderer's mark after the pass closes the last.
     const auto mark = [&](const char* name)
     {
@@ -216,36 +222,31 @@ void VulkanRestirPtPass::Record(
             frame.gpuTimer->Mark(commandBuffer, name);
         }
     };
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_initialPipeline);
-    Dispatch(commandBuffer, frame.extent, kComputeWorkgroupSize);
+    dispatch(m_initialPipeline, kComputeWorkgroupSize);
     if (!settings.temporalReuse && !settings.spatialReuse)
     {
         return;
     }
-    ComputeBarrier(commandBuffer);
+    storeBarrier();
     mark("RestirPtInitial");
     if (settings.temporalReuse)
     {
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_temporalPipeline);
-        Dispatch(commandBuffer, frame.extent, kComputeWorkgroupSize);
-        ComputeBarrier(commandBuffer);
+        dispatch(m_temporalPipeline, kComputeWorkgroupSize);
+        storeBarrier();
         mark("RestirPtTemporal");
     }
     if (settings.spatialReuse)
     {
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_spatialShiftPipeline);
-        Dispatch(commandBuffer, frame.extent, kComputeWorkgroupSize);
-        ComputeBarrier(commandBuffer);
+        dispatch(m_spatialShiftPipeline, kComputeWorkgroupSize);
+        storeBarrier();
         mark("RestirPtSpatialShift");
     }
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_spatialPipeline);
-    Dispatch(commandBuffer, frame.extent, kComputeWorkgroupSize);
+    dispatch(m_spatialPipeline, kComputeWorkgroupSize);
     mark("RestirPtSpatial");
     if (settings.temporalReuse && settings.decorrelation)
     {
-        ComputeBarrier(commandBuffer);
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_duplicationPipeline);
-        Dispatch(commandBuffer, frame.extent, 16);
+        storeBarrier();
+        dispatch(m_duplicationPipeline, 16);
     }
 }
 
@@ -258,42 +259,22 @@ void VulkanRestirPtPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
     }
 }
 
-VulkanRestirPtPass::Buffer VulkanRestirPtPass::CreateBuffer(VkDeviceSize size, bool hostVisible) const
-{
-    Buffer result{};
-    result.size = std::max<VkDeviceSize>(size, 16);
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = result.size;
-    bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    result.handle = CreateNvrhiBuffer(m_nvrhiDevice, bufferInfo, hostVisible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, result.buffer, "Failed to create a ReSTIR PT buffer");
-    return result;
-}
-
-void VulkanRestirPtPass::DestroyBuffer(Buffer& buffer) const
-{
-    // The buffer and its memory go with the handle, released with the rest below.
-    buffer = Buffer{};
-}
-
 void VulkanRestirPtPass::CreateResources(const SceneRenderTargets& targets)
 {
     DestroyResources();
     m_extent = targets.GetExtent();
-    const VkDeviceSize pixels = static_cast<VkDeviceSize>(std::max(m_extent.width, 1u)) * std::max(m_extent.height, 1u);
+    const uint64_t pixels = static_cast<uint64_t>(std::max(m_extent.width, 1u)) * std::max(m_extent.height, 1u);
     try
     {
-        m_workReservoirs = CreateBuffer(pixels * kReservoirBytes, false);
-        m_historyReservoirs = CreateBuffer(pixels * kReservoirBytes, false);
-        for (Buffer& surfaces : m_surfaces)
+        m_workReservoirs = CreateDeviceBuffer(m_nvrhiDevice, pixels * kReservoirBytes, kRecordStride, true, "ReSTIR PT work reservoirs");
+        m_historyReservoirs = CreateDeviceBuffer(m_nvrhiDevice, pixels * kReservoirBytes, kRecordStride, true, "ReSTIR PT history reservoirs");
+        for (nvrhi::BufferHandle& surfaces : m_surfaces)
         {
-            surfaces = CreateBuffer(pixels * kSurfaceBytes, false);
+            surfaces = CreateDeviceBuffer(m_nvrhiDevice, pixels * kSurfaceBytes, kRecordStride, true, "ReSTIR PT surfaces");
         }
-        m_shifts = CreateBuffer(pixels * kShiftBytes, false);
-        m_duplication = CreateBuffer(pixels * sizeof(float), false);
-        m_accumulation = CreateBuffer(pixels * 16, false);
-
+        m_shifts = CreateDeviceBuffer(m_nvrhiDevice, pixels * kShiftBytes, kRecordStride, true, "ReSTIR PT shifts");
+        m_duplication = CreateDeviceBuffer(m_nvrhiDevice, pixels * sizeof(float), sizeof(float), true, "ReSTIR PT duplication");
+        m_accumulation = CreateDeviceBuffer(m_nvrhiDevice, pixels * 16, 16, true, "ReSTIR PT accumulation");
         // The pairing textures, two signed bytes a texel, in the shader's order.
         std::vector<uint16_t> texels;
         for (size_t index = 0; index < kPairingSizes.size(); ++index)
@@ -307,29 +288,11 @@ void VulkanRestirPtPass::CreateResources(const SceneRenderTargets& targets)
         {
             texels.push_back(0);
         }
-        const VkDeviceSize pairingBytes = texels.size() * sizeof(uint16_t);
-        m_pairing = CreateBuffer(pairingBytes, true);
-        void* mapped = m_nvrhiDevice->mapBuffer(m_pairing.handle, nvrhi::CpuAccessMode::Write);
-        if (mapped == nullptr)
-        {
-            throw VulkanError(VK_ERROR_MEMORY_MAP_FAILED, "Failed to map the ReSTIR PT pairing buffer");
-        }
+        const uint64_t pairingBytes = texels.size() * sizeof(uint16_t);
+        void* mapped = nullptr;
+        m_pairing = CreateUploadBuffer(m_nvrhiDevice, pairingBytes, sizeof(uint32_t), "ReSTIR PT pairing", &mapped);
         std::memcpy(mapped, texels.data(), pairingBytes);
-        m_nvrhiDevice->unmapBuffer(m_pairing.handle);
-
-        const uint32_t copyCount = targets.GetTransientCopyCount();
-        const uint32_t setCount = copyCount * 2;
-        const std::array<VkDescriptorPoolSize, 3> poolSizes = {
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, setCount * kSampledBindings},
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, setCount},
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, setCount * kBufferBindings}};
-        VkDescriptorPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.maxSets = setCount;
-        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-        poolInfo.pPoolSizes = poolSizes.data();
-        CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create the ReSTIR PT descriptor pool");
-        m_descriptorSets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, setCount);
+        m_nvrhiDevice->unmapBuffer(m_pairing);
 
         static constexpr std::array<RenderTargetId, kSampledBindings> kSampled = {
             RenderTargetId::SceneDepth,
@@ -338,45 +301,27 @@ void VulkanRestirPtPass::CreateResources(const SceneRenderTargets& targets)
             RenderTargetId::GBufferSurface,
             RenderTargetId::GBufferCoat,
             RenderTargetId::GBufferVelocity};
-        for (uint32_t slot = 0; slot < copyCount; ++slot)
+        using Item = nvrhi::BindingSetItem;
+        for (uint32_t slot = 0; slot < targets.GetTransientCopyCount(); ++slot)
         {
             for (uint32_t writeIndex = 0; writeIndex < 2; ++writeIndex)
             {
-                const VkDescriptorSet set = m_descriptorSets[slot * 2 + writeIndex];
-                std::array<VkDescriptorImageInfo, kSampledBindings + 1> images{};
-                std::array<VkWriteDescriptorSet, kBindingCount> writes{};
+                nvrhi::BindingSetDesc desc;
                 for (uint32_t binding = 0; binding < kSampledBindings; ++binding)
                 {
-                    images[binding] = VkDescriptorImageInfo{VK_NULL_HANDLE, targets.GetSampledView(kSampled[binding], slot), kReadLayout};
-                    writes[binding] = ImageWrite(set, binding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &images[binding]);
+                    desc.bindings.push_back(Item::Texture_SRV(binding, targets.GetTexture(kSampled[binding], slot)));
                 }
-                images[kSampledBindings] =
-                    VkDescriptorImageInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::ScenePathTrace, slot), VK_IMAGE_LAYOUT_GENERAL};
-                writes[kSampledBindings] = ImageWrite(set, kSampledBindings, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &images[kSampledBindings]);
-
-                const std::array<const Buffer*, kBufferBindings> buffers = {
-                    &m_workReservoirs,
-                    &m_historyReservoirs,
-                    &m_surfaces[writeIndex],
-                    &m_surfaces[1u - writeIndex],
-                    &m_shifts,
-                    &m_duplication,
-                    &m_pairing,
-                    &m_accumulation};
-                std::array<VkDescriptorBufferInfo, kBufferBindings> bufferInfos{};
-                for (uint32_t index = 0; index < kBufferBindings; ++index)
-                {
-                    const uint32_t binding = kSampledBindings + 1 + index;
-                    bufferInfos[index] = VkDescriptorBufferInfo{buffers[index]->buffer, 0, VK_WHOLE_SIZE};
-                    VkWriteDescriptorSet& write = writes[binding];
-                    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                    write.dstSet = set;
-                    write.dstBinding = binding;
-                    write.descriptorCount = 1;
-                    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                    write.pBufferInfo = &bufferInfos[index];
-                }
-                vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+                desc.bindings.push_back(Item::Texture_UAV(6, targets.GetTexture(RenderTargetId::ScenePathTrace, slot)));
+                desc.bindings.push_back(Item::StructuredBuffer_UAV(7, m_workReservoirs));
+                desc.bindings.push_back(Item::StructuredBuffer_UAV(8, m_historyReservoirs));
+                desc.bindings.push_back(Item::StructuredBuffer_UAV(9, m_surfaces[writeIndex]));
+                desc.bindings.push_back(Item::StructuredBuffer_SRV(10, m_surfaces[1u - writeIndex]));
+                desc.bindings.push_back(Item::StructuredBuffer_UAV(11, m_shifts));
+                desc.bindings.push_back(Item::StructuredBuffer_UAV(12, m_duplication));
+                desc.bindings.push_back(Item::StructuredBuffer_SRV(13, m_pairing));
+                desc.bindings.push_back(Item::StructuredBuffer_UAV(14, m_accumulation));
+                desc.bindings.push_back(Item::PushConstants(0, sizeof(RestirPtPushConstants)));
+                m_bindingSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create a ReSTIR PT binding set"));
             }
         }
         m_prepared = true;
@@ -391,38 +336,13 @@ void VulkanRestirPtPass::CreateResources(const SceneRenderTargets& targets)
 void VulkanRestirPtPass::DestroyResources()
 {
     m_prepared = false;
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
-    m_descriptorSets.clear();
-    for (Buffer* buffer : {&m_workReservoirs, &m_historyReservoirs, &m_surfaces[0], &m_surfaces[1], &m_shifts, &m_duplication, &m_pairing, &m_accumulation})
-    {
-        DestroyBuffer(*buffer);
-    }
-}
-
-void VulkanRestirPtPass::DestroyHandles()
-{
-    DestroyResources();
-    for (VkPipeline* pipeline : {&m_initialPipeline, &m_temporalPipeline, &m_spatialShiftPipeline, &m_spatialPipeline, &m_duplicationPipeline})
-    {
-        if (*pipeline != VK_NULL_HANDLE)
-        {
-            vkDestroyPipeline(m_device, *pipeline, nullptr);
-            *pipeline = VK_NULL_HANDLE;
-        }
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_setLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
-    }
+    m_bindingSets.clear();
+    m_workReservoirs = nullptr;
+    m_historyReservoirs = nullptr;
+    m_surfaces = {};
+    m_shifts = nullptr;
+    m_duplication = nullptr;
+    m_pairing = nullptr;
+    m_accumulation = nullptr;
 }
 }

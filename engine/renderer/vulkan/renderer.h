@@ -497,6 +497,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     // What the frames in flight may still use, freed once they have finished (VulkanRetireQueue):
     // textures, submeshes' buffers, descriptor sets and draw slots a change of content drops.
     void Retire(std::function<void()> release);
+    // Records into a command list of its own and submits it at once, ahead of the next frame's.
+    void RunNvrhiCommands(const std::function<void(nvrhi::ICommandList*)>& record);
     VulkanRetireQueue m_retireQueue;
     std::vector<uint32_t> m_freeDrawSlots;
     uint32_t m_drawSlotWatermark = 0;

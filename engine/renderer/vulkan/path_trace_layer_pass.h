@@ -63,6 +63,11 @@ class VulkanPathTraceLayerPass : public IScenePass
     VkImageView GetNormalView() const;
     VkImageView GetSurfaceView() const;
     VkImageView GetVelocityView() const;
+    nvrhi::ITexture* GetDepthTexture() const { return m_depth.texture; }
+    nvrhi::ITexture* GetAlbedoTexture() const { return m_surfaceImages[kAlbedo].texture; }
+    nvrhi::ITexture* GetNormalTexture() const { return m_surfaceImages[kNormal].texture; }
+    nvrhi::ITexture* GetSurfaceTexture() const { return m_surfaceImages[kSurface].texture; }
+    nvrhi::ITexture* GetVelocityTexture() const { return m_surfaceImages[kVelocity].texture; }
 
   private:
     struct Image

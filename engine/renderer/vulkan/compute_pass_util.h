@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "nvrhi_native.h"
+#include "nvrhi_pass.h"
 
 #include <array>
 #include <cstdint>
@@ -144,6 +145,15 @@ class HistoryImagePair
     // submitted earlier on the queue, so this reaches across command buffers. Record it even when
     // the effect is off: the bound descriptors name both images in GENERAL.
     void RecordBarrier(VkCommandBuffer commandBuffer, bool historyValid) const;
+    // The same for an NVRHI pass: image index as an NvrhiPassScope shares it. It rests in GENERAL
+    // (UnorderedAccess); invalid history starts from nothing (Common), discarding its contents.
+    NvrhiSharedTexture Shared(uint32_t index, bool historyValid) const
+    {
+        return NvrhiSharedTexture{
+            m_images[index].texture,
+            historyValid ? nvrhi::ResourceStates::UnorderedAccess : nvrhi::ResourceStates::Common,
+            nvrhi::ResourceStates::UnorderedAccess};
+    }
 
   private:
     struct Image

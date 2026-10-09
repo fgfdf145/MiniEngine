@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace me
@@ -46,12 +47,10 @@ class VulkanPathTracePass : public IScenePass
 {
   public:
     VulkanPathTracePass(
-        VkPhysicalDevice physicalDevice,
         VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
         const VulkanRayScene& rayScene,
         TextureDescriptorBinding multiScattering);
     ~VulkanPathTracePass() override;
@@ -88,17 +87,20 @@ class VulkanPathTracePass : public IScenePass
     // Frees the layer's images (the caller has waited for the frames that may use them); the next
     // PrepareLayer makes them again.
     void DestroyLayerImages();
-    void RecordLayerInitialTransition(VkCommandBuffer commandBuffer) const;
+    void RecordLayerInitialTransition(nvrhi::ICommandList* commandList) const;
     // The layer's traced light through the diffuse and the specular lobes, nearest, for set 0.
     TextureDescriptorBinding GetLayerDiffuseBinding() const;
     TextureDescriptorBinding GetLayerSpecularBinding() const;
 
   private:
-    // The trace, and the temporal and filter dispatches the settings ask for, with one of the sets.
+    // The trace, and the temporal and filter dispatches the settings ask for, with one of the sets
+    // (by layout: index 0 the trace's set 2, 1 the temporal and filter dispatches' set 1).
     void RecordPaths(
-        VkCommandBuffer commandBuffer,
+        nvrhi::ICommandList* commandList,
         const ScenePassFrameContext& frame,
-        VkDescriptorSet passSet,
+        nvrhi::IBindingSet* traceSet,
+        nvrhi::IBindingSet* passSet,
+        std::span<nvrhi::ITexture* const> written,
         bool accumulate,
         bool denoise,
         bool historyValid,
@@ -108,36 +110,42 @@ class VulkanPathTracePass : public IScenePass
         bool directLight,
         bool hold) const;
     void CreateRaw(VkExtent2D extent);
-    void WriteDescriptorSets(const SceneRenderTargets& targets);
-    void WriteLayerDescriptorSets(const VulkanPathTraceLayerPass& layer);
+    // The sets over the images: one per layout for each transient copy and history read index (the
+    // scene's), or each history read index (the layer's).
+    struct Inputs
+    {
+        std::array<nvrhi::ITexture*, 8> gbuffer{};
+        nvrhi::ITexture* final[2] = {};
+    };
+    void CreateBindingSets(const SceneRenderTargets& targets);
+    void CreateLayerBindingSets(const VulkanPathTraceLayerPass& layer);
+    nvrhi::BindingSetDesc DescribeSet(
+        const Inputs& inputs,
+        const HistoryImagePair& diffuse,
+        const HistoryImagePair& specular,
+        const HistoryImagePair& surface,
+        uint32_t readIndex) const;
     void DestroyImages();
-    void DestroyHandles();
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_nearestSampler;
-    // The atmosphere's multiple-scattering LUT (binding 18), for the air along the paths.
+    // The atmosphere's multiple-scattering LUT (binding 18), for the air along the paths. It rests in
+    // GENERAL (VulkanAtmosphere); the dispatches read it as a shader resource.
     TextureDescriptorBinding m_multiScattering;
     // The emissive triangles as lights (the trace's set 4), built at the start of each path traced
     // frame; null without hardware ray tracing.
     std::unique_ptr<VulkanPathTraceLights> m_lights;
-    // One set for all three shaders (path_trace_common.slang's bindings 0-18).
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    // Frame set, ray set, this pass's set, ray texture table, emissive lights (the trace); frame set and
-    // this pass's set
-    // (the other two), with the same push constants.
-    VkPipelineLayout m_tracePipelineLayout = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
+    // path_trace_common.slang's bindings 0-18, as the trace's set 2 and the other two shaders' set 1.
+    nvrhi::BindingLayoutHandle m_traceSetLayout;
+    nvrhi::BindingLayoutHandle m_setLayout;
     // The trace's variants, by [transmission][layered] (PT_TRANSMISSION, PT_LAYERED in path_trace.comp);
-    // [1][1] is the whole of it.
-    VkPipeline m_tracePipelines[2][2] = {};
-    VkPipeline m_tracePipeline = VK_NULL_HANDLE;
+    // [1][1] is the whole of it. Frame set, ray set, this pass's set, ray texture table, emissive lights.
+    nvrhi::ComputePipelineHandle m_tracePipelines[2][2];
     const VulkanRayScene* m_rayScene = nullptr;
-    // By full precision (the offline mode's float32 accumulations).
-    VkPipeline m_temporalPipelines[2] = {};
-    VkPipeline m_filterPipelines[2] = {};
+    // By full precision (the offline mode's float32 accumulations). Frame set and this pass's set.
+    nvrhi::ComputePipelineHandle m_temporalPipelines[2];
+    nvrhi::ComputePipelineHandle m_filterPipelines[2];
     bool m_fullPrecision = false;
     // The raw paths (0 diffuse, 1 specular), rewritten every frame; and the accumulations of the two
     // channels and the surfaces they were made on, ping-ponged.
@@ -147,10 +155,13 @@ class VulkanPathTracePass : public IScenePass
     HistoryImagePair m_specularHistory;
     HistoryImagePair m_surfaceHistory;
     bool m_imagesReady = false;
-    // Indexed by transient copy * 2 + history read index; written once the images exist.
-    std::vector<VkDescriptorSet> m_descriptorSets;
-    // The layer's: its accumulations, its result (0 diffuse, 1 specular), its two sets (by history
-    // read index).
+    // Indexed by transient copy * 2 + history read index; made once the images exist.
+    std::vector<nvrhi::BindingSetHandle> m_traceSets;
+    std::vector<nvrhi::BindingSetHandle> m_sets;
+    // The scene's final targets each set writes (SceneGi, SceneReflections), by the same index.
+    std::vector<std::array<nvrhi::ITexture*, 2>> m_finalTargets;
+    // The layer's: its accumulations, its result (0 diffuse, 1 specular), its sets (by history read
+    // index).
     HistoryImagePair m_layerDiffuseHistory;
     HistoryImagePair m_layerSpecularHistory;
     HistoryImagePair m_layerSurfaceHistory;
@@ -158,6 +169,7 @@ class VulkanPathTracePass : public IScenePass
     bool m_layerReady = false;
     uint32_t m_layerShift = 0;
     mutable bool m_layerInitialized = false;
-    std::vector<VkDescriptorSet> m_layerDescriptorSets;
+    std::vector<nvrhi::BindingSetHandle> m_layerTraceSets;
+    std::vector<nvrhi::BindingSetHandle> m_layerSets;
 };
 }

@@ -17,11 +17,9 @@ class VulkanDdgiDebugPass : public IScenePass
 {
   public:
     VulkanDdgiDebugPass(
-        VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
         const VulkanRayScene& rayScene);
     ~VulkanDdgiDebugPass() override;
 
@@ -37,18 +35,15 @@ class VulkanDdgiDebugPass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     const VulkanRayScene& m_rayScene;
     nvrhi::SamplerHandle m_sampler;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
     // ddgi_debug_ray_query.comp, when the ray scene has hardware ray tracing.
-    VkPipeline m_rayQueryPipeline = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    nvrhi::ComputePipelineHandle m_rayQueryPipeline;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
 };
 }

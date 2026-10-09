@@ -30,12 +30,9 @@ class VulkanRestirPtPass : public IScenePass
 {
   public:
     VulkanRestirPtPass(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
         const VulkanRayScene& rayScene);
     ~VulkanRestirPtPass() override;
 
@@ -59,46 +56,32 @@ class VulkanRestirPtPass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    struct Buffer
-    {
-        VkBuffer buffer = VK_NULL_HANDLE;
-        nvrhi::BufferHandle handle;
-        VkDeviceSize size = 0;
-    };
-
-    Buffer CreateBuffer(VkDeviceSize size, bool hostVisible) const;
-    void DestroyBuffer(Buffer& buffer) const;
     void CreateResources(const SceneRenderTargets& targets);
     void DestroyResources();
-    void DestroyHandles();
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-    VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     // Set 2 of every pipeline: 0-5 the G-buffer (depth, normal, albedo, surface, coat, velocity),
     // 6 ScenePathTrace (storage), 7-14 the buffers (restir_pt_common.slang).
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_setLayout;
     // Frame set, ray set, this pass's set, ray texture table.
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_initialPipeline = VK_NULL_HANDLE;
-    VkPipeline m_temporalPipeline = VK_NULL_HANDLE;
-    VkPipeline m_spatialShiftPipeline = VK_NULL_HANDLE;
-    VkPipeline m_spatialPipeline = VK_NULL_HANDLE;
-    VkPipeline m_duplicationPipeline = VK_NULL_HANDLE;
+    nvrhi::ComputePipelineHandle m_initialPipeline;
+    nvrhi::ComputePipelineHandle m_temporalPipeline;
+    nvrhi::ComputePipelineHandle m_spatialShiftPipeline;
+    nvrhi::ComputePipelineHandle m_spatialPipeline;
+    nvrhi::ComputePipelineHandle m_duplicationPipeline;
 
     bool m_prepared = false;
     VkExtent2D m_extent{};
-    Buffer m_workReservoirs;
-    Buffer m_historyReservoirs;
+    nvrhi::BufferHandle m_workReservoirs;
+    nvrhi::BufferHandle m_historyReservoirs;
     // Indexed by TemporalHistoryFrame: the write index holds this frame's surfaces, the read index last
     // frame's.
-    std::array<Buffer, 2> m_surfaces;
-    Buffer m_shifts;
-    Buffer m_duplication;
-    Buffer m_pairing;
-    Buffer m_accumulation;
+    std::array<nvrhi::BufferHandle, 2> m_surfaces;
+    nvrhi::BufferHandle m_shifts;
+    nvrhi::BufferHandle m_duplication;
+    nvrhi::BufferHandle m_pairing;
+    nvrhi::BufferHandle m_accumulation;
     // Indexed by transient copy * 2 + the surfaces' write index.
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
 };
 }

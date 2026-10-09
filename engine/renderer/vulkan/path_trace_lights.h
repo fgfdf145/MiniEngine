@@ -20,22 +20,21 @@ class VulkanRayScene;
 //     emissive submeshes change; and what the GPU builds from them;
 //   - the local lights' world grid (light_grid_common.slang): around the camera, each cell's local
 //     lights, from which the vertices draw their candidates.
-// Each frame slot's own set binds them (the trace's set 4).
+// Each frame slot's own sets bind them: the build's (set 2, written) and the trace's (set 4, read).
 class VulkanPathTraceLights
 {
   public:
-    VulkanPathTraceLights(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, VkPipelineCache pipelineCache, uint32_t frameCount,
-                         VkDescriptorSetLayout frameSetLayout, const VulkanRayScene& rayScene);
+    VulkanPathTraceLights(nvrhi::IDevice* nvrhiDevice, uint32_t frameCount, nvrhi::IBindingLayout* frameSetLayout, const VulkanRayScene& rayScene);
     ~VulkanPathTraceLights();
 
     VulkanPathTraceLights(const VulkanPathTraceLights&) = delete;
     VulkanPathTraceLights& operator=(const VulkanPathTraceLights&) = delete;
 
-    // The set layout of the buffers the trace reads: binding 0 triangles, 1 the power tree, 2 each
-    // slot's first light, 3 each slot's instance, 4 the lights' (slot, triangle), 5 the light grid,
-    // all storage buffers.
-    VkDescriptorSetLayout GetSetLayout() const;
-    VkDescriptorSet GetSet(uint32_t frameSlot) const;
+    // The trace's set 4, the buffers it reads: binding 0 triangles, 1 the power tree, 2 each slot's
+    // first light, 3 each slot's instance, 4 the lights' (slot, triangle), 5 the light grid, all
+    // structured buffers.
+    nvrhi::IBindingLayout* GetTraceLayout() const;
+    nvrhi::IBindingSet* GetTraceSet(uint32_t frameSlot) const;
     // The lights the frame slot's last Record built (0: none, and the trace must not read the set's
     // tree).
     uint32_t GetLightCount(uint32_t frameSlot) const;
@@ -43,11 +42,11 @@ class VulkanPathTraceLights
     // Whether the frame slot's last Record built the light grid.
     bool HasLightGrid(uint32_t frameSlot) const;
 
-    // Records the frame's builds, after the ray scene's own Record; afterwards the buffers are visible
-    // to compute. emissive: brings the frame slot's list up to the ray scene's emissive submeshes (its
-    // last frame has finished) and builds it, unless the scene emits nothing. lightGrid: builds the
+    // Records the frame's builds, after the ray scene's own Record; afterwards the buffers are where the
+    // trace reads them. emissive: brings the frame slot's list up to the ray scene's emissive submeshes
+    // (its last frame has finished) and builds it, unless the scene emits nothing. lightGrid: builds the
     // grid over localLightCount local lights (none: nothing to build), frameIndex reseeding its choices.
-    void Record(VkCommandBuffer commandBuffer, VkDescriptorSet frameSet, VkDescriptorSet raySet, VkDescriptorSet rayTextureSet,
+    void Record(nvrhi::ICommandList* commandList, nvrhi::IBindingSet* frameSet, nvrhi::IBindingSet* raySet, nvrhi::IDescriptorTable* rayTextureTable,
                 uint32_t frameSlot, uint32_t frameIndex, bool emissive, bool lightGrid, uint32_t localLightCount);
 
     // The most lights the list holds (4^10): the triangles past it are left out.
@@ -56,10 +55,9 @@ class VulkanPathTraceLights
   private:
     struct Buffer
     {
-        VkBuffer buffer = VK_NULL_HANDLE;
         nvrhi::BufferHandle handle;
         void* mapped = nullptr;
-        VkDeviceSize size = 0;
+        uint64_t size = 0;
     };
     struct Slot
     {
@@ -76,30 +74,28 @@ class VulkanPathTraceLights
         // What the last Record built.
         bool gridBuilt = false;
         bool emissiveBuilt = false;
-        VkDescriptorSet set = VK_NULL_HANDLE;
+        // The build's set 2 and the trace's set 4 over the slot's buffers.
+        nvrhi::BindingSetHandle buildSet;
+        nvrhi::BindingSetHandle traceSet;
         uint64_t generation = 0;
         uint32_t lightCount = 0;
         uint32_t depth = 1;
         bool valid = false;
     };
 
-    Buffer CreateBuffer(VkDeviceSize size, bool hostVisible) const;
-    void DestroyBuffer(Buffer& buffer) const;
+    // stride: the shaders' element size; hostVisible: the CPU writes it (mapped), else the build does.
+    Buffer CreateBuffer(uint64_t size, uint32_t stride, bool hostVisible, const char* name) const;
     // Grows a buffer to hold size bytes (contents lost); true when it was remade.
-    bool EnsureBuffer(Buffer& buffer, VkDeviceSize size, bool hostVisible) const;
+    bool EnsureBuffer(Buffer& buffer, uint64_t size, uint32_t stride, bool hostVisible, const char* name) const;
     void UpdateSlot(Slot& slot);
-    void WriteSet(const Slot& slot) const;
-    void DestroyHandles();
+    void CreateSets(Slot& slot) const;
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-    VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     const VulkanRayScene& m_rayScene;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
-    VkPipeline m_gridPipeline = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_buildLayout;
+    nvrhi::BindingLayoutHandle m_traceLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
+    nvrhi::ComputePipelineHandle m_gridPipeline;
     std::vector<Slot> m_slots;
 };
 }

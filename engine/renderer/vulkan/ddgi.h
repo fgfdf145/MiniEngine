@@ -16,22 +16,22 @@ namespace me
 // The cascaded DDGI probes on the GPU (docs/design/2026-09-27-ddgi-design.md): the irradiance and
 // visibility atlases (one array layer per level), the probe states, the ray buffer and each frame
 // slot's schedule. Each frame the probes the CPU scheduled trace their rays (ddgi_trace.comp) and
-// blend them into their tiles (ddgi_update.comp). Device lifetime like VulkanEnvironmentProbe: set 0
-// binds the atlases for every draw (bindings 21 to 23), so they rest in SHADER_READ_ONLY_OPTIMAL and
-// are GENERAL only for the update, and Record orders itself with its own barriers. It records after the ray scene and before the scene passes.
+// blend them into their tiles (ddgi_update.comp), both NVRHI dispatches. Device lifetime like
+// VulkanEnvironmentProbe: set 0 binds the atlases for every draw (bindings 21 to 23), so they rest as
+// shader resources and are unordered access only for the update. It records after the ray scene and
+// before the scene passes.
 class VulkanDdgi
 {
   public:
     // The most probes one frame can update (DdgiSettings::probesPerFrame is clamped to it).
     static constexpr uint32_t kMaxProbesPerFrame = 4096;
 
+    // raySetLayout is the ray scene's set (VulkanRayScene::GetNvrhiSetLayout), which the trace binds
+    // at set 1; rayQuery makes ddgi_trace_ray_query.comp's pipeline as well.
     VulkanDdgi(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
-        VkDescriptorSetLayout frameSetLayout,
-        VkDescriptorSetLayout raySetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
+        nvrhi::IBindingLayout* raySetLayout,
         uint32_t frameCount,
         bool rayQuery);
     ~VulkanDdgi();
@@ -52,9 +52,9 @@ class VulkanDdgi
     void Invalidate();
 
     void Record(
-        VkCommandBuffer commandBuffer,
-        VkDescriptorSet frameSet,
-        VkDescriptorSet raySet,
+        nvrhi::ICommandList* commandList,
+        nvrhi::IBindingSet* frameSet,
+        nvrhi::IBindingSet* raySet,
         uint32_t frameSlot,
         uint32_t frameIndex,
         float hysteresis,
@@ -66,53 +66,47 @@ class VulkanDdgi
     TextureDescriptorBinding GetVisibilityBinding() const;
     VkBuffer GetProbeStateBuffer() const;
     nvrhi::IBuffer* GetProbeStateHandle() const;
-    // The irradiance atlas (RGBA16F, SHADER_READ_ONLY_OPTIMAL), for the reference comparison's readback.
+    // The atlases (RGBA16F and RG16F, resting as shader resources), for the reference comparison's
+    // readback.
+    nvrhi::ITexture* GetIrradianceTexture() const;
+    nvrhi::ITexture* GetVisibilityTexture() const;
     VkImage GetIrradianceImage() const;
     VkImage GetVisibilityImage() const;
 
   private:
-    struct Image
-    {
-        VkImage image = VK_NULL_HANDLE;
-        nvrhi::TextureHandle texture;
-        VkImageView view = VK_NULL_HANDLE;
-    };
-    struct Buffer
-    {
-        VkBuffer buffer = VK_NULL_HANDLE;
-        nvrhi::BufferHandle handle;
-        void* mapped = nullptr;
-    };
+    nvrhi::TextureHandle CreateAtlas(uint32_t texelsPerProbe, nvrhi::Format format, const char* name) const;
 
-    Image CreateAtlas(uint32_t texelsPerProbe, VkFormat format);
-    Buffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible);
-    void DestroyHandles();
-
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-    VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     uint32_t m_frameCount = 0;
-    Image m_irradiance;
-    Image m_visibility;
+    nvrhi::TextureHandle m_irradiance;
+    nvrhi::TextureHandle m_visibility;
     nvrhi::SamplerHandle m_sampler;
-    Buffer m_states;
-    Buffer m_rays;
-    std::vector<Buffer> m_schedules;
+    nvrhi::BufferHandle m_states;
+    nvrhi::BufferHandle m_rays;
+    std::vector<nvrhi::BufferHandle> m_schedules;
+    std::vector<void*> m_scheduleMapped;
     std::vector<uint32_t> m_scheduleCounts;
     // Per frame slot: the update's reports (host visible), a copy of the schedule they answer, and
     // whether that schedule was recorded since the last TakeFeedback.
-    std::vector<Buffer> m_feedback;
+    std::vector<nvrhi::BufferHandle> m_feedback;
+    std::vector<nvrhi::BufferHandle> m_feedbackReadback;
+    std::vector<void*> m_feedbackMapped;
     std::vector<std::vector<uint32_t>> m_recordedSchedules;
     std::vector<uint8_t> m_feedbackPending;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_sets;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_tracePipeline = VK_NULL_HANDLE;
+    // Set 2: the trace's (schedule, rays written) and the update's (schedule, rays read, atlases,
+    // states and feedback written), one binding set of each per frame slot.
+    nvrhi::BindingLayoutHandle m_traceLayout;
+    nvrhi::BindingLayoutHandle m_updateLayout;
+    std::vector<nvrhi::BindingSetHandle> m_traceSets;
+    std::vector<nvrhi::BindingSetHandle> m_updateSets;
+    nvrhi::ComputePipelineHandle m_tracePipeline;
     // ddgi_trace_ray_query.comp, made when the ray set has hardware ray tracing (the constructor's
     // rayQuery); Record's rayQuery picks it per frame.
-    VkPipeline m_rayQueryTracePipeline = VK_NULL_HANDLE;
-    VkPipeline m_updatePipeline = VK_NULL_HANDLE;
+    nvrhi::ComputePipelineHandle m_rayQueryTracePipeline;
+    nvrhi::ComputePipelineHandle m_updatePipeline;
     bool m_cleared = false;
+    // The atlases have been cleared once: until then they hold nothing (Common), afterwards they rest
+    // as shader resources.
+    bool m_atlasesInitialized = false;
 };
 }

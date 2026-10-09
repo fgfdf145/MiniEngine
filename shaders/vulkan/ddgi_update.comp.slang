@@ -30,20 +30,67 @@
 #include "d3d_register.slang"
 #include "shader_helpers.slang"
 #include "scene_common.slang"
+[[vk::binding(2, 2)]] [[vk::image_format("rgba16f")]] RWTexture2DArray<float4> irradianceImage : register(u2, space2);
+[[vk::binding(3, 2)]] [[vk::image_format("rg16f")]] RWTexture2DArray<float2> visibilityImage : register(u3, space2);
+
 // The update writes one level of the atlases while it samples the next coarser one, so it reads
-// them through its own set, in GENERAL, not set 0's views of every level, which rest in
-// SHADER_READ_ONLY_OPTIMAL.
+// them through the images it writes, filtering bilinearly itself (clamped to the layer, as set 0's
+// sampler): a texture can be a shader resource or an unordered access view in one dispatch, not both.
 #define DDGI_UPDATE_ATLASES
-[[vk::binding(6, 2)]] Texture2DArray ddgiIrradianceAtlas : register(t6, space2);
-[[vk::binding(7, 2)]] Texture2DArray ddgiVisibilityAtlas : register(t7, space2);
-[[vk::binding(8, 2)]] SamplerState ddgiIrradianceAtlasSampler : register(s8, space2);
-[[vk::binding(9, 2)]] SamplerState ddgiVisibilityAtlasSampler : register(s9, space2);
+
+float2 DdgiIrradianceSize()
+{
+    uint width, height, layers;
+    irradianceImage.GetDimensions(width, height, layers);
+    return float2(width, height);
+}
+
+float2 DdgiVisibilitySize()
+{
+    uint width, height, layers;
+    visibilityImage.GetDimensions(width, height, layers);
+    return float2(width, height);
+}
+
+// The four texels around uv in a layer and their bilinear weights' fraction.
+void DdgiBilinearTexels(float3 uvLayer, float2 size, out int3 texels[4], out float2 fraction)
+{
+    float2 position = uvLayer.xy * size - 0.5;
+    float2 base = floor(position);
+    fraction = position - base;
+    int2 last = int2(size) - 1;
+    int2 low = clamp(int2(base), int2(0), last);
+    int2 high = clamp(int2(base) + 1, int2(0), last);
+    int layer = int(uvLayer.z);
+    texels[0] = int3(low.x, low.y, layer);
+    texels[1] = int3(high.x, low.y, layer);
+    texels[2] = int3(low.x, high.y, layer);
+    texels[3] = int3(high.x, high.y, layer);
+}
+
+float4 DdgiSampleIrradiance(float3 uvLayer)
+{
+    int3 texels[4];
+    float2 fraction;
+    DdgiBilinearTexels(uvLayer, DdgiIrradianceSize(), texels, fraction);
+    float4 top = lerp(irradianceImage[texels[0]], irradianceImage[texels[1]], fraction.x);
+    float4 bottom = lerp(irradianceImage[texels[2]], irradianceImage[texels[3]], fraction.x);
+    return lerp(top, bottom, fraction.y);
+}
+
+float2 DdgiSampleVisibility(float3 uvLayer)
+{
+    int3 texels[4];
+    float2 fraction;
+    DdgiBilinearTexels(uvLayer, DdgiVisibilitySize(), texels, fraction);
+    float2 top = lerp(visibilityImage[texels[0]], visibilityImage[texels[1]], fraction.x);
+    float2 bottom = lerp(visibilityImage[texels[2]], visibilityImage[texels[3]], fraction.x);
+    return lerp(top, bottom, fraction.y);
+}
 #include "ddgi_common.slang"
 
 [[vk::binding(0, 2)]] StructuredBuffer<uint> scheduledProbes : register(t0, space2);
 [[vk::binding(1, 2)]] StructuredBuffer<float4> rays : register(t1, space2);
-[[vk::binding(2, 2)]] [[vk::image_format("rgba16f")]] RWTexture2DArray<float4> irradianceImage : register(u2, space2);
-[[vk::binding(3, 2)]] [[vk::image_format("rg16f")]] RWTexture2DArray<float2> visibilityImage : register(u3, space2);
 [[vk::binding(4, 2)]] RWStructuredBuffer<DdgiProbeState> probeStatesOut : register(u4, space2);
 // Per scheduled probe: DDGI_FEEDBACK_* bits and the coordinate mod 256 (this frame slot's buffer).
 [[vk::binding(5, 2)]] RWStructuredBuffer<uint> feedback : register(u5, space2);

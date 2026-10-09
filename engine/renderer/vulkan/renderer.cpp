@@ -1491,9 +1491,9 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               // The probes trace the ray scene and must be current before
                                               // any surface samples them.
                                               m_ddgi->Record(
-                                                  commandBuffer,
-                                                  frame.frameDescriptorSet,
-                                                  m_rayScene->GetSet(frame.frameSlot),
+                                                  frame.commandList,
+                                                  frame.frameBindingSet,
+                                                  m_rayScene->GetBindingSet(frame.frameSlot),
                                                   frame.frameSlot,
                                                   m_ddgiFrameIndex++,
                                                   ddgiHysteresis,
@@ -2409,12 +2409,9 @@ void VulkanRenderer::CreateDeviceResources()
                           });
     m_skinningPass = std::make_unique<VulkanSkinningPass>(m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     m_ddgi = std::make_unique<VulkanDdgi>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
         m_nvrhi->Get(),
-        m_pipelineCache,
-        m_frameSetLayout->GetHandle(),
-        m_rayScene->GetSetLayout(),
+        m_frameSetLayout->Get(),
+        m_rayScene->GetNvrhiSetLayout(),
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_rayScene->HasHardwareRayTracing());
     m_environmentProbe = std::make_unique<VulkanEnvironmentProbe>(
@@ -2876,8 +2873,11 @@ bool VulkanRenderer::PreparePathTraceLayer(VulkanSceneView& view, bool halfResol
         VulkanUploadBatch transitions(
             m_device->GetHandle(), m_device->GetQueueFamilies().graphicsFamily.value(), m_device->GetGraphicsQueue());
         layerPass->RecordInitialTransition(transitions.GetCommandBuffer());
-        pathTracePass->RecordLayerInitialTransition(transitions.GetCommandBuffer());
         transitions.Flush();
+        RunNvrhiCommands([&](nvrhi::ICommandList* commandList)
+                         {
+                             pathTracePass->RecordLayerInitialTransition(commandList);
+                         });
         TextureDescriptorBinding depth;
         TextureDescriptorBinding diffuse;
         TextureDescriptorBinding specular;
@@ -3134,12 +3134,10 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::move(geometryPass));
     view.passes.push_back(std::make_unique<VulkanRtShadowPass>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_rayScene));
     auto pathTracePass = std::make_unique<VulkanPathTracePass>(
-        m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_nvrhi->Get(),
-        m_pipelineCache,
         *view.targets,
-        m_frameSetLayout->GetHandle(),
+        m_frameSetLayout->Get(),
         *m_rayScene,
         m_atmosphere->GetMultiScatteringBinding());
     view.pathTracePass = pathTracePass.get();
@@ -3174,14 +3172,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.pathTraceLayerPass = pathTraceLayerPass.get();
     view.passes.push_back(std::move(pathTraceLayerPass));
     view.passes.push_back(std::move(pathTracePass));
-    auto restirPtPass = std::make_unique<VulkanRestirPtPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        *m_rayScene);
+    auto restirPtPass = std::make_unique<VulkanRestirPtPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_rayScene);
     view.restirPtPass = restirPtPass.get();
     view.passes.push_back(std::move(restirPtPass));
     view.passes.push_back(std::make_unique<VulkanAoTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_rayScene));
@@ -3199,11 +3190,9 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanGiCompositePass>(
         m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), view.gbufferDescriptors->GetBindingLayout()));
     view.passes.push_back(std::make_unique<VulkanDdgiDebugPass>(
-        m_device->GetHandle(),
         m_nvrhi->Get(),
-        m_pipelineCache,
         *view.targets,
-        m_frameSetLayout->GetHandle(),
+        m_frameSetLayout->Get(),
         *m_rayScene));
     view.passes.push_back(std::move(scatterPass));
     view.passes.push_back(std::move(forwardPass));
@@ -3304,6 +3293,17 @@ void VulkanRenderer::ReleaseDrawSlot(uint32_t slot)
                    m_freeDrawSlots.push_back(slot);
                });
     }
+}
+
+void VulkanRenderer::RunNvrhiCommands(const std::function<void(nvrhi::ICommandList*)>& record)
+{
+    // Submitted on the frames' queue ahead of the next frame, which therefore sees its results.
+    nvrhi::CommandListHandle commandList = m_nvrhi->Get()->createCommandList();
+    commandList->open();
+    commandList->setEnableAutomaticBarriers(false);
+    record(commandList);
+    commandList->close();
+    m_nvrhi->Get()->executeCommandList(commandList);
 }
 
 void VulkanRenderer::Retire(std::function<void()> release)

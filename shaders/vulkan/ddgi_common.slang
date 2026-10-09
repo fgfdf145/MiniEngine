@@ -57,12 +57,33 @@ static const uint DDGI_FEEDBACK_INACTIVE = 4u;
 
 // Set 0 bindings 21 to 23 (VulkanDdgi): one array layer per level, a 10 x 10 (irradiance: rgb
 // irradiance / pi, a sky visibility) or 18 x 18 (visibility: mean distance, mean squared distance)
-// tile per probe, bordered. ddgi_update.comp declares the atlases itself (DDGI_UPDATE_ATLASES).
+// tile per probe, bordered. ddgi_update.comp reads the atlases it writes instead (DDGI_UPDATE_ATLASES):
+// it defines DdgiIrradianceSize, DdgiVisibilitySize, DdgiSampleIrradiance and DdgiSampleVisibility.
 #ifndef DDGI_UPDATE_ATLASES
 [[vk::binding(21, 0)]] Texture2DArray ddgiIrradianceAtlas : register(t21, space0);
 [[vk::binding(FRAME_SAMPLER(21), 0)]] SamplerState ddgiIrradianceAtlasSampler : register(s85, space0);
 [[vk::binding(22, 0)]] Texture2DArray ddgiVisibilityAtlas : register(t22, space0);
 [[vk::binding(FRAME_SAMPLER(22), 0)]] SamplerState ddgiVisibilityAtlasSampler : register(s86, space0);
+
+float2 DdgiIrradianceSize()
+{
+    return float2(TextureSize(ddgiIrradianceAtlas, 0).xy);
+}
+
+float2 DdgiVisibilitySize()
+{
+    return float2(TextureSize(ddgiVisibilityAtlas, 0).xy);
+}
+
+float4 DdgiSampleIrradiance(float3 uvLayer)
+{
+    return ddgiIrradianceAtlas.SampleLevel(ddgiIrradianceAtlasSampler, uvLayer, 0.0);
+}
+
+float2 DdgiSampleVisibility(float3 uvLayer)
+{
+    return ddgiVisibilityAtlas.SampleLevel(ddgiVisibilityAtlasSampler, uvLayer, 0.0).rg;
+}
 #endif
 [[vk::binding(23, 0)]] StructuredBuffer<DdgiProbeState> ddgiProbeStates : register(t23, space0);
 
@@ -175,8 +196,8 @@ float4 DdgiSampleLevelAlong(uint level, float3 P, float3 N, float3 V, float3 D, 
         return float4(0.0);
     }
     float3 alpha = gridPosition - float3(base);
-    float2 irradianceSize = float2(TextureSize(ddgiIrradianceAtlas, 0).xy);
-    float2 visibilitySize = float2(TextureSize(ddgiVisibilityAtlas, 0).xy);
+    float2 irradianceSize = DdgiIrradianceSize();
+    float2 visibilitySize = DdgiVisibilitySize();
 
     float4 sum = float4(0.0);
     float totalWeight = 0.0;
@@ -208,8 +229,7 @@ float4 DdgiSampleLevelAlong(uint level, float3 P, float3 N, float3 V, float3 D, 
 
         float3 probeToPoint = biased - probePosition;
         float distance = length(probeToPoint);
-        float2 moments = ddgiVisibilityAtlas.SampleLevel(ddgiVisibilityAtlasSampler, float3(DdgiAtlasUv(slot, probeToPoint / max(distance, 1e-4), DDGI_VISIBILITY_TEXELS, visibilitySize), float(level)), 0.0)
-                           .rg;
+        float2 moments = DdgiSampleVisibility(float3(DdgiAtlasUv(slot, probeToPoint / max(distance, 1e-4), DDGI_VISIBILITY_TEXELS, visibilitySize), float(level)));
         float chebyshev = 1.0;
         if (distance > moments.x)
         {
@@ -231,7 +251,7 @@ float4 DdgiSampleLevelAlong(uint level, float3 P, float3 N, float3 V, float3 D, 
         }
         weight *= trilinear;
 
-        float4 irradiance = ddgiIrradianceAtlas.SampleLevel(ddgiIrradianceAtlasSampler, float3(DdgiAtlasUv(slot, D, DDGI_IRRADIANCE_TEXELS, irradianceSize), float(level)), 0.0);
+        float4 irradiance = DdgiSampleIrradiance(float3(DdgiAtlasUv(slot, D, DDGI_IRRADIANCE_TEXELS, irradianceSize), float(level)));
         sum += irradiance * weight;
         totalWeight += weight;
     }
