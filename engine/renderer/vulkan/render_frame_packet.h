@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "uniform_buffer.h"
 
@@ -88,5 +88,7 @@ struct RenderFeedback
     // (negative where it is not running).
     std::string pathTracingStatus;
     float pathTracingProgress = -1.0f;
+    // Photo Mode's view, where a frame drew one.
+    std::optional<PhotoViewReport> photoView;
 };
 }

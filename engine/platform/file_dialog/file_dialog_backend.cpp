@@ -11,6 +11,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
+#include <shobjidl.h>
 #else
 #include <engine/core/log/log.h>
 #include <SDL3/SDL.h>
@@ -64,6 +65,41 @@ std::optional<std::string> ShowWindowsFileDialog(OPENFILENAMEW& dialog, bool sav
     }
 
     return WideToUtf8(dialog.lpstrFile);
+}
+
+// The shell's folder picker (IFileOpenDialog with FOS_PICKFOLDERS), which GetOpenFileName has no
+// mode for.
+std::optional<std::string> ShowWindowsFolderDialog()
+{
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    std::optional<std::string> chosen;
+    IFileOpenDialog* dialog = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
+    {
+        DWORD options = 0;
+        if (SUCCEEDED(dialog->GetOptions(&options)))
+        {
+            dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        }
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dialog->Show(nullptr)) && SUCCEEDED(dialog->GetResult(&item)))
+        {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path != nullptr)
+            {
+                chosen = WideToUtf8(path);
+                CoTaskMemFree(path);
+            }
+            item->Release();
+        }
+        dialog->Release();
+    }
+    // Only a call that initialised COM here (S_OK or S_FALSE) is balanced; RPC_E_CHANGED_MODE is not.
+    if (SUCCEEDED(initialized))
+    {
+        CoUninitialize();
+    }
+    return chosen;
 }
 #else
 // Cleared the first time SDL reports that it cannot show a dialog (e.g. no portal or zenity on
@@ -127,6 +163,9 @@ std::optional<std::string> ShowSdlFileDialog(FileDialogType type)
         break;
     case FileDialogType::SaveScene:
         SDL_ShowSaveFileDialog(OnSdlDialogFinished, &result, nullptr, kSceneFilters, 2, nullptr);
+        break;
+    case FileDialogType::OpenFolder:
+        SDL_ShowOpenFolderDialog(OnSdlDialogFinished, &result, nullptr, nullptr, false);
         break;
     }
 
@@ -207,6 +246,8 @@ std::optional<std::string> ShowFileDialog(FileDialogType type)
         dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
         dialog.lpstrDefExt = L"yaml";
         return ShowWindowsFileDialog(dialog, true);
+    case FileDialogType::OpenFolder:
+        return ShowWindowsFolderDialog();
     }
 
     return std::nullopt;

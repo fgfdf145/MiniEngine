@@ -1,4 +1,4 @@
-// The Photo Mode panel drawn headless: idle with room for the photo, an 8K photo planned in tiles,
+﻿// The Photo Mode panel drawn headless: idle with room for the photo, an 8K photo planned in tiles,
 // while a tiled photo renders (its preview stood in for by a test card), while it is written, and
 // after one was saved.
 // Drawing each checks the panel's disabled scopes stay balanced and that its button asks for a
@@ -143,6 +143,10 @@ struct Fixture
 void TestPanel()
 {
     Fixture fixture;
+    // A GPU with ray queries, DLSS and ray reconstruction, as the backend reports them.
+    fixture.state.pathTracingAvailable = true;
+    fixture.state.dlssAvailable = true;
+    fixture.state.dlssRayReconstructionAvailable = true;
     Require(fixture.Draw("photo_mode_idle.png") == 0, "no preview while nothing renders");
 
     fixture.state.photoMode.width = 7680;
@@ -158,6 +162,9 @@ void TestPanel()
     fixture.state.photoStatus.height = 4320;
     fixture.state.photoStatus.viewWidth = 2176;
     fixture.state.photoStatus.viewHeight = 1696;
+    fixture.state.photoStatus.samples = 512;
+    fixture.state.photoStatus.targetSamples = 1024;
+    fixture.state.photoStatus.resolve = "DLSS ray reconstruction";
     Require(fixture.Draw("photo_mode_rendering.png") == 1, "the preview shows the photo's view while it renders");
 
     fixture.state.photoStatus.rendering = false;
@@ -167,7 +174,17 @@ void TestPanel()
     fixture.state.photoStatus = PhotoStatus{};
     fixture.state.photoStatus.message = "Saved 3840 x 2160 to C:/Project/MiniEngine/captures/photo_20261009_161000.png";
     fixture.state.photoStatus.messageTime = std::chrono::steady_clock::now();
+    fixture.state.photoStatus.lastPhoto = std::filesystem::temp_directory_path();
     fixture.Draw("photo_mode_saved.png");
+
+    // Rasterised with TAA, saved to a folder of its own; and on a GPU without ray queries or DLSS.
+    fixture.state.photoMode.offlinePathTracing = false;
+    fixture.state.photoMode.dlssMode = DlssMode::Off;
+    fixture.state.photoMode.folder = "D:/Photos";
+    fixture.Draw("photo_mode_raster.png");
+    fixture.state.pathTracingAvailable = false;
+    fixture.state.dlssAvailable = false;
+    fixture.Draw("photo_mode_no_rays.png");
 }
 }
 

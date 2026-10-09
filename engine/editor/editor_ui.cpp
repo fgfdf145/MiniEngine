@@ -520,17 +520,6 @@ void EditorUiController::OpenDocumentation()
         LOG_WARN("No documentation at {}", readme.string());
         return;
     }
-    // A file URL: three slashes before a drive letter, two before an absolute POSIX path. Spaces are
-    // the one character project paths commonly hold that a URL cannot.
-    std::string path = std::filesystem::absolute(readme, error).generic_string();
-    std::string url = path.starts_with('/') ? "file://" : "file:///";
-    for (const char character : path)
-    {
-        url += character == ' ' ? std::string("%20") : std::string(1, character);
-    }
-    if (!SDL_OpenURL(url.c_str()))
-    {
-        LOG_WARN("Could not open {}: {}", url, SDL_GetError());
-    }
+    OpenInFileBrowser(readme);
 }
 }

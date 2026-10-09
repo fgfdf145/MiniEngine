@@ -1,6 +1,7 @@
 #pragma once
 
 #include <engine/core/render_backend_type.h>
+#include <engine/renderer/render_types.h>
 #include <SDL3/SDL_events.h>
 
 #include <cstdint>
@@ -97,6 +98,15 @@ class IRenderBackend
         // The most pixels one view may have before the photo is tiled; 0 decides from the free GPU
         // memory (PhotoMaxViewPixels). For comparing tiled photos with whole ones.
         uint64_t maxViewPixels = 0;
+        // How it is rendered (docs/design/2026-10-09-photo-offline-path-tracing-design.md): the path
+        // tracer's offline mode, samplesPerPixel a frame until each tile has targetSamples, then
+        // warmupFrames more for the resolve to settle; and DLSS of its own at this mode (Off: the
+        // engine's TAA), with ray reconstruction where it runs.
+        bool offlinePathTracing = false;
+        uint32_t samplesPerPixel = 2;
+        uint32_t targetSamples = 1024;
+        DlssMode dlssMode = DlssMode::Off;
+        bool dlssRayReconstruction = false;
     };
     virtual bool TakePhoto(const PhotoRequest& request, std::string& error)
     {

@@ -826,6 +826,7 @@ void VulkanRenderer::ApplyRenderFeedback()
     State().gpuMemory = feedback.gpuMemory;
     m_pathTracingStatusShown = feedback.pathTracingStatus;
     m_pathTracingProgressShown = feedback.pathTracingProgress;
+    ReportPhotoView(feedback.photoView);
     if (feedback.outOfMemory.value_or(false))
     {
         // World streaming gives memory back before it asks for more.
@@ -850,8 +851,8 @@ void VulkanRenderer::RestartTemporalEffects()
     {
         restart(*view);
     }
-    m_pathTraceAccumulation.Reset();
-    m_dlssResetPending = true;
+    m_view.pathTraceAccumulation.Reset();
+    m_view.dlssResetPending = true;
 }
 
 void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentChanged, RenderExtent viewportExtent)
@@ -1314,7 +1315,11 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         }
         Camera camera = capture.camera;
         UpdateAutoExposure(view, camera, packet, shared.frameSlot);
-        capturePrepared.push_back(PrepareView(view, camera, capture.matrices, false, shared, packet, capture.wholeExtent));
+        capturePrepared.push_back(PrepareView(view, camera, capture.matrices, false, shared, packet, capture.wholeExtent, &capture));
+        if (capture.photo)
+        {
+            m_photoTile = capture.photoTile;
+        }
     }
     m_cpuStages.Mark("CaptureViews");
     const std::unique_ptr<PreparedView> mainPrepared = PrepareView(m_view, packet.camera, packet.viewportMatrices, true, shared, packet);
@@ -1656,7 +1661,8 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     bool viewport,
     const SharedFrameState& shared,
     RenderFramePacket& packet,
-    RenderExtent wholeExtent)
+    RenderExtent wholeExtent,
+    const SceneCaptureView* capture)
 {
     auto prepared = std::make_unique<PreparedView>();
     prepared->view = &view;
@@ -1666,12 +1672,12 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     const SceneLightSelection& lightSelection = shared.lightSelection;
     const int32_t shadowLightIndex = shared.shadowLightIndex;
 
-    // A capture view renders what the viewport does, but for what only the viewport's own camera
-    // has: DLSS (it resolves with the engine's TAA instead), path tracing (it rasterises with the ray
-    // traced effects), and the G-buffer debug views.
+    // A quad view renders what the viewport does, but for what only the viewport's own camera has:
+    // DLSS (it resolves with the engine's TAA instead), path tracing (it rasterises with the ray
+    // traced effects), and the G-buffer debug views. Photo Mode's view has DLSS of its own (its
+    // feature, VulkanSceneView::dlssSlot) and, as its capture asks, the offline path tracer.
+    const bool photo = capture != nullptr && capture->photo;
     RenderDebugSettings renderDebug = packet.renderDebug;
-    // The offline mode's switches stand in for the path tracer's own (EffectivePathTracing).
-    renderDebug.pathTracing = EffectivePathTracing(renderDebug.pathTracing);
     RenderCapabilities capabilities = shared.capabilities;
     if (!viewport)
     {
@@ -1680,7 +1686,28 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
         renderDebug.gbufferView = GBufferDebugView::Off;
         capabilities.dlss = false;
         capabilities.dlssRayReconstruction = false;
+        if (photo)
+        {
+            renderDebug.taa = true;
+            renderDebug.dlssMode = capture->dlssMode;
+            renderDebug.dlssPreset = capture->dlssPreset;
+            renderDebug.dlssRayReconstruction = capture->dlssRayReconstruction;
+            capabilities.dlss = view.dlssActive && m_dlss->HasFeature(view.dlssSlot);
+            capabilities.dlssRayReconstruction = capabilities.dlss && m_dlss->HasRayReconstruction(view.dlssSlot);
+            if (capture->offlinePathTracing)
+            {
+                renderDebug.hardwareRayTracing = true;
+                renderDebug.pathTracing.enabled = true;
+                renderDebug.pathTracing.offline.enabled = true;
+                renderDebug.pathTracing.offline.samplesPerPixel = static_cast<int>(capture->samplesPerPixel);
+                renderDebug.pathTracing.offline.targetSamples = static_cast<int>(std::max(capture->targetSamples, 1u));
+            }
+        }
     }
+    // The settings this view's path tracing compares to tell a still image, before the offline mode
+    // expands them; then its switches stand in for the path tracer's own (EffectivePathTracing).
+    const RenderDebugSettings stillnessSettings = renderDebug;
+    renderDebug.pathTracing = EffectivePathTracing(renderDebug.pathTracing);
     const RenderFeatures features = ResolveRenderFeatures(renderDebug, capabilities);
     const bool dlssEnabled = capabilities.dlss;
     const VkExtent2D extent = view.targets->GetExtent();
@@ -1784,13 +1811,13 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     lightUpload.clustered = clusteredLighting;
     lightUpload.shadowTiles = shared.gpuShadowTiles;
 
-    if (viewport && features.plainPathTracing)
+    if ((viewport || photo) && features.plainPathTracing)
     {
         SyncPathTraceHistoryPrecision(view, features.offlinePathTracing);
     }
     // The forward-shaded surfaces path traced as well (the viewport's path tracing only), from images
     // made before the camera block says so.
-    const bool pathTraceLayer = viewport && features.pathTracing && renderDebug.pathTracing.forwardSurfaces &&
+    const bool pathTraceLayer = (viewport || photo) && features.pathTracing && renderDebug.pathTracing.forwardSurfaces &&
                                 PreparePathTraceLayer(view, renderDebug.pathTracing.forwardSurfacesHalfResolution);
     const uint32_t pathTraceLayerShift = pathTraceLayer ? view.pathTracePass->GetLayerShift() : 0u;
 
@@ -2058,10 +2085,11 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     if (dlssEnabled)
     {
         frame.dlss = m_dlss.get();
+        frame.dlssSlot = view.dlssSlot;
         frame.jitterPixels = jitterPixels;
-        frame.dlssReset = m_dlssResetPending;
+        frame.dlssReset = view.dlssResetPending;
         frame.frameTimeMs = packet.deltaSeconds * 1000.0f;
-        frame.dlssRayReconstruction = m_dlss->HasRayReconstruction();
+        frame.dlssRayReconstruction = m_dlss->HasRayReconstruction(view.dlssSlot);
         frame.view = viewportMatrices.view;
         frame.projection = viewportMatrices.renderProjection;
         // Ray reconstruction denoises the traced shadow and the paths itself; it wants the raw rays.
@@ -2073,13 +2101,15 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
         frame.pathTraceHitDistance = frame.dlssRayReconstruction && frame.pathTracing.reflectionGuides && frame.pathTracing.enabled &&
                                      !frame.pathTracing.restir &&
                                      (frame.pathTracing.offline.enabled || (!frame.pathTracing.accumulate && !frame.pathTracing.denoise));
-        m_dlssResetPending = false;
+        view.dlssResetPending = false;
     }
     // The traced shadow accumulates only while its filters run.
     frame.rtShadowHistory = view.rtShadowHistory.Advance(frame.rayTracing.sunShadows && frame.rayTracing.denoise);
-    if (viewport)
+    if (viewport || photo)
     {
-        UpdatePathTracing(frame, packet, selectedLights, lightSelection.ambientLuminance, environmentData, preExposure);
+        UpdatePathTracing(
+            view, viewportMatrices, stillnessSettings, viewport, frame, packet, selectedLights, lightSelection.ambientLuminance, environmentData,
+            preExposure);
     }
     // Reflections take their colour from TAA's history, so they trace only where it is valid; the
     // forward-only order has no G-buffer to trace from.
@@ -2126,6 +2156,17 @@ void VulkanRenderer::PublishFeedback(const RenderFramePacket& frame)
     m_feedback.gpuMemory = m_gpuMemory;
     m_feedback.pathTracingStatus = m_pathTracingStatus;
     m_feedback.pathTracingProgress = m_pathTracingProgress;
+    m_feedback.photoView.reset();
+    if (m_photoViewIndex.has_value() && *m_photoViewIndex < m_captureViews.size())
+    {
+        const VulkanSceneView& photo = *m_captureViews[*m_photoViewIndex];
+        PhotoViewReport report;
+        report.tile = m_photoTile;
+        report.offline = photo.offlineProgress;
+        report.dlss = photo.dlssActive ? m_photoDlssMode : DlssMode::Off;
+        report.rayReconstruction = photo.dlssActive && m_photoDlssRayReconstruction;
+        m_feedback.photoView = report;
+    }
 }
 
 GpuMemoryReport VulkanRenderer::MeasureGpuMemory(const RenderFramePacket& frame) const
@@ -2250,13 +2291,13 @@ void VulkanRenderer::CreateSwapchainResources()
     m_activeDlssMode = DlssMode::Off;
     m_activeDlssPreset = DlssPreset::Default;
     m_activeDlssRayReconstruction = false;
-    m_dlssResetPending = true;
+    m_view.dlssResetPending = true;
     // The clouds' targets follow the scene's extent; the descriptor sets built after this name the
     // target, and the device is idle here.
     m_atmosphere->EnsureCloudTarget(*m_view.atmosphere, m_view.targets->GetExtent());
 
     m_view.ResetHistories();
-    m_pathTraceAccumulation.Reset();
+    m_view.pathTraceAccumulation.Reset();
     CreateScenePasses(m_view);
 }
 
@@ -2800,7 +2841,7 @@ void VulkanRenderer::SyncPathTraceHistoryPrecision(VulkanSceneView& view, bool f
     view.uniformBuffer->SetPathTraceLayerImages(depth, diffuse, specular);
     view.pathTraceLayerHistory.Reset();
     view.pathTraceHistory.Reset();
-    m_pathTraceAccumulation.Reset();
+    m_view.pathTraceAccumulation.Reset();
 }
 
 bool VulkanRenderer::PreparePathTraceLayer(VulkanSceneView& view, bool halfResolution)
@@ -3369,7 +3410,7 @@ void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent, const RenderD
         m_activeDlssMode = extents.dlss;
         m_activeDlssPreset = extents.dlssPreset;
         m_activeDlssRayReconstruction = extents.rayReconstruction;
-        m_dlssResetPending = true;
+        m_view.dlssResetPending = true;
         m_view.taaHistory.Reset();
     }
     if (m_view.targets->MatchesExtent(extents.render, extents.output))
@@ -3377,8 +3418,8 @@ void VulkanRenderer::SyncSceneTargets(RenderExtent viewportExtent, const RenderD
         return;
     }
     RebuildViewTargets(m_view, extents.render, extents.output);
-    m_pathTraceAccumulation.Reset();
-    m_dlssResetPending = true;
+    m_view.pathTraceAccumulation.Reset();
+    m_view.dlssResetPending = true;
     LOG_INFO(
         "Scene render targets resized to {}x{}, output {}x{}",
         m_view.targets->GetExtent().width,
@@ -3432,51 +3473,96 @@ void VulkanRenderer::SyncCaptureViews(std::span<const SceneCaptureView> cameras)
         m_captureViews.resize(cameras.size());
         LOG_INFO("Capture views: {}", cameras.size());
     }
+    // Photo Mode's DLSS feature lives as long as its view.
+    if (std::none_of(cameras.begin(), cameras.end(), [](const SceneCaptureView& camera) { return camera.photo; }))
+    {
+        m_dlss->ReleaseFeature(DlssFeatureSlot::Photo);
+        m_photoDlssMode = DlssMode::Off;
+    }
     m_photoViewIndex.reset();
     for (size_t index = 0; index < cameras.size(); ++index)
     {
-        const VkExtent2D extent = ToVkExtent(cameras[index].extent);
+        const SceneCaptureView& capture = cameras[index];
+        const VkExtent2D output = ToVkExtent(capture.extent);
+        bool dlss = false;
+        const VkExtent2D render = capture.photo ? EnsurePhotoDlss(capture, output, dlss) : output;
         try
         {
             if (index == m_captureViews.size())
             {
-                m_captureViews.push_back(CreateCaptureView(extent));
+                m_captureViews.push_back(CreateCaptureView(render, output));
                 LOG_INFO(
-                    "Capture view {} made at {}x{} ({} MB of targets)",
+                    "Capture view {} made at {}x{}, output {}x{} ({} MB of targets)",
                     index,
-                    extent.width,
-                    extent.height,
+                    render.width,
+                    render.height,
+                    output.width,
+                    output.height,
                     m_captureViews.back()->targets->GetAllocatedBytes() >> 20);
             }
-            else if (!m_captureViews[index]->targets->MatchesExtent(extent, extent))
+            else if (!m_captureViews[index]->targets->MatchesExtent(render, output))
             {
-                RebuildViewTargets(*m_captureViews[index], extent, extent);
-                LOG_INFO("Capture view {} resized to {}x{}", index, extent.width, extent.height);
+                RebuildViewTargets(*m_captureViews[index], render, output);
+                LOG_INFO("Capture view {} resized to {}x{}, output {}x{}", index, render.width, render.height, output.width, output.height);
             }
         }
         catch (const std::exception& error)
         {
             // A photo can ask for more than the GPU has; the views made so far still draw, and the
             // photo reports why it has none.
-            if (!cameras[index].photo)
+            if (!capture.photo)
             {
                 throw;
             }
             vkDeviceWaitIdle(m_device->GetHandle());
             m_captureViews.resize(index);
-            m_photoViewError = fmt::format("its {}x{} view could not be made: {}", extent.width, extent.height, error.what());
+            m_dlss->ReleaseFeature(DlssFeatureSlot::Photo);
+            m_photoDlssMode = DlssMode::Off;
+            m_photoViewError = fmt::format("its {}x{} view could not be made: {}", output.width, output.height, error.what());
             LOG_ERROR("Photo: {}", m_photoViewError);
             return;
         }
-        if (cameras[index].photo)
+        VulkanSceneView& view = *m_captureViews[index];
+        view.dlssSlot = capture.photo ? DlssFeatureSlot::Photo : DlssFeatureSlot::Viewport;
+        view.dlssActive = dlss;
+        if (capture.photo)
         {
             m_photoViewIndex = index;
             m_photoViewError.clear();
+            // Another resolve, or DLSS at another quality, model or denoiser: no history carries over.
+            const DlssMode mode = dlss ? capture.dlssMode : DlssMode::Off;
+            const bool rayReconstruction = dlss && m_dlss->HasRayReconstruction(DlssFeatureSlot::Photo);
+            if (mode != m_photoDlssMode || capture.dlssPreset != m_photoDlssPreset || rayReconstruction != m_photoDlssRayReconstruction)
+            {
+                LOG_INFO("Photo: resolves with {}", mode == DlssMode::Off ? "TAA" : (rayReconstruction ? "DLSS ray reconstruction" : "DLSS"));
+                m_photoDlssMode = mode;
+                m_photoDlssPreset = capture.dlssPreset;
+                m_photoDlssRayReconstruction = rayReconstruction;
+                view.ResetHistories();
+            }
         }
     }
 }
 
-std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D extent)
+VkExtent2D VulkanRenderer::EnsurePhotoDlss(const SceneCaptureView& capture, VkExtent2D output, bool& dlss)
+{
+    dlss = false;
+    if (capture.dlssMode != DlssMode::Off && m_dlss->IsAvailable())
+    {
+        const std::optional<VkExtent2D> render = m_dlss->RenderExtentFor(output, capture.dlssMode, DlssFeatureSlot::Photo);
+        if (render.has_value() &&
+            m_dlss->EnsureFeature(*render, output, capture.dlssMode, capture.dlssPreset, capture.dlssRayReconstruction, DlssFeatureSlot::Photo))
+        {
+            dlss = true;
+            return *render;
+        }
+        // The feature would not be made (NGX's log says why): the TAA resolves the photo instead.
+    }
+    m_dlss->ReleaseFeature(DlssFeatureSlot::Photo);
+    return output;
+}
+
+std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D render, VkExtent2D output)
 {
     // Its targets in the viewport's LDR format, so the views' pictures can share a canvas and the
     // material pipelines (made against the viewport's passes) draw into them.
@@ -3486,8 +3572,8 @@ std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D ex
         m_device->GetHandle(),
         m_nvrhi->Get(),
         m_view.targets->GetFormat(RenderTargetId::SceneLdr),
-        extent,
-        extent,
+        render,
+        output,
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
     view->shadowPass = std::make_unique<VulkanShadowPass>(
         m_device->GetPhysicalDevice(),
@@ -3497,7 +3583,7 @@ std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D ex
         m_materialSetLayout->GetHandle(),
         kShadowMapResolution);
     view->atmosphere = m_atmosphere->CreateView();
-    m_atmosphere->EnsureCloudTarget(*view->atmosphere, extent);
+    m_atmosphere->EnsureCloudTarget(*view->atmosphere, render);
     CreateScenePasses(*view);
     view->uniformBuffer = CreateViewUniformBuffer(*view, m_view.uniformBuffer->GetDrawCapacity());
     // The environment map the viewport's sets name, which the constructor's bindings already do.
@@ -4824,6 +4910,10 @@ void VulkanRenderer::RecordTransitions(
 }
 
 void VulkanRenderer::UpdatePathTracing(
+    VulkanSceneView& sceneView,
+    const ViewportMatrices& matrices,
+    const RenderDebugSettings& settings,
+    bool viewport,
     ScenePassFrameContext& frame,
     const RenderFramePacket& packet,
     std::span<const GpuLightData> lights,
@@ -4835,12 +4925,13 @@ void VulkanRenderer::UpdatePathTracing(
     // The plain path tracer: not while ReSTIR PT runs in its place (its bookkeeping is in the frame setup).
     // The forward-shaded surfaces' layer, which either traces, keeps its history the same way.
     const bool plainPathTracing = frame.pathTracing.enabled && !frame.pathTracing.restir;
+    sceneView.offlineProgress.reset();
     if (plainPathTracing || frame.pathTraceLayer)
     {
-        if (plainPathTracing && m_view.pathTracePass->Prepare(*m_view.targets))
+        if (plainPathTracing && sceneView.pathTracePass->Prepare(*sceneView.targets))
         {
-            m_view.pathTraceHistory.Reset();
-            m_pathTraceAccumulation.Reset();
+            sceneView.pathTraceHistory.Reset();
+            sceneView.pathTraceAccumulation.Reset();
         }
         // The light as the paths see it: every selected light, the ambient, and the sky's sun, air and
         // HDRI. The clouds drift every frame and are left out, so a still image keeps averaging them.
@@ -4856,25 +4947,34 @@ void VulkanRenderer::UpdatePathTracing(
              environment.mieParameters, environment.ozoneAbsorption, environment.groundAlbedo, environment.hdriParameters,
              environment.hdriIrradianceSh[0]});
         PathTraceView view;
-        view.view = packet.viewportMatrices.view;
-        view.projection = packet.viewportMatrices.projection;
+        view.view = matrices.view;
+        view.projection = matrices.projection;
         view.width = frame.extent.width;
         view.height = frame.extent.height;
-        const bool sceneChanged = packet.contentChanged || m_ddgiMovingInstances.MovedThisFrame() || m_pathTraceGeometryEpoch != m_ddgiGeometryEpoch;
-        stillFrames = m_pathTraceAccumulation.Advance(view, lighting, packet.renderDebug, sceneChanged);
+        const bool sceneChanged =
+            packet.contentChanged || m_ddgiMovingInstances.MovedThisFrame() || sceneView.pathTraceGeometryEpoch != m_ddgiGeometryEpoch;
+        stillFrames = sceneView.pathTraceAccumulation.Advance(view, lighting, settings, sceneChanged);
         frame.pathTraceHistoryCap = PathTraceHistoryCap(frame.pathTracing, stillFrames);
         // The offline image stops tracing once a still image has its samples.
-        frame.pathTraceHold = plainPathTracing && frame.pathTracing.offline.enabled &&
-                              OfflinePathTraceProgress(frame.pathTracing.offline, stillFrames).done;
+        if (plainPathTracing && frame.pathTracing.offline.enabled)
+        {
+            sceneView.offlineProgress = OfflinePathTraceProgress(frame.pathTracing.offline, stillFrames);
+            frame.pathTraceHold = sceneView.offlineProgress->done;
+        }
     }
     else
     {
-        m_pathTraceAccumulation.Reset();
+        sceneView.pathTraceAccumulation.Reset();
     }
-    m_pathTraceGeometryEpoch = m_ddgiGeometryEpoch;
-    frame.pathTraceHistory = m_view.pathTraceHistory.Advance(plainPathTracing && frame.pathTracing.accumulate);
-    frame.pathTraceHistoryScale = TaaHistoryScale(frame.pathTraceHistory.valid, preExposure, m_view.pathTraceHistoryPreExposure);
-    m_view.pathTraceHistoryPreExposure = preExposure;
+    sceneView.pathTraceGeometryEpoch = m_ddgiGeometryEpoch;
+    frame.pathTraceHistory = sceneView.pathTraceHistory.Advance(plainPathTracing && frame.pathTracing.accumulate);
+    frame.pathTraceHistoryScale = TaaHistoryScale(frame.pathTraceHistory.valid, preExposure, sceneView.pathTraceHistoryPreExposure);
+    sceneView.pathTraceHistoryPreExposure = preExposure;
+    // The Graphics Debug status line is the viewport's.
+    if (!viewport)
+    {
+        return;
+    }
 
     const RenderDebugSettings& renderDebug = packet.renderDebug;
     m_pathTracingProgress = -1.0f;

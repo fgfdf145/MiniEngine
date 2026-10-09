@@ -1,4 +1,4 @@
-#include "photo_mode_panel.h"
+﻿#include "photo_mode_panel.h"
 
 #include <engine/editor/editor_ui.h>
 #include <engine/editor/imgui_frame_snapshot.h>
@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <filesystem>
 #include <numeric>
 #include <utility>
 
@@ -86,6 +87,133 @@ void DrawPhotoSize(PhotoModeSettings& settings)
         settings.width / std::max(divisor, 1u),
         settings.height / std::max(divisor, 1u));
 }
+
+constexpr std::array<std::pair<DlssMode, const char*>, 6> kPhotoDlssModes = {{
+    {DlssMode::Off, "Off (TAA)"},
+    {DlssMode::Dlaa, "DLAA"},
+    {DlssMode::Quality, "Quality"},
+    {DlssMode::Balanced, "Balanced"},
+    {DlssMode::Performance, "Performance"},
+    {DlssMode::UltraPerformance, "Ultra Performance"},
+}};
+
+// How the photo renders: the offline path tracer and its samples, and the photo's own DLSS.
+void DrawPhotoRendering(PhotoModeSettings& settings, const EditorSharedState& state)
+{
+    ImGui::BeginDisabled(!state.pathTracingAvailable);
+    ImGui::Checkbox("Offline Path Tracing", &settings.offlinePathTracing);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip(
+            state.pathTracingAvailable
+                ? "Every tile is path traced in the offline mode until it has its samples, then held while the\n"
+                  "warm-up frames let the resolve settle. Bounces, firefly clamp and light candidates are the\n"
+                  "offline mode's (Graphics Debug > Path tracing). Off: rasterised with the ray traced effects."
+                : "Needs a GPU with ray queries");
+    }
+    if (settings.offlinePathTracing && state.pathTracingAvailable)
+    {
+        ImGui::Indent();
+        int samplesPerPixel = static_cast<int>(settings.samplesPerPixel);
+        if (DragIntInRange("Samples per Frame", &samplesPerPixel, 1, static_cast<int>(kPhotoMaxSamplesPerPixel)))
+        {
+            settings.samplesPerPixel = static_cast<uint32_t>(samplesPerPixel);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Samples each pixel traces a frame. More finish sooner but keep the GPU busy longer each frame,\n"
+                              "which the editor feels while the photo renders.");
+        }
+        int targetSamples = static_cast<int>(settings.targetSamples);
+        if (DragIntInRange("Samples per Pixel", &targetSamples, static_cast<int>(kPhotoMinTargetSamples), static_cast<int>(kPhotoMaxTargetSamples)))
+        {
+            settings.targetSamples = static_cast<uint32_t>(targetSamples);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("The samples each pixel of the photo accumulates in all, every tile alike");
+        }
+        ImGui::Unindent();
+    }
+
+    int selected = 0;
+    for (size_t index = 0; index < kPhotoDlssModes.size(); ++index)
+    {
+        if (kPhotoDlssModes[index].first == settings.dlssMode)
+        {
+            selected = static_cast<int>(index);
+        }
+    }
+    ImGui::BeginDisabled(!state.dlssAvailable);
+    if (ImGui::BeginCombo("DLSS", kPhotoDlssModes[static_cast<size_t>(selected)].second))
+    {
+        for (size_t index = 0; index < kPhotoDlssModes.size(); ++index)
+        {
+            if (ImGui::Selectable(kPhotoDlssModes[index].second, selected == static_cast<int>(index)))
+            {
+                settings.dlssMode = kPhotoDlssModes[index].first;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip(
+            state.dlssAvailable ? "The photo's own DLSS, whatever the viewport runs: DLAA at the photo's size, the other modes\n"
+                                  "rendered smaller and upscaled (less GPU memory, so larger tiles)"
+                                : "DLSS is not available here: the engine's TAA resolves the photo");
+    }
+    ImGui::BeginDisabled(!state.dlssAvailable || !state.dlssRayReconstructionAvailable || settings.dlssMode == DlssMode::Off);
+    ImGui::Checkbox("Ray Reconstruction", &settings.dlssRayReconstruction);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip(
+            state.dlssRayReconstructionAvailable ? "DLSS ray reconstruction denoises the path traced (or ray traced) light as it resolves"
+                                                 : "The driver or the DLSS runtime has no ray reconstruction");
+    }
+}
+
+// Where photos go: the folder, a button to choose another (or go back to captures/), and buttons
+// that open the folder and the last photo.
+void DrawPhotoFolder(PhotoModeSettings& settings, const PhotoStatus& status)
+{
+    const std::filesystem::path folder = PhotoFolder(settings);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(folder.string().c_str());
+    ImGui::PopTextWrapPos();
+    const bool choose = ImGui::Button(ICON_PH_FOLDER_OPEN " Choose Folder...");
+    if (const std::optional<std::string> chosen = PickFilePath(FileDialogType::OpenFolder, choose))
+    {
+        settings.folder = *chosen;
+    }
+    if (!settings.folder.empty())
+    {
+        ImGui::SameLine();
+        if (ImGui::Button("Use captures/"))
+        {
+            settings.folder.clear();
+        }
+    }
+    if (ImGui::Button(ICON_PH_FOLDER " Open Folder"))
+    {
+        // Made first, so a folder no photo has gone to yet still opens.
+        std::error_code error;
+        std::filesystem::create_directories(folder, error);
+        OpenInFileBrowser(folder);
+    }
+    std::error_code error;
+    if (!status.lastPhoto.empty() && std::filesystem::exists(status.lastPhoto, error))
+    {
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_PH_IMAGE " Open Last Photo"))
+        {
+            OpenInFileBrowser(status.lastPhoto);
+        }
+    }
+}
 }
 
 PhotoModePanel::PhotoModePanel()
@@ -114,11 +242,18 @@ void PhotoModePanel::OnGui(EditorContext& context)
             status.framesTotal > 0 ? static_cast<float>(status.framesRendered) / static_cast<float>(status.framesTotal) : 0.0f;
         const uint32_t warmup = std::max(status.framesTotal / std::max(status.tileCount, 1u), 1u);
         const uint32_t tileFrame = status.framesRendered - (status.tile - 1) * warmup;
+        const std::string samples = status.targetSamples > 0 ? fmt::format(", {} of {} spp", status.samples, status.targetSamples) : std::string();
         const std::string overlay =
             status.tileCount > 1
-                ? fmt::format("{} x {}: tile {} of {}, frame {} of {}", status.width, status.height, status.tile, status.tileCount, tileFrame, warmup)
-                : fmt::format("{} x {}: frame {} of {}", status.width, status.height, status.framesRendered, status.framesTotal);
-        ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), overlay.c_str());
+                ? fmt::format("{} x {}: tile {} of {}, frame {} of {}{}", status.width, status.height, status.tile, status.tileCount,
+                              std::min(tileFrame, warmup), warmup, samples)
+                : fmt::format("{} x {}: frame {} of {}{}", status.width, status.height, std::min(status.framesRendered, status.framesTotal),
+                              status.framesTotal, samples);
+        ImGui::ProgressBar(std::min(fraction, 1.0f), ImVec2(-1.0f, 0.0f), overlay.c_str());
+        if (!status.resolve.empty())
+        {
+            ImGui::TextDisabled("Resolved with %s", status.resolve.c_str());
+        }
         // The view as it draws the photo (a tile with its guard, when it is tiled), across the window at
         // its aspect; the render thread puts the picture in, or leaves it out until the view has one.
         const float width = std::max(ImGui::GetContentRegionAvail().x, 1.0f);
@@ -153,7 +288,11 @@ void PhotoModePanel::OnGui(EditorContext& context)
     // a photo renders its own view is in the usage already, so the plan is left as it was.
     if (!busy)
     {
-        const PhotoTiling tiling = PlanPhotoTiles(settings.width, settings.height, PhotoMaxViewPixels(state.gpuMemory));
+        const double extraBytes = PhotoExtraBytesPerPixel(
+            settings.offlinePathTracing && state.pathTracingAvailable,
+            state.dlssAvailable ? settings.dlssMode : DlssMode::Off,
+            settings.dlssRayReconstruction && state.dlssRayReconstructionAvailable);
+        const PhotoTiling tiling = PlanPhotoTiles(settings.width, settings.height, PhotoMaxViewPixels(state.gpuMemory, extraBytes));
         const RenderExtent view = tiling.ViewExtent();
         if (tiling.Tiled())
         {
@@ -168,7 +307,7 @@ void PhotoModePanel::OnGui(EditorContext& context)
                 tiling.guard);
             ImGui::PopTextWrapPos();
         }
-        if (const std::optional<PhotoMemoryEstimate> memory = EstimatePhotoMemory(state.gpuMemory, view.width, view.height))
+        if (const std::optional<PhotoMemoryEstimate> memory = EstimatePhotoMemory(state.gpuMemory, view.width, view.height, extraBytes))
         {
             constexpr double kGigabyte = 1024.0 * 1024.0 * 1024.0;
             const std::string line = fmt::format(
@@ -192,6 +331,11 @@ void PhotoModePanel::OnGui(EditorContext& context)
     ImGui::TextDisabled("The viewport keeps its own resolution; the photo renders beside it.");
     ImGui::PopTextWrapPos();
 
+    ImGui::SeparatorText("Rendering");
+    ImGui::BeginDisabled(busy);
+    DrawPhotoRendering(settings, state);
+    ImGui::EndDisabled();
+
     ImGui::SeparatorText("Quality");
     int warmupFrames = static_cast<int>(settings.warmupFrames);
     if (DragIntInRange("Warm-up Frames", &warmupFrames, static_cast<int>(kPhotoMinWarmupFrames), static_cast<int>(kPhotoMaxWarmupFrames)))
@@ -201,8 +345,8 @@ void PhotoModePanel::OnGui(EditorContext& context)
     if (ImGui::IsItemHovered())
     {
         ImGui::SetTooltip(
-            "Frames the photo's view renders before it is saved, so TAA and the screen-space\n"
-            "effects settle on the still camera. Hold the camera still while they render.");
+            "Frames the photo's view renders before it is saved, so TAA or DLSS and the screen-space\n"
+            "effects settle on the still camera; path traced, after its samples are in.");
     }
     ImGui::Checkbox("Framing Guide", &settings.framingGuide);
     if (ImGui::IsItemHovered())
@@ -211,9 +355,12 @@ void PhotoModePanel::OnGui(EditorContext& context)
     }
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextDisabled(
-        "The photo is resolved with TAA at the viewport's exposure from where the camera was when the shutter "
-        "was pressed, and saved under captures/.");
+        "The photo is taken at the viewport's exposure from where the camera was when the shutter was pressed; "
+        "the scene keeps moving, so hold driving still for a path traced one.");
     ImGui::PopTextWrapPos();
+
+    ImGui::SeparatorText("Save To");
+    DrawPhotoFolder(settings, status);
     settings = ClampPhotoModeSettings(settings);
 }
 }

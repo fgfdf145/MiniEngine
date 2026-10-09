@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <engine/core/paths/engine_paths.h>
 #include <engine/core/render_backend_type.h>
@@ -58,6 +58,14 @@ struct EditorApplicationOptions
     // --photo-at N: presses the shutter on the Nth frame --frames counts rather than the first, so the
     // viewport's auto exposure, which the photo keeps, has adapted.
     uint32_t photoAtFrame = 1;
+    // How the photo renders, else as the Photo Mode window saved it: --photo-path-tracing on|off,
+    // --photo-spp N (samples a frame), --photo-samples N (in all), --photo-dlss
+    // off|dlaa|quality|balanced|performance|ultra-performance, --photo-rr on|off.
+    std::optional<bool> photoPathTracing;
+    std::optional<uint32_t> photoSamplesPerPixel;
+    std::optional<uint32_t> photoTargetSamples;
+    std::optional<DlssMode> photoDlssMode;
+    std::optional<bool> photoRayReconstruction;
     // Starts with the Khronos reference view on (Graphics Debug), for comparing captures against the
     // Khronos glTF Sample Viewer.
     bool khronosReference = false;

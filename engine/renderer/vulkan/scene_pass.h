@@ -2,6 +2,7 @@
 
 #include "command.h"
 #include "common.h"
+#include "dlss.h"
 #include "pipeline_set.h"
 #include "render_target_layout.h"
 #include "scene_pass_order.h"
@@ -98,6 +99,8 @@ struct ScenePassFrameContext
     // Set when DLSS replaces the TAA resolve this frame (VulkanTaaPass), with the jitter the frame
     // was rendered with, in render pixels, and whether DLSS throws its history away.
     VulkanDlss* dlss = nullptr;
+    // Which of its features resolves this view (the viewport's, or Photo Mode's).
+    DlssFeatureSlot dlssSlot = DlssFeatureSlot::Viewport;
     glm::vec2 jitterPixels{0.0f};
     bool dlssReset = false;
     float frameTimeMs = 0.0f;

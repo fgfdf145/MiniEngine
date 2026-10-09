@@ -1,5 +1,7 @@
 #include "photo_mode.h"
 
+#include <engine/core/paths/engine_paths.h>
+
 #include <glm/glm.hpp>
 
 #include <algorithm>
@@ -15,22 +17,82 @@ PhotoModeSettings ClampPhotoModeSettings(PhotoModeSettings settings)
     settings.width = std::clamp(settings.width, kPhotoMinSize, kPhotoMaxSize);
     settings.height = std::clamp(settings.height, kPhotoMinSize, kPhotoMaxSize);
     settings.warmupFrames = std::clamp(settings.warmupFrames, kPhotoMinWarmupFrames, kPhotoMaxWarmupFrames);
+    settings.samplesPerPixel = std::clamp(settings.samplesPerPixel, 1u, kPhotoMaxSamplesPerPixel);
+    settings.targetSamples = std::clamp(settings.targetSamples, kPhotoMinTargetSamples, kPhotoMaxTargetSamples);
     return settings;
 }
 
-std::optional<PhotoMemoryEstimate> EstimatePhotoMemory(const GpuMemoryReport& memory, uint32_t width, uint32_t height)
+std::filesystem::path PhotoFolder(const PhotoModeSettings& settings)
+{
+    if (!settings.folder.empty())
+    {
+        return std::filesystem::path(settings.folder);
+    }
+    return EnginePaths::ProjectRoot() / "captures";
+}
+
+IRenderBackend::PhotoRequest PhotoRequestFromSettings(const PhotoModeSettings& settings)
+{
+    const PhotoModeSettings clamped = ClampPhotoModeSettings(settings);
+    IRenderBackend::PhotoRequest request;
+    request.width = clamped.width;
+    request.height = clamped.height;
+    request.warmupFrames = clamped.warmupFrames;
+    request.offlinePathTracing = clamped.offlinePathTracing;
+    request.samplesPerPixel = clamped.samplesPerPixel;
+    request.targetSamples = clamped.targetSamples;
+    request.dlssMode = clamped.dlssMode;
+    request.dlssRayReconstruction = clamped.dlssRayReconstruction;
+    return request;
+}
+
+uint32_t PhotoTileFrames(const IRenderBackend::PhotoRequest& request)
+{
+    if (!request.offlinePathTracing)
+    {
+        return request.warmupFrames;
+    }
+    const uint32_t samples = std::max(request.samplesPerPixel, 1u);
+    return (std::max(request.targetSamples, 1u) + samples - 1) / samples + request.warmupFrames;
+}
+
+double PhotoExtraBytesPerPixel(bool offlinePathTracing, DlssMode dlssMode, bool rayReconstruction)
+{
+    // Measured on a 2176x1336 photo view path traced with ray reconstruction (the design document):
+    // 1548 MB on the GPU, 532 bytes a pixel, where the viewport's measure without either gives about
+    // 450 (its targets' 300 times kResolutionDependentFactor). The path tracer's images are most of
+    // the difference.
+    constexpr double kOfflinePathTracing = 64.0;
+    constexpr double kRayReconstruction = 48.0;
+    double bytes = offlinePathTracing ? kOfflinePathTracing : 0.0;
+    if (dlssMode != DlssMode::Off && rayReconstruction)
+    {
+        bytes += kRayReconstruction;
+    }
+    return bytes;
+}
+
+uint32_t PhotoPathTraceFrameLimit(uint32_t samplesPerPixel, uint32_t targetSamples, uint32_t warmupFrames)
+{
+    const uint32_t samples = std::max(samplesPerPixel, 1u);
+    const uint32_t frames = (std::max(targetSamples, 1u) + samples - 1) / samples;
+    return 4 * frames + warmupFrames;
+}
+
+std::optional<PhotoMemoryEstimate> EstimatePhotoMemory(const GpuMemoryReport& memory, uint32_t width, uint32_t height, double extraBytesPerPixel)
 {
     if (memory.serial == 0 || memory.budget == 0 || !(memory.viewBytesPerPixel > 0.0))
     {
         return std::nullopt;
     }
     PhotoMemoryEstimate estimate;
-    estimate.neededBytes = static_cast<uint64_t>(memory.viewBytesPerPixel * static_cast<double>(width) * static_cast<double>(height));
+    estimate.neededBytes =
+        static_cast<uint64_t>((memory.viewBytesPerPixel + extraBytesPerPixel) * static_cast<double>(width) * static_cast<double>(height));
     estimate.freeBytes = memory.budget > memory.usage ? memory.budget - memory.usage : 0;
     return estimate;
 }
 
-uint64_t PhotoMaxViewPixels(const GpuMemoryReport& memory)
+uint64_t PhotoMaxViewPixels(const GpuMemoryReport& memory, double extraBytesPerPixel)
 {
     // Most of what is free: the frames in flight and the streaming keep moving what the rest holds.
     constexpr double kUsableShare = 0.75;
@@ -39,7 +101,8 @@ uint64_t PhotoMaxViewPixels(const GpuMemoryReport& memory)
         return kPhotoMaxViewPixels;
     }
     const uint64_t freeBytes = memory.budget > memory.usage ? memory.budget - memory.usage : 0;
-    const auto fitting = static_cast<uint64_t>(static_cast<double>(freeBytes) * kUsableShare / memory.viewBytesPerPixel);
+    const auto fitting =
+        static_cast<uint64_t>(static_cast<double>(freeBytes) * kUsableShare / (memory.viewBytesPerPixel + extraBytesPerPixel));
     return std::min(fitting, kPhotoMaxViewPixels);
 }
 

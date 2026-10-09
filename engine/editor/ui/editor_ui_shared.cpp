@@ -174,6 +174,8 @@ const char* FilePathPromptHint(FileDialogType type)
         return "Scene file to load (.yaml):";
     case FileDialogType::SaveScene:
         return "Save the scene to (.yaml):";
+    case FileDialogType::OpenFolder:
+        return "Folder:";
     }
     return "File path:";
 }

@@ -317,7 +317,7 @@ void VulkanTaaPass::RecordDlss(
         inputs.worldToView = frame.view;
         inputs.viewToClip = frame.projection;
     }
-    frame.dlss->Evaluate(commandBuffer, inputs);
+    frame.dlss->Evaluate(commandBuffer, inputs, frame.dlssSlot);
 
     // The result becomes the history the SSR trace takes its colour from next frame, as the TAA
     // resolve's does. NGX's own work may be in any stage, hence the wide first scope.

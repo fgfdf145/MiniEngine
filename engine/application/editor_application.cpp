@@ -1,4 +1,4 @@
-#include "editor_application.h"
+﻿#include "editor_application.h"
 
 #include <engine/asset/compressed_texture_cache.h>
 #include <engine/asset/tyre_library.h>
@@ -286,6 +286,48 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--photo-warmup")
         {
             options.photoWarmupFrames = ParsePositiveFrameCount(ReadRequiredArgument(i, argc, argv, argument));
+            continue;
+        }
+
+        if (argument == "--photo-path-tracing" || argument == "--photo-rr")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            if (value != "on" && value != "off")
+            {
+                throw std::runtime_error(std::string(argument) + " takes on or off");
+            }
+            (argument == "--photo-rr" ? options.photoRayReconstruction : options.photoPathTracing) = value == "on";
+            continue;
+        }
+
+        if (argument == "--photo-spp")
+        {
+            options.photoSamplesPerPixel = ParsePositiveFrameCount(ReadRequiredArgument(i, argc, argv, argument));
+            continue;
+        }
+
+        if (argument == "--photo-samples")
+        {
+            options.photoTargetSamples = ParsePositiveFrameCount(ReadRequiredArgument(i, argc, argv, argument));
+            continue;
+        }
+
+        if (argument == "--photo-dlss")
+        {
+            const std::string_view value = ReadRequiredArgument(i, argc, argv, argument);
+            static constexpr std::pair<std::string_view, DlssMode> kModes[] = {
+                {"off", DlssMode::Off},
+                {"dlaa", DlssMode::Dlaa},
+                {"quality", DlssMode::Quality},
+                {"balanced", DlssMode::Balanced},
+                {"performance", DlssMode::Performance},
+                {"ultra-performance", DlssMode::UltraPerformance}};
+            const auto mode = std::find_if(std::begin(kModes), std::end(kModes), [&](const auto& entry) { return entry.first == value; });
+            if (mode == std::end(kModes))
+            {
+                throw std::runtime_error("--photo-dlss takes off, dlaa, quality, balanced, performance or ultra-performance");
+            }
+            options.photoDlssMode = mode->second;
             continue;
         }
 
@@ -887,12 +929,17 @@ int EditorApplication::Run()
         {
             photoStarted = true;
             const PhotoModeSettings saved = ClampPhotoModeSettings(sharedState->engineSettings.photoMode);
-            IRenderBackend::PhotoRequest request;
+            IRenderBackend::PhotoRequest request = PhotoRequestFromSettings(saved);
             request.path = *m_options.photoPath;
             request.width = m_options.photoSize.has_value() ? m_options.photoSize->width : saved.width;
             request.height = m_options.photoSize.has_value() ? m_options.photoSize->height : saved.height;
             request.warmupFrames = m_options.photoWarmupFrames.value_or(saved.warmupFrames);
             request.maxViewPixels = m_options.photoMaxViewPixels.value_or(0);
+            request.offlinePathTracing = m_options.photoPathTracing.value_or(request.offlinePathTracing);
+            request.samplesPerPixel = m_options.photoSamplesPerPixel.value_or(request.samplesPerPixel);
+            request.targetSamples = m_options.photoTargetSamples.value_or(request.targetSamples);
+            request.dlssMode = m_options.photoDlssMode.value_or(request.dlssMode);
+            request.dlssRayReconstruction = m_options.photoRayReconstruction.value_or(request.dlssRayReconstruction);
             std::string error;
             if (!renderer->TakePhoto(request, error))
             {

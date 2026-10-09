@@ -1,5 +1,7 @@
 #include "dlss.h"
 
+#include <array>
+
 #include <engine/core/log/log.h>
 
 #if MINIENGINE_WITH_DLSS
@@ -180,13 +182,11 @@ void SetRenderPresetHints(NVSDK_NGX_Parameter* parameters, DlssPreset preset)
 }
 }
 
-struct VulkanDlss::Ngx
+namespace
 {
-    VkDevice device = VK_NULL_HANDLE;
-    uint32_t queueFamily = 0;
-    VkQueue queue = VK_NULL_HANDLE;
-    bool initialized = false;
-    NVSDK_NGX_Parameter* parameters = nullptr;
+// One DlssFeatureSlot's feature and what it was made for.
+struct DlssSlotState
+{
     NVSDK_NGX_Handle* feature = nullptr;
     VkExtent2D featureRender{};
     VkExtent2D featureOutput{};
@@ -203,6 +203,22 @@ struct VulkanDlss::Ngx
     VkExtent2D optimalOutput{};
     DlssMode optimalMode = DlssMode::Off;
     std::optional<VkExtent2D> optimalRender;
+};
+}
+
+struct VulkanDlss::Ngx
+{
+    VkDevice device = VK_NULL_HANDLE;
+    uint32_t queueFamily = 0;
+    VkQueue queue = VK_NULL_HANDLE;
+    bool initialized = false;
+    NVSDK_NGX_Parameter* parameters = nullptr;
+    std::array<DlssSlotState, kDlssFeatureSlotCount> slots;
+
+    DlssSlotState& Slot(DlssFeatureSlot slot)
+    {
+        return slots.at(static_cast<uint32_t>(slot));
+    }
 };
 
 namespace
@@ -330,7 +346,10 @@ VulkanDlss::VulkanDlss(
 
 VulkanDlss::~VulkanDlss()
 {
-    ReleaseFeature();
+    for (uint32_t slot = 0; slot < kDlssFeatureSlotCount; ++slot)
+    {
+        ReleaseFeature(static_cast<DlssFeatureSlot>(slot));
+    }
     if (m_ngx->parameters != nullptr)
     {
         NVSDK_NGX_VULKAN_DestroyParameters(m_ngx->parameters);
@@ -356,8 +375,9 @@ const std::string& VulkanDlss::Status() const
     return m_status;
 }
 
-std::optional<VkExtent2D> VulkanDlss::RenderExtentFor(VkExtent2D output, DlssMode mode)
+std::optional<VkExtent2D> VulkanDlss::RenderExtentFor(VkExtent2D output, DlssMode mode, DlssFeatureSlot slot)
 {
+    DlssSlotState& f = m_ngx->Slot(slot);
     if (!IsAvailable() || mode == DlssMode::Off || output.width < 32 || output.height < 32)
     {
         return std::nullopt;
@@ -366,13 +386,13 @@ std::optional<VkExtent2D> VulkanDlss::RenderExtentFor(VkExtent2D output, DlssMod
     {
         return output;
     }
-    if (mode == m_ngx->optimalMode && SameExtent(output, m_ngx->optimalOutput))
+    if (mode == f.optimalMode && SameExtent(output, f.optimalOutput))
     {
-        return m_ngx->optimalRender;
+        return f.optimalRender;
     }
-    m_ngx->optimalMode = mode;
-    m_ngx->optimalOutput = output;
-    m_ngx->optimalRender.reset();
+    f.optimalMode = mode;
+    f.optimalOutput = output;
+    f.optimalRender.reset();
     unsigned int width = 0;
     unsigned int height = 0;
     unsigned int maxWidth = 0;
@@ -397,30 +417,31 @@ std::optional<VkExtent2D> VulkanDlss::RenderExtentFor(VkExtent2D output, DlssMod
         LOG_WARN("DLSS: no optimal settings for {}x{} ({})", output.width, output.height, ResultText(result));
         return std::nullopt;
     }
-    m_ngx->optimalRender = VkExtent2D{width, height};
-    return m_ngx->optimalRender;
+    f.optimalRender = VkExtent2D{width, height};
+    return f.optimalRender;
 }
 
-bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mode, DlssPreset preset, bool rayReconstruction)
+bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mode, DlssPreset preset, bool rayReconstruction, DlssFeatureSlot slot)
 {
+    DlssSlotState& f = m_ngx->Slot(slot);
     if (!IsAvailable())
     {
         return false;
     }
     rayReconstruction = rayReconstruction && m_rayReconstructionAvailable;
-    if (m_ngx->feature != nullptr && m_ngx->featureMode == mode && m_ngx->featurePreset == preset &&
-        m_ngx->featureRayReconstruction == rayReconstruction &&
-        SameExtent(m_ngx->featureRender, render) && SameExtent(m_ngx->featureOutput, output))
+    if (f.feature != nullptr && f.featureMode == mode && f.featurePreset == preset &&
+        f.featureRayReconstruction == rayReconstruction &&
+        SameExtent(f.featureRender, render) && SameExtent(f.featureOutput, output))
     {
         return true;
     }
-    if (m_ngx->failedMode == mode && m_ngx->failedPreset == preset && m_ngx->failedRayReconstruction == rayReconstruction &&
-        SameExtent(m_ngx->failedRender, render) &&
-        SameExtent(m_ngx->failedOutput, output))
+    if (f.failedMode == mode && f.failedPreset == preset && f.failedRayReconstruction == rayReconstruction &&
+        SameExtent(f.failedRender, render) &&
+        SameExtent(f.failedOutput, output))
     {
         return false;
     }
-    ReleaseFeature();
+    ReleaseFeature(slot);
 
     // Pre-exposed linear HDR (pre_exposure.glsl), reverse-Z depth, motion vectors at the render size
     // without the jitter; DLSS meters the exposure itself, which presets L and M always do.
@@ -443,16 +464,16 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
         create.InFeatureCreateFlags = createFlags;
         VulkanUploadBatch batch(m_ngx->device, m_ngx->queueFamily, m_ngx->queue);
         const NVSDK_NGX_Result result =
-            NGX_VULKAN_CREATE_DLSSD_EXT1(m_ngx->device, batch.GetCommandBuffer(), 1, 1, &m_ngx->feature, m_ngx->parameters, &create);
+            NGX_VULKAN_CREATE_DLSSD_EXT1(m_ngx->device, batch.GetCommandBuffer(), 1, 1, &f.feature, m_ngx->parameters, &create);
         batch.Flush();
-        if (NVSDK_NGX_FAILED(result) || m_ngx->feature == nullptr)
+        if (NVSDK_NGX_FAILED(result) || f.feature == nullptr)
         {
-            m_ngx->feature = nullptr;
-            m_ngx->failedRender = render;
-            m_ngx->failedOutput = output;
-            m_ngx->failedMode = mode;
-            m_ngx->failedPreset = preset;
-            m_ngx->failedRayReconstruction = true;
+            f.feature = nullptr;
+            f.failedRender = render;
+            f.failedOutput = output;
+            f.failedMode = mode;
+            f.failedPreset = preset;
+            f.failedRayReconstruction = true;
             LOG_WARN(
                 "DLSS: could not create ray reconstruction for {}x{} -> {}x{} ({})",
                 render.width,
@@ -462,11 +483,11 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
                 ResultText(result));
             return false;
         }
-        m_ngx->featureRender = render;
-        m_ngx->featureOutput = output;
-        m_ngx->featureMode = mode;
-        m_ngx->featurePreset = preset;
-        m_ngx->featureRayReconstruction = true;
+        f.featureRender = render;
+        f.featureOutput = output;
+        f.featureMode = mode;
+        f.featurePreset = preset;
+        f.featureRayReconstruction = true;
         LOG_INFO("DLSS ray reconstruction: {}x{} -> {}x{}", render.width, render.height, output.width, output.height);
         return true;
     }
@@ -482,16 +503,16 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
 
     VulkanUploadBatch batch(m_ngx->device, m_ngx->queueFamily, m_ngx->queue);
     const NVSDK_NGX_Result result =
-        NGX_VULKAN_CREATE_DLSS_EXT1(m_ngx->device, batch.GetCommandBuffer(), 1, 1, &m_ngx->feature, m_ngx->parameters, &create);
+        NGX_VULKAN_CREATE_DLSS_EXT1(m_ngx->device, batch.GetCommandBuffer(), 1, 1, &f.feature, m_ngx->parameters, &create);
     batch.Flush();
-    if (NVSDK_NGX_FAILED(result) || m_ngx->feature == nullptr)
+    if (NVSDK_NGX_FAILED(result) || f.feature == nullptr)
     {
-        m_ngx->feature = nullptr;
-        m_ngx->failedRender = render;
-        m_ngx->failedOutput = output;
-        m_ngx->failedMode = mode;
-        m_ngx->failedPreset = preset;
-        m_ngx->failedRayReconstruction = false;
+        f.feature = nullptr;
+        f.failedRender = render;
+        f.failedOutput = output;
+        f.failedMode = mode;
+        f.failedPreset = preset;
+        f.failedRayReconstruction = false;
         LOG_WARN(
             "DLSS: could not create the feature for {}x{} -> {}x{} ({})",
             render.width,
@@ -501,41 +522,45 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
             ResultText(result));
         return false;
     }
-    m_ngx->featureRender = render;
-    m_ngx->featureOutput = output;
-    m_ngx->featureMode = mode;
-    m_ngx->featurePreset = preset;
-    m_ngx->featureRayReconstruction = false;
+    f.featureRender = render;
+    f.featureOutput = output;
+    f.featureMode = mode;
+    f.featurePreset = preset;
+    f.featureRayReconstruction = false;
     LOG_INFO("DLSS: {}x{} -> {}x{}, preset {}", render.width, render.height, output.width, output.height, PresetName(preset));
     return true;
 }
 
-void VulkanDlss::ReleaseFeature()
+void VulkanDlss::ReleaseFeature(DlssFeatureSlot slot)
 {
-    if (m_ngx->feature != nullptr)
+    DlssSlotState& f = m_ngx->Slot(slot);
+    if (f.feature != nullptr)
     {
         // Frames still in flight may evaluate it.
         vkDeviceWaitIdle(m_ngx->device);
-        NVSDK_NGX_VULKAN_ReleaseFeature(m_ngx->feature);
-        m_ngx->feature = nullptr;
+        NVSDK_NGX_VULKAN_ReleaseFeature(f.feature);
+        f.feature = nullptr;
     }
-    m_ngx->featureMode = DlssMode::Off;
-    m_ngx->featureRayReconstruction = false;
+    f.featureMode = DlssMode::Off;
+    f.featureRayReconstruction = false;
 }
 
-bool VulkanDlss::HasFeature() const
+bool VulkanDlss::HasFeature(DlssFeatureSlot slot) const
 {
-    return m_ngx->feature != nullptr;
+    const DlssSlotState& f = m_ngx->Slot(slot);
+    return f.feature != nullptr;
 }
 
-bool VulkanDlss::HasRayReconstruction() const
+bool VulkanDlss::HasRayReconstruction(DlssFeatureSlot slot) const
 {
-    return m_ngx->feature != nullptr && m_ngx->featureRayReconstruction;
+    const DlssSlotState& f = m_ngx->Slot(slot);
+    return f.feature != nullptr && f.featureRayReconstruction;
 }
 
-bool VulkanDlss::Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInputs& inputs)
+bool VulkanDlss::Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInputs& inputs, DlssFeatureSlot slot)
 {
-    if (m_ngx->feature == nullptr)
+    DlssSlotState& f = m_ngx->Slot(slot);
+    if (f.feature == nullptr)
     {
         return false;
     }
@@ -544,7 +569,7 @@ bool VulkanDlss::Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInput
     NVSDK_NGX_Resource_VK motion = ToResource(inputs.motionVectors, false);
     NVSDK_NGX_Resource_VK output = ToResource(inputs.output, true);
 
-    if (m_ngx->featureRayReconstruction)
+    if (f.featureRayReconstruction)
     {
         NVSDK_NGX_Resource_VK diffuseAlbedo = ToResource(inputs.diffuseAlbedo, false);
         NVSDK_NGX_Resource_VK specularAlbedo = ToResource(inputs.specularAlbedo, false);
@@ -582,7 +607,7 @@ bool VulkanDlss::Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInput
         evaluate.InFrameTimeDeltaInMsec = inputs.frameTimeMs;
         evaluate.pInWorldToViewMatrix = &worldToView[0][0];
         evaluate.pInViewToClipMatrix = &viewToClip[0][0];
-        const NVSDK_NGX_Result result = NGX_VULKAN_EVALUATE_DLSSD_EXT(commandBuffer, m_ngx->feature, m_ngx->parameters, &evaluate);
+        const NVSDK_NGX_Result result = NGX_VULKAN_EVALUATE_DLSSD_EXT(commandBuffer, f.feature, m_ngx->parameters, &evaluate);
         if (NVSDK_NGX_FAILED(result))
         {
             LOG_WARN("DLSS ray reconstruction: evaluation failed ({})", ResultText(result));
@@ -603,7 +628,7 @@ bool VulkanDlss::Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInput
     evaluate.InMVScaleX = 1.0f;
     evaluate.InMVScaleY = 1.0f;
     evaluate.InFrameTimeDeltaInMsec = inputs.frameTimeMs;
-    const NVSDK_NGX_Result result = NGX_VULKAN_EVALUATE_DLSS_EXT(commandBuffer, m_ngx->feature, m_ngx->parameters, &evaluate);
+    const NVSDK_NGX_Result result = NGX_VULKAN_EVALUATE_DLSS_EXT(commandBuffer, f.feature, m_ngx->parameters, &evaluate);
     if (NVSDK_NGX_FAILED(result))
     {
         LOG_WARN("DLSS: evaluation failed ({})", ResultText(result));
@@ -647,7 +672,7 @@ const std::string& VulkanDlss::Status() const
     return m_status;
 }
 
-std::optional<VkExtent2D> VulkanDlss::RenderExtentFor(VkExtent2D, DlssMode)
+std::optional<VkExtent2D> VulkanDlss::RenderExtentFor(VkExtent2D, DlssMode, DlssFeatureSlot)
 {
     return std::nullopt;
 }
@@ -657,26 +682,26 @@ bool VulkanDlss::IsRayReconstructionAvailable() const
     return false;
 }
 
-bool VulkanDlss::EnsureFeature(VkExtent2D, VkExtent2D, DlssMode, DlssPreset, bool)
+bool VulkanDlss::EnsureFeature(VkExtent2D, VkExtent2D, DlssMode, DlssPreset, bool, DlssFeatureSlot)
 {
     return false;
 }
 
-bool VulkanDlss::HasRayReconstruction() const
+bool VulkanDlss::HasRayReconstruction(DlssFeatureSlot) const
 {
     return false;
 }
 
-void VulkanDlss::ReleaseFeature()
+void VulkanDlss::ReleaseFeature(DlssFeatureSlot)
 {
 }
 
-bool VulkanDlss::HasFeature() const
+bool VulkanDlss::HasFeature(DlssFeatureSlot) const
 {
     return false;
 }
 
-bool VulkanDlss::Evaluate(VkCommandBuffer, const DlssEvaluateInputs&)
+bool VulkanDlss::Evaluate(VkCommandBuffer, const DlssEvaluateInputs&, DlssFeatureSlot)
 {
     return false;
 }

@@ -237,6 +237,12 @@ void SettingsRoundTrip()
     saved.photoMode.height = 2700;
     saved.photoMode.warmupFrames = 64;
     saved.photoMode.framingGuide = false;
+    saved.photoMode.offlinePathTracing = false;
+    saved.photoMode.samplesPerPixel = 8;
+    saved.photoMode.targetSamples = 4096;
+    saved.photoMode.dlssMode = DlssMode::Quality;
+    saved.photoMode.dlssRayReconstruction = false;
+    saved.photoMode.folder = "D:/Photos/Mini \"Engine\"";
     std::string error;
     Require(SaveEngineSettings(path, saved, error), "the settings save: " + error);
     EngineSettings loaded;
@@ -248,6 +254,45 @@ void SettingsRoundTrip()
     Require(LoadEngineSettings(path, old, error), "the old settings load: " + error);
     std::filesystem::remove(path);
     Require(old.photoMode == PhotoModeSettings{}, "without photo mode settings the defaults apply");
+}
+
+void PathTracedPhotoRequests()
+{
+    PhotoModeSettings settings;
+    Require(settings.offlinePathTracing && settings.dlssMode == DlssMode::Dlaa && settings.dlssRayReconstruction,
+            "by default path traced, DLAA with ray reconstruction");
+    settings.samplesPerPixel = 100;
+    settings.targetSamples = 0;
+    const PhotoModeSettings clamped = ClampPhotoModeSettings(settings);
+    Require(clamped.samplesPerPixel == kPhotoMaxSamplesPerPixel && clamped.targetSamples == kPhotoMinTargetSamples, "samples clamp");
+
+    settings = PhotoModeSettings{};
+    settings.samplesPerPixel = 4;
+    settings.targetSamples = 1001;
+    settings.warmupFrames = 16;
+    IRenderBackend::PhotoRequest request = PhotoRequestFromSettings(settings);
+    Require(request.offlinePathTracing && request.samplesPerPixel == 4 && request.targetSamples == 1001 && request.dlssMode == DlssMode::Dlaa,
+            "the request takes the settings");
+    Require(PhotoTileFrames(request) == 251 + 16, "a tile: the frames its samples take, rounded up, then its warm-up");
+    Require(PhotoPathTraceFrameLimit(4, 1001, 16) == 4 * 251 + 16, "a scene that never stands still ends at four times that");
+    request.offlinePathTracing = false;
+    Require(PhotoTileFrames(request) == 16, "rasterised: the warm-up frames");
+
+    Require(PhotoExtraBytesPerPixel(false, DlssMode::Off, true) == 0.0, "TAA, rasterised: nothing beyond the viewport's measure");
+    Require(PhotoExtraBytesPerPixel(true, DlssMode::Dlaa, true) > PhotoExtraBytesPerPixel(true, DlssMode::Dlaa, false), "ray reconstruction costs");
+    Require(PhotoExtraBytesPerPixel(false, DlssMode::Off, true) == PhotoExtraBytesPerPixel(false, DlssMode::Off, false),
+            "ray reconstruction only with DLSS");
+    GpuMemoryReport memory;
+    memory.serial = 10;
+    memory.budget = uint64_t{8} << 30;
+    memory.usage = uint64_t{6} << 30;
+    memory.viewBytesPerPixel = 400.0;
+    Require(PhotoMaxViewPixels(memory, 112.0) < PhotoMaxViewPixels(memory), "a path traced view holds fewer pixels");
+
+    PhotoModeSettings folder;
+    Require(PhotoFolder(folder).filename() == "captures", "no folder: captures/");
+    folder.folder = "D:/Photos";
+    Require(PhotoFolder(folder) == std::filesystem::path("D:/Photos"), "the folder chosen");
 }
 }
 
@@ -264,6 +309,7 @@ int main()
         CopiesTilesIntoTheCanvas();
         LimitsViewsToFreeMemory();
         SettingsRoundTrip();
+        PathTracedPhotoRequests();
     }
     catch (const std::exception& error)
     {

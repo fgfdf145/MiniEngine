@@ -1,6 +1,7 @@
 #pragma once
 
 #include "atmosphere.h"
+#include "dlss.h"
 #include "exposure_histogram_pass.h"
 #include "gbuffer_inputs.h"
 #include "path_trace_layer_pass.h"
@@ -16,6 +17,7 @@
 
 #include <engine/renderer/exposure.h>
 #include <engine/renderer/motion_history.h>
+#include <engine/renderer/path_tracing.h>
 #include <engine/renderer/temporal_history.h>
 
 #include <glm/glm.hpp>
@@ -72,6 +74,18 @@ struct VulkanSceneView
     TemporalHistory restirPtHistory;
     TemporalHistory pathTraceHistory;
     TemporalHistory pathTraceLayerHistory;
+    // Whether the path traced image is standing still (the viewport's, or Photo Mode's view's), the
+    // ray scene's install count it last saw (a new one is a scene change), and how far the offline
+    // mode's accumulation is (set where it runs this frame).
+    PathTraceAccumulation pathTraceAccumulation;
+    uint32_t pathTraceGeometryEpoch = 0;
+    std::optional<OfflineProgress> offlineProgress;
+    // DLSS, where it resolves this view: the NGX feature it evaluates (the viewport's, or Photo
+    // Mode's own at the photo's size and mode), whether that feature is made, and whether the next
+    // evaluation drops DLSS's history.
+    DlssFeatureSlot dlssSlot = DlssFeatureSlot::Viewport;
+    bool dlssActive = false;
+    bool dlssResetPending = true;
     // The pre-exposure the TAA and path tracing histories were written with; 0 before any frame.
     float taaHistoryPreExposure = 0.0f;
     float pathTraceHistoryPreExposure = 0.0f;
@@ -115,6 +129,9 @@ struct VulkanSceneView
         giHistory.Reset();
         ssrHistory.Reset();
         taaHistory.Reset();
+        pathTraceAccumulation.Reset();
+        offlineProgress.reset();
+        dlssResetPending = true;
     }
 
     // Drops the passes and the per-image resources made from the targets (the pipelines built

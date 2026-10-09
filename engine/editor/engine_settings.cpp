@@ -232,6 +232,18 @@ void LoadPhotoModeSettings(const YAML::Node& node, PhotoModeSettings& settings)
     settings.warmupFrames =
         static_cast<uint32_t>(std::max(1, ReadIntOrDefault(node["warmup_frames"], static_cast<int>(settings.warmupFrames))));
     settings.framingGuide = ReadBoolOrDefault(node["framing_guide"], settings.framingGuide);
+    settings.offlinePathTracing = ReadBoolOrDefault(node["offline_path_tracing"], settings.offlinePathTracing);
+    settings.samplesPerPixel =
+        static_cast<uint32_t>(std::max(1, ReadIntOrDefault(node["samples_per_pixel"], static_cast<int>(settings.samplesPerPixel))));
+    settings.targetSamples =
+        static_cast<uint32_t>(std::max(1, ReadIntOrDefault(node["target_samples"], static_cast<int>(settings.targetSamples))));
+    const int dlssMode = ReadIntOrDefault(node["dlss_mode"], static_cast<int>(settings.dlssMode));
+    settings.dlssMode = dlssMode >= 0 && dlssMode <= static_cast<int>(DlssMode::UltraPerformance) ? static_cast<DlssMode>(dlssMode) : settings.dlssMode;
+    settings.dlssRayReconstruction = ReadBoolOrDefault(node["dlss_ray_reconstruction"], settings.dlssRayReconstruction);
+    if (node["folder"] && node["folder"].IsScalar())
+    {
+        settings.folder = node["folder"].as<std::string>();
+    }
     settings = ClampPhotoModeSettings(settings);
 }
 
@@ -241,7 +253,13 @@ void WritePhotoModeSettings(std::ostream& output, const PhotoModeSettings& setti
     output << "    \"width\": " << settings.width << ",\n";
     output << "    \"height\": " << settings.height << ",\n";
     output << "    \"warmup_frames\": " << settings.warmupFrames << ",\n";
-    output << "    \"framing_guide\": " << JsonBool(settings.framingGuide) << "\n";
+    output << "    \"framing_guide\": " << JsonBool(settings.framingGuide) << ",\n";
+    output << "    \"offline_path_tracing\": " << JsonBool(settings.offlinePathTracing) << ",\n";
+    output << "    \"samples_per_pixel\": " << settings.samplesPerPixel << ",\n";
+    output << "    \"target_samples\": " << settings.targetSamples << ",\n";
+    output << "    \"dlss_mode\": " << static_cast<int>(settings.dlssMode) << ",\n";
+    output << "    \"dlss_ray_reconstruction\": " << JsonBool(settings.dlssRayReconstruction) << ",\n";
+    output << "    \"folder\": \"" << EscapeJsonString(settings.folder) << "\"\n";
     output << "  },\n";
 }
 

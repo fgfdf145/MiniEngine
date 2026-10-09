@@ -2,11 +2,13 @@
 
 #include <engine/renderer/camera.h>
 #include <engine/renderer/render_types.h>
+#include <engine/renderer/rhi/backend.h>
 
 #include <glm/glm.hpp>
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -39,6 +41,12 @@ inline constexpr uint32_t kPhotoMinTileSide = 512;
 // its edges (ambient occlusion, indirect light, reflections, the glare's nearer rings) see what lies
 // beyond them, as they would in one view of the whole photo, and the tiles meet without seams.
 inline constexpr uint32_t kPhotoTileGuard = 128;
+// A path traced photo's samples a frame and in all, a pixel (docs/design/
+// 2026-10-09-photo-offline-path-tracing-design.md). A frame of many samples at 4K keeps the GPU busy
+// long enough for the editor to stutter and, past Windows's two seconds, to lose the device.
+inline constexpr uint32_t kPhotoMaxSamplesPerPixel = 16;
+inline constexpr uint32_t kPhotoMinTargetSamples = 1;
+inline constexpr uint32_t kPhotoMaxTargetSamples = 65536;
 
 struct PhotoModeSettings
 {
@@ -49,7 +57,31 @@ struct PhotoModeSettings
     uint32_t warmupFrames = 32;
     // The viewport darkens what lies outside the photo while the Photo Mode window is open.
     bool framingGuide = true;
+    // The path tracer's offline mode (its bounces, clamp and light candidates the viewport's
+    // path_tracing_offline settings), samplesPerPixel a frame up to targetSamples; off, the
+    // rasterised pipeline with the traced effects, as the viewport's Hybrid mode.
+    bool offlinePathTracing = true;
+    uint32_t samplesPerPixel = 2;
+    uint32_t targetSamples = 1024;
+    // DLSS of the photo's own, whatever the viewport runs: DLAA renders at the photo's size, the
+    // other modes at DLSS's smaller size, upscaled; with ray reconstruction (which denoises the
+    // paths) where the driver has it. Off: the engine's TAA.
+    DlssMode dlssMode = DlssMode::Dlaa;
+    bool dlssRayReconstruction = true;
+    // Where photos are saved; empty: the project's captures folder (PhotoFolder).
+    std::string folder;
 };
+
+// The folder photos go to: settings.folder, or ProjectRoot()/captures.
+std::filesystem::path PhotoFolder(const PhotoModeSettings& settings);
+
+// A photo request at these settings (its path left for the caller).
+IRenderBackend::PhotoRequest PhotoRequestFromSettings(const PhotoModeSettings& settings);
+
+// The frames one tile renders: its warm-up frames, after the frames its samples take when it is path
+// traced. A path traced tile may take more while the scene does not stand still
+// (PhotoPathTraceFrameLimit).
+uint32_t PhotoTileFrames(const IRenderBackend::PhotoRequest& request);
 
 PhotoModeSettings ClampPhotoModeSettings(PhotoModeSettings settings);
 
@@ -72,6 +104,13 @@ struct PhotoStatus
     std::string message;
     bool messageIsError = false;
     std::chrono::steady_clock::time_point messageTime{};
+    // A path traced photo's samples a pixel the tile has, of how many (0: not path traced).
+    uint32_t samples = 0;
+    uint32_t targetSamples = 0;
+    // How the view resolves ("DLSS ray reconstruction", "TAA", ...), once the render thread says.
+    std::string resolve;
+    // The last photo saved, for Open Photo.
+    std::filesystem::path lastPhoto;
 };
 
 // What a photo's view needs of the GPU's memory, from what the viewport's costs per pixel, and what
@@ -86,11 +125,24 @@ struct PhotoMemoryEstimate
         return neededBytes <= freeBytes;
     }
 };
-std::optional<PhotoMemoryEstimate> EstimatePhotoMemory(const GpuMemoryReport& memory, uint32_t width, uint32_t height);
+// extraBytesPerPixel: what the photo's renderer needs on top of what the viewport's view costs
+// (PhotoExtraBytesPerPixel).
+std::optional<PhotoMemoryEstimate> EstimatePhotoMemory(
+    const GpuMemoryReport& memory, uint32_t width, uint32_t height, double extraBytesPerPixel = 0.0);
 
 // How many pixels one view of a photo may have: kPhotoMaxViewPixels, or what fits in most of the
 // GPU's free memory when the render thread has measured it.
-uint64_t PhotoMaxViewPixels(const GpuMemoryReport& memory);
+uint64_t PhotoMaxViewPixels(const GpuMemoryReport& memory, double extraBytesPerPixel = 0.0);
+
+// What a photo's view needs per output pixel beyond the viewport's measured cost (which holds
+// neither when the viewport runs neither): the offline path tracer's images (its raw paths, full
+// float accumulations and the forward surfaces' layer) and DLSS ray reconstruction's own memory.
+double PhotoExtraBytesPerPixel(bool offlinePathTracing, DlssMode dlssMode, bool rayReconstruction);
+
+// The frames a path traced photo's tile takes at most before its picture is taken as it is: four
+// times what its samples need, so a scene that never stands still (a car driving, the time of day
+// moving the sun) still ends.
+uint32_t PhotoPathTraceFrameLimit(uint32_t samplesPerPixel, uint32_t targetSamples, uint32_t warmupFrames);
 
 // One tile: the part of the photo it fills, in the photo's pixels (x right, y down from the top-left
 // corner), clipped to the photo.

@@ -42,6 +42,7 @@ namespace me
 namespace
 {
 std::filesystem::path BuildCapturePath(const char* prefix, const char* extension);
+std::filesystem::path BuildCapturePath(const char* prefix, const char* extension, const std::filesystem::path& folder);
 
 // Runs one action the UI asked for. A failure goes to `error`, where the UI shows it, and to the
 // log as "Failed to <what>: <reason>"; the frame's other actions still run.
@@ -621,6 +622,12 @@ namespace
 // ProjectRoot()/captures/<prefix>_<local date>_<time><extension>.
 std::filesystem::path BuildCapturePath(const char* prefix, const char* extension)
 {
+    return BuildCapturePath(prefix, extension, EnginePaths::ProjectRoot() / "captures");
+}
+
+// The same in another folder.
+std::filesystem::path BuildCapturePath(const char* prefix, const char* extension, const std::filesystem::path& folder)
+{
     SDL_DateTime now{};
     SDL_Time ticks = 0;
     if (!SDL_GetCurrentTime(&ticks) || !SDL_TimeToDateTime(ticks, &now, true))
@@ -631,7 +638,7 @@ std::filesystem::path BuildCapturePath(const char* prefix, const char* extension
     std::snprintf(
         name, sizeof(name), "%s_%04d%02d%02d_%02d%02d%02d%s",
         prefix, now.year, now.month, now.day, now.hour, now.minute, now.second, extension);
-    return EnginePaths::ProjectRoot() / "captures" / name;
+    return folder / name;
 }
 
 std::string FormatMegabytes(uint64_t bytes)
@@ -683,19 +690,27 @@ bool EditorRenderBackendBase::TakePhoto(const PhotoRequest& request, std::string
     asked.width = request.width;
     asked.height = request.height;
     asked.warmupFrames = request.warmupFrames;
+    asked.samplesPerPixel = request.samplesPerPixel;
+    asked.targetSamples = request.targetSamples;
     const PhotoModeSettings clamped = ClampPhotoModeSettings(asked);
     PhotoInProgress photo;
     photo.request = request;
     photo.request.width = clamped.width;
     photo.request.height = clamped.height;
     photo.request.warmupFrames = clamped.warmupFrames;
+    photo.request.samplesPerPixel = clamped.samplesPerPixel;
+    photo.request.targetSamples = clamped.targetSamples;
     // The moment the shutter is pressed: every tile is of this view, wherever the camera goes next.
     photo.camera = State().camera;
     photo.viewportAspect = m_viewportAspect;
     photo.tiling = PlanPhotoTiles(
         photo.request.width,
         photo.request.height,
-        request.maxViewPixels != 0 ? request.maxViewPixels : PhotoMaxViewPixels(State().gpuMemory));
+        request.maxViewPixels != 0
+            ? request.maxViewPixels
+            : PhotoMaxViewPixels(
+                  State().gpuMemory,
+                  PhotoExtraBytesPerPixel(photo.request.offlinePathTracing, photo.request.dlssMode, photo.request.dlssRayReconstruction)));
     if (photo.tiling.Tiled())
     {
         photo.canvas.assign(static_cast<size_t>(photo.request.width) * photo.request.height * 4, 0);
@@ -703,7 +718,8 @@ bool EditorRenderBackendBase::TakePhoto(const PhotoRequest& request, std::string
     PhotoStatus& status = State().photoStatus;
     status = PhotoStatus{};
     status.rendering = true;
-    status.framesTotal = photo.request.warmupFrames * static_cast<uint32_t>(photo.tiling.tiles.size());
+    status.framesTotal = PhotoTileFrames(photo.request) * static_cast<uint32_t>(photo.tiling.tiles.size());
+    status.targetSamples = photo.request.offlinePathTracing ? photo.request.targetSamples : 0u;
     status.tile = 1;
     status.tileCount = static_cast<uint32_t>(photo.tiling.tiles.size());
     status.width = photo.request.width;
@@ -712,14 +728,21 @@ bool EditorRenderBackendBase::TakePhoto(const PhotoRequest& request, std::string
     status.viewWidth = viewExtent.width;
     status.viewHeight = viewExtent.height;
     LOG_INFO(
-        "Photo: {}x{} in {} tile(s) ({}x{} views), {} frames each, to '{}'",
+        "Photo: {}x{} in {} tile(s) ({}x{} views), {}, {}, to '{}'",
         photo.request.width,
         photo.request.height,
         photo.tiling.tiles.size(),
         viewExtent.width,
         viewExtent.height,
-        photo.request.warmupFrames,
+        photo.request.offlinePathTracing
+            ? fmt::format("path traced to {} spp ({} a frame) then {} frames", photo.request.targetSamples, photo.request.samplesPerPixel,
+                          photo.request.warmupFrames)
+            : fmt::format("{} frames each", photo.request.warmupFrames),
+        photo.request.dlssMode == DlssMode::Off ? std::string("TAA")
+                                                : fmt::format("DLSS mode {}{}", static_cast<int>(photo.request.dlssMode),
+                                                              photo.request.dlssRayReconstruction ? " with ray reconstruction" : ""),
         request.path.string());
+    m_photoViewReport.reset();
     m_photo = std::move(photo);
     return true;
 }
@@ -727,11 +750,8 @@ bool EditorRenderBackendBase::TakePhoto(const PhotoRequest& request, std::string
 void EditorRenderBackendBase::TakePhotoFromEditor()
 {
     const PhotoModeSettings settings = ClampPhotoModeSettings(State().photoMode);
-    PhotoRequest request;
-    request.path = BuildCapturePath("photo", ".png");
-    request.width = settings.width;
-    request.height = settings.height;
-    request.warmupFrames = settings.warmupFrames;
+    PhotoRequest request = PhotoRequestFromSettings(settings);
+    request.path = BuildCapturePath("photo", ".png", PhotoFolder(settings));
     std::string error;
     if (!TakePhoto(request, error))
     {
@@ -764,6 +784,7 @@ void EditorRenderBackendBase::AdvancePhoto()
         if (error.empty())
         {
             status.message = fmt::format("Saved {} x {} to {}", request.width, request.height, request.path.string());
+            status.lastPhoto = request.path;
             LOG_INFO(
                 "Photo: saved {}x{} ({} tile(s)) to '{}' at EV100 {:.2f}", request.width, request.height, tiles, request.path.string(), exposure);
         }
@@ -783,7 +804,7 @@ void EditorRenderBackendBase::AdvancePhoto()
         }
         return;
     }
-    if (photo.tileFrames < photo.request.warmupFrames)
+    if (!PhotoTileDone(photo))
     {
         return;
     }
@@ -815,6 +836,7 @@ void EditorRenderBackendBase::AdvancePhoto()
     }
     ++photo.tile;
     photo.tileFrames = 0;
+    photo.settledFrames = 0;
     if (photo.tile < photo.tiling.tiles.size())
     {
         return;
@@ -843,6 +865,49 @@ void EditorRenderBackendBase::AdvancePhoto()
         });
 }
 
+bool EditorRenderBackendBase::PhotoTileDone(PhotoInProgress& photo)
+{
+    PhotoStatus& status = State().photoStatus;
+    // The report is of a frame the render thread drew a frame or two ago: only one of this tile counts.
+    const bool report = m_photoViewReport.has_value() && m_photoViewReport->tile == photo.tile;
+    if (report)
+    {
+        const PhotoViewReport& view = *m_photoViewReport;
+        status.resolve = view.dlss == DlssMode::Off ? "TAA" : (view.rayReconstruction ? "DLSS ray reconstruction" : "DLSS");
+        status.samples = view.offline.has_value() ? view.offline->samples : 0u;
+    }
+    if (!photo.request.offlinePathTracing)
+    {
+        return photo.tileFrames >= photo.request.warmupFrames;
+    }
+    // Path traced: its samples in, then the warm-up frames for the resolve to settle on them. Where
+    // the path tracer does not run (no ray queries, the ray scene still building), the rasterised
+    // picture after the warm-up frames.
+    if (report && m_photoViewReport->offline.has_value() && m_photoViewReport->offline->done)
+    {
+        ++photo.settledFrames;
+    }
+    if (photo.settledFrames >= photo.request.warmupFrames)
+    {
+        return true;
+    }
+    if (report && !m_photoViewReport->offline.has_value() && photo.tileFrames >= photo.request.warmupFrames)
+    {
+        LOG_WARN("Photo: tile {} is not path traced (no ray queries, or the ray scene is not ready)", photo.tile + 1);
+        return true;
+    }
+    if (photo.tileFrames >= PhotoPathTraceFrameLimit(photo.request.samplesPerPixel, photo.request.targetSamples, photo.request.warmupFrames))
+    {
+        LOG_WARN(
+            "Photo: tile {} stopped at {} of {} samples; the scene never stood still (moving objects, the sun, a new stream)",
+            photo.tile + 1,
+            status.samples,
+            photo.request.targetSamples);
+        return true;
+    }
+    return false;
+}
+
 void EditorRenderBackendBase::WaitForPhotoWrite()
 {
     if (m_photo.has_value() && m_photo->writing.has_value())
@@ -869,6 +934,13 @@ std::optional<SceneCaptureView> EditorRenderBackendBase::PlacePhotoView()
     SceneCaptureView view;
     view.photo = true;
     view.extent = tiling.ViewExtent();
+    view.offlinePathTracing = photo.request.offlinePathTracing;
+    view.samplesPerPixel = photo.request.samplesPerPixel;
+    view.targetSamples = photo.request.targetSamples;
+    view.dlssMode = photo.request.dlssMode;
+    view.dlssPreset = State().renderDebug.dlssPreset;
+    view.dlssRayReconstruction = photo.request.dlssRayReconstruction;
+    view.photoTile = static_cast<uint32_t>(photo.tile);
     view.camera = PlacePhotoCamera(photo.camera, photo.viewportAspect, static_cast<float>(whole.width) / static_cast<float>(whole.height));
     view.matrices.view = view.camera.GetViewMatrix();
     view.matrices.projection = view.camera.GetProjectionMatrix(whole, false, useZeroToOneDepth);
@@ -887,7 +959,8 @@ std::optional<SceneCaptureView> EditorRenderBackendBase::PlacePhotoView()
 
     PhotoStatus& status = State().photoStatus;
     status.rendering = true;
-    status.framesRendered = static_cast<uint32_t>(photo.tile) * photo.request.warmupFrames + photo.tileFrames;
+    const uint32_t tileFrames = PhotoTileFrames(photo.request);
+    status.framesRendered = static_cast<uint32_t>(photo.tile) * tileFrames + std::min(photo.tileFrames, tileFrames);
     status.tile = static_cast<uint32_t>(photo.tile) + 1;
     return view;
 }

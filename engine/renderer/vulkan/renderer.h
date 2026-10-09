@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "ao_pass.h"
 #include "bloom_pass.h"
@@ -269,8 +269,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     };
     // Render thread: draws one frame from its packet, every capture view's then the viewport's.
     void RenderFrame(RenderFramePacket& frame);
-    // A view's frame from camera, whose EV UpdateAutoExposure has adapted. The viewport's alone runs
-    // DLSS, path tracing, the selection outline and the G-buffer debug views.
+    // A view's frame from camera, whose EV UpdateAutoExposure has adapted. The viewport's runs DLSS
+    // and path tracing as its settings say, the selection outline and the G-buffer debug views;
+    // Photo Mode's (capture->photo) the offline path tracer and DLSS its capture asks for; the quad
+    // views neither.
     std::unique_ptr<PreparedView> PrepareView(
         VulkanSceneView& view,
         const Camera& camera,
@@ -278,7 +280,8 @@ class VulkanRenderer : public EditorRenderBackendBase
         bool viewport,
         const SharedFrameState& shared,
         RenderFramePacket& packet,
-        RenderExtent wholeExtent = {});
+        RenderExtent wholeExtent = {},
+        const SceneCaptureView* capture = nullptr);
     // The camera block's environment for a camera at cameraPosition, its clouds' march jitter at
     // taaFrameIndex.
     EnvironmentUniformData BuildViewEnvironment(
@@ -352,7 +355,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     // Keeps one capture view per camera the frame names, each at its camera's size: made, resized
     // or dropped (waiting for the device) as the cameras come and go.
     void SyncCaptureViews(std::span<const SceneCaptureView> cameras);
-    std::unique_ptr<VulkanSceneView> CreateCaptureView(VkExtent2D extent);
+    std::unique_ptr<VulkanSceneView> CreateCaptureView(VkExtent2D render, VkExtent2D output);
+    // Photo Mode's DLSS feature for its view's output size, as the capture asks for it: the size to
+    // render at (the output itself when DLSS does not run, which the TAA then resolves).
+    VkExtent2D EnsurePhotoDlss(const SceneCaptureView& capture, VkExtent2D output, bool& dlss);
     // Builds the GPU content for the frame's submeshes and swaps it in. Transactional: when it
     // throws, the previous content, textures and descriptor sets are untouched and still drawable.
     void UploadSceneResources(const RenderFramePacket& frame);
@@ -440,7 +446,14 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The path tracer's per-frame state, once frame.pathTracing says whether it runs: its images the
     // first time, whether its image stands still and so how long a history a pixel averages, the
     // history's ping-pong and pre-exposure scale, and its status line.
+    // One view's path traced accumulation this frame: how long its image has stood still (against
+    // matrices and the settings it renders), its history cap and whether the offline image is held;
+    // the viewport's also says so in the Graphics Debug status line.
     void UpdatePathTracing(
+        VulkanSceneView& view,
+        const ViewportMatrices& matrices,
+        const RenderDebugSettings& settings,
+        bool viewport,
         ScenePassFrameContext& frame,
         const RenderFramePacket& packet,
         std::span<const GpuLightData> lights,
@@ -465,12 +478,12 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<NvrhiDevice> m_nvrhi;
     // NVIDIA DLSS: always made, available only with the SDK on a device and driver that run it.
     std::unique_ptr<VulkanDlss> m_dlss;
-    // The DLSS mode the scene targets were last sized for (Off while the engine's TAA resolves), and
-    // whether DLSS's next evaluation throws its history away.
+    // The DLSS mode, model and denoiser the viewport's targets were last sized for (Off while the
+    // engine's TAA resolves); whether its next evaluation drops the history is the view's
+    // (VulkanSceneView::dlssResetPending).
     DlssMode m_activeDlssMode = DlssMode::Off;
     DlssPreset m_activeDlssPreset = DlssPreset::Default;
     bool m_activeDlssRayReconstruction = false;
-    bool m_dlssResetPending = true;
     // The last RenderFramePacket::temporalRestart drawn with.
     uint32_t m_temporalRestart = 0;
     std::vector<std::shared_ptr<const RenderSubmesh>> m_renderSubmeshes;
@@ -671,6 +684,12 @@ class VulkanRenderer : public EditorRenderBackendBase
     // and why it could not be made, when it could not (too large for the GPU's memory, typically).
     std::optional<size_t> m_photoViewIndex;
     std::string m_photoViewError;
+    // What Photo Mode's DLSS feature was last made for: a change drops the view's history.
+    DlssMode m_photoDlssMode = DlssMode::Off;
+    DlssPreset m_photoDlssPreset = DlssPreset::Default;
+    bool m_photoDlssRayReconstruction = false;
+    // The tile the photo view rendered last frame, echoed in the feedback with its progress.
+    uint32_t m_photoTile = 0;
     // The sun and sky references auto exposure meters against, gathered while recording the
     // previous frame; shared by every view.
     ExposureReferences m_exposureReferences;
@@ -687,10 +706,6 @@ class VulkanRenderer : public EditorRenderBackendBase
     glm::mat4 m_restirPtAccumulationView{0.0f};
     uint32_t m_restirPtAccumulatedFrames = 0;
     uint64_t m_restirPtAccumulationEpochs = 0;
-    // Whether the viewport's path traced image is standing still; reset where its histories are.
-    PathTraceAccumulation m_pathTraceAccumulation;
-    // The ray scene's install count the accumulation last saw: a new one is a scene change.
-    uint32_t m_pathTraceGeometryEpoch = 0;
     // What the Graphics Debug window says of path tracing: the render thread's line, and the main
     // thread's copy from the feedback.
     std::string m_pathTracingStatus;

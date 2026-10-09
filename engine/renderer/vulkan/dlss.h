@@ -58,6 +58,15 @@ struct DlssEvaluateInputs
     glm::mat4 viewToClip{1.0f};
 };
 
+// The DLSS features NGX keeps at once, one per view that resolves with DLSS: the viewport's, and
+// Photo Mode's view, whose size, mode and model are its own.
+enum class DlssFeatureSlot : uint32_t
+{
+    Viewport = 0,
+    Photo = 1
+};
+inline constexpr uint32_t kDlssFeatureSlotCount = 2;
+
 // NVIDIA DLSS super resolution and DLAA through the NGX SDK (docs/design/2026-10-07-dlss-design.md),
 // and with them DLSS ray reconstruction (DLSS-D), which denoises the ray traced effects as it upscales
 // (docs/design/2026-10-07-ray-traced-effects-design.md).
@@ -92,21 +101,27 @@ class VulkanDlss
     const std::string& Status() const;
 
     // The size to render at for this output size and mode (DLSS's optimal settings), the output size
-    // itself for DLAA. Empty when unavailable or the mode is off.
-    std::optional<VkExtent2D> RenderExtentFor(VkExtent2D output, DlssMode mode);
+    // itself for DLAA. Empty when unavailable or the mode is off. Each slot remembers its last answer.
+    std::optional<VkExtent2D> RenderExtentFor(VkExtent2D output, DlssMode mode, DlssFeatureSlot slot = DlssFeatureSlot::Viewport);
 
-    // Makes the DLSS feature for these sizes, mode and preset, unless the current one already is;
-    // waits for the GPU. rayReconstruction makes the ray reconstruction feature instead of super
-    // resolution, where it is available (the preset applies to super resolution). False, with Status()
-    // saying why, when it cannot.
-    bool EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mode, DlssPreset preset, bool rayReconstruction = false);
-    void ReleaseFeature();
-    bool HasFeature() const;
+    // Makes the slot's DLSS feature for these sizes, mode and preset, unless it already is; waits for
+    // the GPU. rayReconstruction makes the ray reconstruction feature instead of super resolution,
+    // where it is available (the preset applies to super resolution). False, with Status() saying why,
+    // when it cannot. The slots' features are independent: the photo's never disturbs the viewport's.
+    bool EnsureFeature(
+        VkExtent2D render,
+        VkExtent2D output,
+        DlssMode mode,
+        DlssPreset preset,
+        bool rayReconstruction = false,
+        DlssFeatureSlot slot = DlssFeatureSlot::Viewport);
+    void ReleaseFeature(DlssFeatureSlot slot = DlssFeatureSlot::Viewport);
+    bool HasFeature(DlssFeatureSlot slot = DlssFeatureSlot::Viewport) const;
     // The feature is ray reconstruction: Evaluate reads the guides.
-    bool HasRayReconstruction() const;
+    bool HasRayReconstruction(DlssFeatureSlot slot = DlssFeatureSlot::Viewport) const;
 
-    // Records the evaluation into commandBuffer. False when there is no feature or NGX refused.
-    bool Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInputs& inputs);
+    // Records the slot's evaluation into commandBuffer. False when it has no feature or NGX refused.
+    bool Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInputs& inputs, DlssFeatureSlot slot = DlssFeatureSlot::Viewport);
 
   private:
     struct Ngx;

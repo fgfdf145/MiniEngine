@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "renderer_shared_state.h"
 #include "services/photo_mode.h"
@@ -88,6 +88,12 @@ class EditorRenderBackendBase : public IRenderBackend
     virtual void FlushQuadVideoFrames()
     {
     }
+    // What Photo Mode's view did in the frame drawn last, from the render thread's feedback (unset
+    // where no frame drew one): a path traced photo takes a tile once this says it has its samples.
+    void ReportPhotoView(const std::optional<PhotoViewReport>& report)
+    {
+        m_photoViewReport = report;
+    }
     // The photo view's picture of the frame drawn last (SceneCaptureView::photo), once the render
     // thread has finished it. Throws when there is none.
     virtual PhotoViewPicture ReadPhotoView()
@@ -148,7 +154,7 @@ class EditorRenderBackendBase : public IRenderBackend
     void StopQuadRecordingNow();
     void UpdateQuadRecording();
     // Tools > Take Photo: a photo at the Photo Mode window's settings to
-    // captures/photo_<date>_<time>.png.
+    // <PhotoFolder>/photo_<date>_<time>.png.
     void TakePhotoFromEditor();
     // Before this frame's views are placed: takes the photo view's picture once it has rendered its
     // warm-up frames (into the canvas, a tile at a time) and moves to the next tile; once the last is
@@ -199,11 +205,20 @@ class EditorRenderBackendBase : public IRenderBackend
         PhotoTiling tiling;
         size_t tile = 0;
         uint32_t tileFrames = 0;
+        // A path traced photo: the frames this tile has rendered since the render thread said its
+        // samples were all in (the resolve settling on them).
+        uint32_t settledFrames = 0;
         std::vector<uint8_t> canvas;
         float exposureEv100 = 0.0f;
         std::optional<std::future<std::string>> writing;
     };
     std::optional<PhotoInProgress> m_photo;
+    std::optional<PhotoViewReport> m_photoViewReport;
+    // Whether the tile rendering has what its picture needs: its warm-up frames; path traced, all
+    // its samples (as the render thread reports them for this tile) and then the warm-up frames,
+    // or PhotoPathTraceFrameLimit frames when the scene never stood still. Updates the status's
+    // samples and resolve on the way.
+    bool PhotoTileDone(PhotoInProgress& photo);
     // The viewport's width over its height as the scene last rendered it (UpdateViewportMatrices),
     // which the photo frames inside.
     float m_viewportAspect = 16.0f / 9.0f;
