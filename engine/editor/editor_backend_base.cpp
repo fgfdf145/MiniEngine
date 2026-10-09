@@ -5,6 +5,7 @@
 #include "services/model_import_service.h"
 #include "services/photo_mode.h"
 #include "services/quad_recording.h"
+#include "services/scene_raycast.h"
 #include "services/scene_io_service.h"
 #include "services/scene_renderables.h"
 #include "services/vehicle_drive_service.h"
@@ -41,6 +42,9 @@ namespace me
 
 namespace
 {
+// How far a click into the viewport looks for something to put a drive path's point on.
+constexpr double kDrivePathPointRayMetres = 20000.0;
+
 std::filesystem::path BuildCapturePath(const char* prefix, const char* extension);
 std::filesystem::path BuildCapturePath(const char* prefix, const char* extension, const std::filesystem::path& folder);
 
@@ -366,6 +370,30 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
                             VehicleDriveService::StartReplay(State(), std::filesystem::path(*actions.replayDriveLog));
                         }
                     });
+    }
+    if (actions.placeDrivePathPoint.has_value())
+    {
+        const EditorUiActions::DrivePathPointPlacement& placement = *actions.placeDrivePathPoint;
+        std::vector<SceneDrivePath> paths = EditorWorld().GetDrivePaths();
+        if (placement.path < paths.size())
+        {
+            // On what the click is on, the driven car excepted; on the panel's level plane past the scene.
+            const VehicleDriveSession* driven = State().vehicleDrive.session.get();
+            const std::optional<SceneRayHit> hit = RaycastScene(
+                State().rendererWorld, EditorWorld(), placement.rayOrigin, placement.rayDirection, kDrivePathPointRayMetres,
+                driven != nullptr ? driven->entity : entt::null);
+            const std::optional<glm::dvec3> point = hit.has_value() ? std::optional<glm::dvec3>(hit->position) : placement.fallback;
+            if (point.has_value())
+            {
+                std::vector<SceneDrivePathPoint>& points = paths[placement.path].points;
+                const size_t at = std::min(placement.index, points.size());
+                points.insert(points.begin() + static_cast<std::ptrdiff_t>(at), SceneDrivePathPoint{*point, 0.0f});
+                LOG_INFO(
+                    "Drive path '{}': point {} at ({:.2f}, {:.2f}, {:.2f}) {}", paths[placement.path].name, at + 1, point->x, point->y, point->z,
+                    hit.has_value() ? "on '" + EditorWorld().GetTag(hit->entity).name + "'" : std::string("on the level plane (the click met nothing)"));
+                EditorWorld().SetDrivePaths(std::move(paths));
+            }
+        }
     }
     if (actions.stopDriveAutomation)
     {
