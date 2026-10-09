@@ -101,7 +101,7 @@ struct CameraBuffer
     // keep the output's detail. Appended last.
     float4 textureParams;
 };
-[[vk::binding(0, 0)]] ConstantBuffer<CameraBuffer> ubo;
+[[vk::binding(0, 0)]] ConstantBuffer<CameraBuffer> ubo : register(b0, space0);
 
 // The frame set's textures sample with samplers of their own: binding b's at FRAME_SAMPLER(b)
 // (kFrameSamplerBindingOffset in engine/renderer/vulkan/uniform_buffer.h).

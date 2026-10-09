@@ -11,14 +11,18 @@
 #ifndef EMISSIVE_LIGHTS_COMMON_SLANG
 #define EMISSIVE_LIGHTS_COMMON_SLANG
 
+#include "d3d_register.slang"
+
 #ifndef EMISSIVE_LIGHT_SET
 #define EMISSIVE_LIGHT_SET 4
 #endif
 
 #ifdef EMISSIVE_LIGHTS_WRITE
 #define EmissiveBuffer RWStructuredBuffer
+#define EMISSIVE_BUFFER_CLASS u
 #else
 #define EmissiveBuffer StructuredBuffer
+#define EMISSIVE_BUFFER_CLASS t
 #endif
 
 // A light: its triangle in world space (v0, and the edges to v1 and v2), which side emits (+1 the side
@@ -36,18 +40,18 @@ struct EmissiveTriangle
     float4 emission;  // rgb the emissive factor
 };
 
-[[vk::binding(0, EMISSIVE_LIGHT_SET)]] EmissiveBuffer<EmissiveTriangle> emissiveTriangles;
+[[vk::binding(0, EMISSIVE_LIGHT_SET)]] EmissiveBuffer<EmissiveTriangle> emissiveTriangles : D3D_REGISTER(EMISSIVE_BUFFER_CLASS, 0, EMISSIVE_LIGHT_SET);
 // The power tree, four children a node: element 0 holds the root (the total power) in x, the depth in
 // y and the light count in z (uint bits); level k (1 to depth, 4^k nodes) starts at float
 // EmissiveTreeLevelStart(k), so each node's four children are one float4. The leaves are the lights' powers
 // (0 past the count).
-[[vk::binding(1, EMISSIVE_LIGHT_SET)]] EmissiveBuffer<float4> emissiveTree;
+[[vk::binding(1, EMISSIVE_LIGHT_SET)]] EmissiveBuffer<float4> emissiveTree : D3D_REGISTER(EMISSIVE_BUFFER_CLASS, 1, EMISSIVE_LIGHT_SET);
 // By draw slot: the slot's first light (its triangle k is light first + k), ~0 when it emits nothing.
-[[vk::binding(2, EMISSIVE_LIGHT_SET)]] StructuredBuffer<uint> emissiveSlotBase;
+[[vk::binding(2, EMISSIVE_LIGHT_SET)]] StructuredBuffer<uint> emissiveSlotBase : D3D_REGISTER(t, 2, EMISSIVE_LIGHT_SET);
 // By draw slot: the instance that draws it this frame, ~0 when none does (emissive_lights.comp).
-[[vk::binding(3, EMISSIVE_LIGHT_SET)]] EmissiveBuffer<uint> emissiveSlotInstance;
+[[vk::binding(3, EMISSIVE_LIGHT_SET)]] EmissiveBuffer<uint> emissiveSlotInstance : D3D_REGISTER(EMISSIVE_BUFFER_CLASS, 3, EMISSIVE_LIGHT_SET);
 // By light: its draw slot and its triangle's index in the slot's mesh.
-[[vk::binding(4, EMISSIVE_LIGHT_SET)]] StructuredBuffer<uint2> emissiveEntries;
+[[vk::binding(4, EMISSIVE_LIGHT_SET)]] StructuredBuffer<uint2> emissiveEntries : D3D_REGISTER(t, 4, EMISSIVE_LIGHT_SET);
 
 uint EmissiveTreeLevelStart(uint level)
 {

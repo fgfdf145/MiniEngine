@@ -4,6 +4,7 @@
 #define RAY_TEXTURED_ALPHA
 #endif
 
+#include "d3d_register.slang"
 #include "scene_common.slang"
 #include "atmosphere_sampling.slang"
 #include "pbr_common.slang"
@@ -32,7 +33,7 @@ struct LightingConstants
     // mode: the two targets in place of the ambient terms and the direct lights.
     float4 debug;
 };
-[[vk::push_constant]] ConstantBuffer<LightingConstants> lightingData;
+[[vk::push_constant]] ConstantBuffer<LightingConstants> lightingData D3D_PUSH_CONSTANTS(4);
 
 // Blue through cyan, green and yellow to red as the count rises to 32, black for no light at all.
 float3 LightCountHeat(uint count)

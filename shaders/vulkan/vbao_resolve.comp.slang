@@ -7,12 +7,13 @@
 #include "scene_common.slang"
 #include "vbao_common.slang"
 
-[[vk::binding(0, 1)]] Sampler2D aoRawTexture;
-[[vk::binding(1, 1)]] Sampler2D depthTexture;
-[[vk::binding(2, 1)]] Sampler2D velocityTexture;
-[[vk::binding(3, 1)]] Sampler2D historyTexture;
-[[vk::binding(4, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> historyImage;
-[[vk::binding(5, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> aoImage;
+[[vk::binding(0, 1)]] Texture2D aoRawTexture : register(t0, space1);
+[[vk::binding(1, 1)]] Texture2D depthTexture : register(t1, space1);
+[[vk::binding(2, 1)]] Texture2D velocityTexture : register(t2, space1);
+[[vk::binding(3, 1)]] Texture2D historyTexture : register(t3, space1);
+[[vk::binding(67, 1)]] SamplerState historyTextureSampler : register(s67, space1);
+[[vk::binding(4, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> historyImage : register(u4, space1);
+[[vk::binding(5, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> aoImage : register(u5, space1);
 
 static const float MAX_HISTORY = 16.0;
 static const float SPATIAL_DEPTH_TOLERANCE = 0.05;
@@ -94,7 +95,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float2 previousUv = uv - velocityTexture.Load(int3(pixel, 0)).rg;
         if (all(previousUv >= float2(0.0)) && all(previousUv <= float2(1.0)))
         {
-            float4 history = historyTexture.SampleLevel(previousUv, 0.0);
+            float4 history = historyTexture.SampleLevel(historyTextureSampler, previousUv, 0.0);
             // Where this surface point sat last frame, assuming it did not move: exact for static
             // geometry, and close for slow movers.
             float4 world = mul(ubo.invViewProj, float4(uv * 2.0 - 1.0, depth, 1.0));

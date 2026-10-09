@@ -17,10 +17,10 @@
 #include "vbao_common.slang"
 
 // Set 1 is VulkanGiTracePass's NVRHI binding set; the inputs are read with Load only.
-[[vk::binding(0, 1)]] Texture2D depthTexture;
-[[vk::binding(1, 1)]] Texture2D normalTexture;
-[[vk::binding(2, 1)]] Texture2D hdrTexture;
-[[vk::binding(3, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> giRawImage;
+[[vk::binding(0, 1)]] Texture2D depthTexture : register(t0, space1);
+[[vk::binding(1, 1)]] Texture2D normalTexture : register(t1, space1);
+[[vk::binding(2, 1)]] Texture2D hdrTexture : register(t2, space1);
+[[vk::binding(3, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> giRawImage : register(u3, space1);
 
 static const float PI = 3.14159265359;
 static const float HALF_PI = 1.57079632679;

@@ -5,7 +5,9 @@ struct ShadowConstants
 {
     float4x4 lightModelViewProjection;
 };
-[[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData;
+#include "d3d_register.slang"
+
+[[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData D3D_PUSH_CONSTANTS(0);
 
 [shader("vertex")]
 float4 main([[vk::location(0)]] float3 inPosition : POSITION) : SV_Position

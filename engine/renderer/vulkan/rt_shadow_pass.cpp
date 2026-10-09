@@ -28,6 +28,8 @@ constexpr uint32_t kFlagHistoryValid = 4u;
 
 constexpr VkFormat kHistoryFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr uint32_t kBindingCount = 8;
+// rt_shadow_common.slang's rtShadowHistoryRead, the one input the shaders sample rather than load.
+constexpr uint32_t kHistoryReadBinding = 4;
 
 void ComputeBarrier(VkCommandBuffer commandBuffer)
 {
@@ -63,18 +65,19 @@ VulkanRtShadowPass::VulkanRtShadowPass(
 {
     try
     {
-        m_nearestSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         m_linearSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
         static constexpr std::array<VkDescriptorType, kBindingCount> kTypes = {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes);
+        // The history is sampled (bilinear reprojection); the G-buffer inputs are loaded.
+        static constexpr std::array<uint32_t, 1> kSampled = {kHistoryReadBinding};
+        m_setLayout = CreateComputeSetLayout(m_device, kTypes, kSampled);
         const std::array<VkDescriptorSetLayout, 2> setLayouts = {frameSetLayout, m_setLayout};
         CreateComputePipeline(
             m_device, pipelineCache, setLayouts, "rt_shadow_filter.comp.spv", sizeof(RtShadowPushConstants), m_pipelineLayout, m_filterPipeline);
@@ -86,7 +89,7 @@ VulkanRtShadowPass::VulkanRtShadowPass(
             CreateComputePipeline(
                 m_device, pipelineCache, traceLayouts, "rt_shadow_trace.comp.spv", sizeof(RtShadowPushConstants), m_tracePipelineLayout, m_tracePipeline);
         }
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 4);
+        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 4, 1);
         m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
         CreateDescriptorSets(targets);
     }
@@ -179,22 +182,24 @@ void VulkanRtShadowPass::CreateDescriptorSets(const SceneRenderTargets& targets)
         for (uint32_t readIndex = 0; readIndex < 2; ++readIndex)
         {
             const VkDescriptorSet set = m_descriptorSets[slot * 2 + readIndex];
-            const VkDescriptorImageInfo depthInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-            const VkDescriptorImageInfo normalInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-            const VkDescriptorImageInfo velocityInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
+            const VkDescriptorImageInfo depthInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
+            const VkDescriptorImageInfo normalInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
+            const VkDescriptorImageInfo velocityInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
             const VkDescriptorImageInfo rawInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::ShadowRaw, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo historyReadInfo{NativeSampler(m_linearSampler), m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
+            const VkDescriptorImageInfo historyReadInfo{VK_NULL_HANDLE, m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo historyWriteInfo{VK_NULL_HANDLE, m_history.GetView(1u - readIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo shadowInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneShadow, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const std::array<VkWriteDescriptorSet, kBindingCount> writes = {
-                ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
-                ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
-                ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &velocityInfo),
+            const VkDescriptorImageInfo linearInfo{NativeSampler(m_linearSampler), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+            const std::array<VkWriteDescriptorSet, kBindingCount + 1> writes = {
+                ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &depthInfo),
+                ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &normalInfo),
+                ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &velocityInfo),
                 ImageWrite(set, 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &rawInfo),
-                ImageWrite(set, 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &historyReadInfo),
+                ImageWrite(set, kHistoryReadBinding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &historyReadInfo),
                 ImageWrite(set, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &historyWriteInfo),
                 ImageWrite(set, 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &shadowInfo),
-                ImageWrite(set, 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &historyWriteInfo)};
+                ImageWrite(set, 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &historyWriteInfo),
+                ImageWrite(set, kSplitSamplerBindingOffset + kHistoryReadBinding, VK_DESCRIPTOR_TYPE_SAMPLER, &linearInfo)};
             vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         }
     }
@@ -230,7 +235,6 @@ void VulkanRtShadowPass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    m_nearestSampler = nullptr;
     m_linearSampler = nullptr;
 }
 }

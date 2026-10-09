@@ -60,6 +60,14 @@ constexpr VkFormat kFullPrecisionFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
 constexpr uint32_t kBindingCount = 19;
 constexpr uint32_t kSampledBindings = 12;
 constexpr uint32_t kStorageBindings = 7;
+// The multiple scattering LUT, the one input the shaders sample (path_trace_common.slang); the
+// G-buffer and history inputs are loaded.
+constexpr uint32_t kMultiScatteringBinding = 18;
+
+bool IsStorageBinding(uint32_t binding)
+{
+    return (binding >= 8 && binding <= 13) || binding == 17;
+}
 // Bounces and light candidates a path may be given at most.
 constexpr int kMaxBounces = 16;
 constexpr int kMaxLightCandidates = 32;
@@ -108,10 +116,10 @@ VulkanPathTracePass::VulkanPathTracePass(
         std::array<VkDescriptorType, kBindingCount> types{};
         for (uint32_t binding = 0; binding < kBindingCount; ++binding)
         {
-            const bool storage = (binding >= 8 && binding <= 13) || binding == 17;
-            types[binding] = storage ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            types[binding] = IsStorageBinding(binding) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         }
-        m_setLayout = CreateComputeSetLayout(m_device, types);
+        static constexpr std::array<uint32_t, 1> kSampled = {kMultiScatteringBinding};
+        m_setLayout = CreateComputeSetLayout(m_device, types, kSampled);
         const std::array<VkDescriptorSetLayout, 2> setLayouts = {frameSetLayout, m_setLayout};
         CreateComputePipeline(
             m_device, pipelineCache, setLayouts, "path_trace_filter.comp.spv", sizeof(PathTracePushConstants), m_pipelineLayout, m_filterPipelines[0]);
@@ -131,7 +139,7 @@ VulkanPathTracePass::VulkanPathTracePass(
         m_rayScene = &rayScene;
         // The plain path tracer's sets, by transient copy and history read index; the layer's two.
         const uint32_t setCount = targets.GetTransientCopyCount() * 2;
-        m_descriptorPool = CreateImageDescriptorPool(m_device, setCount + 2, kSampledBindings, kStorageBindings);
+        m_descriptorPool = CreateImageDescriptorPool(m_device, setCount + 2, kSampledBindings, kStorageBindings, 1);
         m_descriptorSets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, setCount + 2);
         m_layerDescriptorSets.assign(m_descriptorSets.end() - 2, m_descriptorSets.end());
         m_descriptorSets.resize(setCount);
@@ -527,7 +535,7 @@ void VulkanPathTracePass::WriteDescriptorSets(const SceneRenderTargets& targets)
             const uint32_t writeIndex = 1u - readIndex;
             const auto sampled = [&](RenderTargetId target)
             {
-                return VkDescriptorImageInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(target, slot), kReadLayout};
+                return VkDescriptorImageInfo{VK_NULL_HANDLE, targets.GetSampledView(target, slot), kReadLayout};
             };
             const auto storage = [](VkImageView view)
             {
@@ -535,7 +543,7 @@ void VulkanPathTracePass::WriteDescriptorSets(const SceneRenderTargets& targets)
             };
             const auto history = [&](const HistoryImagePair& pair)
             {
-                return VkDescriptorImageInfo{NativeSampler(m_nearestSampler), pair.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
+                return VkDescriptorImageInfo{VK_NULL_HANDLE, pair.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
             };
             const std::array<VkDescriptorImageInfo, kBindingCount> infos = {
                 sampled(RenderTargetId::SceneDepth),
@@ -556,14 +564,16 @@ void VulkanPathTracePass::WriteDescriptorSets(const SceneRenderTargets& targets)
                 history(m_specularHistory),
                 history(m_surfaceHistory),
                 storage(m_surfaceHistory.GetView(writeIndex)),
-                VkDescriptorImageInfo{m_multiScattering.sampler, m_multiScattering.imageView, VK_IMAGE_LAYOUT_GENERAL}};
-            std::array<VkWriteDescriptorSet, kBindingCount> writes{};
+                VkDescriptorImageInfo{VK_NULL_HANDLE, m_multiScattering.imageView, VK_IMAGE_LAYOUT_GENERAL}};
+            const VkDescriptorImageInfo multiScatteringSampler{m_multiScattering.sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+            std::array<VkWriteDescriptorSet, kBindingCount + 1> writes{};
             for (uint32_t binding = 0; binding < kBindingCount; ++binding)
             {
-                const VkDescriptorType type = infos[binding].sampler != VK_NULL_HANDLE ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                                                                                       : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                const VkDescriptorType type = IsStorageBinding(binding) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
                 writes[binding] = ImageWrite(set, binding, type, &infos[binding]);
             }
+            writes[kBindingCount] = ImageWrite(
+                set, kSplitSamplerBindingOffset + kMultiScatteringBinding, VK_DESCRIPTOR_TYPE_SAMPLER, &multiScatteringSampler);
             vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         }
     }
@@ -577,7 +587,7 @@ void VulkanPathTracePass::WriteLayerDescriptorSets(const VulkanPathTraceLayerPas
         const uint32_t writeIndex = 1u - readIndex;
         const auto sampled = [&](VkImageView view)
         {
-            return VkDescriptorImageInfo{NativeSampler(m_nearestSampler), view, kReadLayout};
+            return VkDescriptorImageInfo{VK_NULL_HANDLE, view, kReadLayout};
         };
         const auto storage = [](VkImageView view)
         {
@@ -585,7 +595,7 @@ void VulkanPathTracePass::WriteLayerDescriptorSets(const VulkanPathTraceLayerPas
         };
         const auto history = [&](const HistoryImagePair& pair)
         {
-            return VkDescriptorImageInfo{NativeSampler(m_nearestSampler), pair.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
+            return VkDescriptorImageInfo{VK_NULL_HANDLE, pair.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
         };
         // The layer's G-buffer has no coat, specular or sheen (gbuffer.frag clears their flags there),
         // so its surface image stands in for the three, never read.
@@ -608,14 +618,16 @@ void VulkanPathTracePass::WriteLayerDescriptorSets(const VulkanPathTraceLayerPas
             history(m_layerSpecularHistory),
             history(m_layerSurfaceHistory),
             storage(m_layerSurfaceHistory.GetView(writeIndex)),
-            VkDescriptorImageInfo{m_multiScattering.sampler, m_multiScattering.imageView, VK_IMAGE_LAYOUT_GENERAL}};
-        std::array<VkWriteDescriptorSet, kBindingCount> writes{};
+            VkDescriptorImageInfo{VK_NULL_HANDLE, m_multiScattering.imageView, VK_IMAGE_LAYOUT_GENERAL}};
+        const VkDescriptorImageInfo multiScatteringSampler{m_multiScattering.sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+        std::array<VkWriteDescriptorSet, kBindingCount + 1> writes{};
         for (uint32_t binding = 0; binding < kBindingCount; ++binding)
         {
-            const VkDescriptorType type = infos[binding].sampler != VK_NULL_HANDLE ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                                                                                   : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            const VkDescriptorType type = IsStorageBinding(binding) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             writes[binding] = ImageWrite(set, binding, type, &infos[binding]);
         }
+        writes[kBindingCount] = ImageWrite(
+            set, kSplitSamplerBindingOffset + kMultiScatteringBinding, VK_DESCRIPTOR_TYPE_SAMPLER, &multiScatteringSampler);
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 }

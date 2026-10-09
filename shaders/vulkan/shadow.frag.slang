@@ -11,15 +11,17 @@ struct ShadowConstants
     float4 baseColorTransformRow0;
     float4 baseColorTransformRow1;
 };
-[[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData;
+#include "d3d_register.slang"
+
+[[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData D3D_PUSH_CONSTANTS(0);
 
 // The material set, bound at set 0 here: this pass has no camera set.
-[[vk::binding(0, 0)]] Texture2D baseColorTexture;
-[[vk::binding(64, 0)]] SamplerState baseColorTextureSampler;
-[[vk::binding(6, 0)]] Texture2D secondaryBaseColorTexture;
-[[vk::binding(70, 0)]] SamplerState secondaryBaseColorTextureSampler;
-[[vk::binding(12, 0)]] Texture2D blendMaskTexture;
-[[vk::binding(76, 0)]] SamplerState blendMaskTextureSampler;
+[[vk::binding(0, 0)]] Texture2D baseColorTexture : register(t0, space0);
+[[vk::binding(64, 0)]] SamplerState baseColorTextureSampler : register(s64, space0);
+[[vk::binding(6, 0)]] Texture2D secondaryBaseColorTexture : register(t6, space0);
+[[vk::binding(70, 0)]] SamplerState secondaryBaseColorTextureSampler : register(s70, space0);
+[[vk::binding(12, 0)]] Texture2D blendMaskTexture : register(t12, space0);
+[[vk::binding(76, 0)]] SamplerState blendMaskTextureSampler : register(s76, space0);
 
 [shader("fragment")]
 void main([[vk::location(0)]] float2 fragTexCoord : TEXCOORD0, [[vk::location(1)]] float2 fragTexCoord1 : TEXCOORD1)

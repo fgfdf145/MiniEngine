@@ -5,6 +5,7 @@
 // Vertex in engine/asset/mesh.h, 20 floats: position, colour, UV 0, normal, tangent, UV 1, outline
 // normal.
 
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 
 static const uint kVertexFloats = 20u;
@@ -17,20 +18,20 @@ static const float kTyreCarcassSpreadRadians = 1.2;
 static const float kTyreMinimumLift = 0.25;
 static const float kPi = 3.14159265358979;
 
-[[vk::binding(0, 0)]] StructuredBuffer<float> bindPose;
-[[vk::binding(2, 0)]] RWStructuredBuffer<float> vertices;
+[[vk::binding(0, 0)]] StructuredBuffer<float> bindPose : register(t0, space0);
+[[vk::binding(2, 0)]] RWStructuredBuffer<float> vertices : register(u2, space0);
 // Read as well: last frame's shape rolls into previousPositions before this one is written.
-[[vk::binding(3, 0)]] RWStructuredBuffer<float> positions;
-[[vk::binding(4, 0)]] RWStructuredBuffer<float> previousPositions;
+[[vk::binding(3, 0)]] RWStructuredBuffer<float> positions : register(u3, space0);
+[[vk::binding(4, 0)]] RWStructuredBuffer<float> previousPositions : register(u4, space0);
 // This frame's matrices: each tyre's two (PackTyreDeformation) among the skinned submeshes' joints.
-[[vk::binding(0, 1)]] StructuredBuffer<float4x4> palette;
+[[vk::binding(0, 1)]] StructuredBuffer<float4x4> palette : register(t0, space1);
 
 struct Constants
 {
     uint vertexCount;
     uint paletteBase;
 };
-[[vk::push_constant]] ConstantBuffer<Constants> constants;
+[[vk::push_constant]] ConstantBuffer<Constants> constants D3D_PUSH_CONSTANTS(0);
 
 struct TyreDeformation
 {

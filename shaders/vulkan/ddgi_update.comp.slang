@@ -27,25 +27,26 @@
 // updates of daylight in a night scene. The CPU learns of it through the feedback buffer and updates
 // the probe and its neighbours again soon (DdgiProbeScheduler).
 
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 #include "scene_common.slang"
 // The update writes one level of the atlases while it samples the next coarser one, so it reads
 // them through its own set, in GENERAL, not set 0's views of every level, which rest in
 // SHADER_READ_ONLY_OPTIMAL.
 #define DDGI_UPDATE_ATLASES
-[[vk::binding(6, 2)]] Texture2DArray ddgiIrradianceAtlas;
-[[vk::binding(7, 2)]] Texture2DArray ddgiVisibilityAtlas;
-[[vk::binding(8, 2)]] SamplerState ddgiIrradianceAtlasSampler;
-[[vk::binding(9, 2)]] SamplerState ddgiVisibilityAtlasSampler;
+[[vk::binding(6, 2)]] Texture2DArray ddgiIrradianceAtlas : register(t6, space2);
+[[vk::binding(7, 2)]] Texture2DArray ddgiVisibilityAtlas : register(t7, space2);
+[[vk::binding(8, 2)]] SamplerState ddgiIrradianceAtlasSampler : register(s8, space2);
+[[vk::binding(9, 2)]] SamplerState ddgiVisibilityAtlasSampler : register(s9, space2);
 #include "ddgi_common.slang"
 
-[[vk::binding(0, 2)]] StructuredBuffer<uint> scheduledProbes;
-[[vk::binding(1, 2)]] StructuredBuffer<float4> rays;
-[[vk::binding(2, 2)]] [[vk::image_format("rgba16f")]] RWTexture2DArray<float4> irradianceImage;
-[[vk::binding(3, 2)]] [[vk::image_format("rg16f")]] RWTexture2DArray<float2> visibilityImage;
-[[vk::binding(4, 2)]] RWStructuredBuffer<DdgiProbeState> probeStatesOut;
+[[vk::binding(0, 2)]] StructuredBuffer<uint> scheduledProbes : register(t0, space2);
+[[vk::binding(1, 2)]] StructuredBuffer<float4> rays : register(t1, space2);
+[[vk::binding(2, 2)]] [[vk::image_format("rgba16f")]] RWTexture2DArray<float4> irradianceImage : register(u2, space2);
+[[vk::binding(3, 2)]] [[vk::image_format("rg16f")]] RWTexture2DArray<float2> visibilityImage : register(u3, space2);
+[[vk::binding(4, 2)]] RWStructuredBuffer<DdgiProbeState> probeStatesOut : register(u4, space2);
 // Per scheduled probe: DDGI_FEEDBACK_* bits and the coordinate mod 256 (this frame slot's buffer).
-[[vk::binding(5, 2)]] RWStructuredBuffer<uint> feedback;
+[[vk::binding(5, 2)]] RWStructuredBuffer<uint> feedback : register(u5, space2);
 
 // Must match DdgiUpdateConstants in engine/renderer/vulkan/ddgi.cpp.
 struct DdgiUpdateConstants
@@ -56,7 +57,7 @@ struct DdgiUpdateConstants
     // The lighting epoch (bits 0 to 7) and the geometry epoch (bits 8 to 11).
     uint epochs;
 };
-[[vk::push_constant]] ConstantBuffer<DdgiUpdateConstants> constants;
+[[vk::push_constant]] ConstantBuffer<DdgiUpdateConstants> constants D3D_PUSH_CONSTANTS(2);
 
 static const float PI = 3.14159265359;
 static const float DDGI_MISS_DISTANCE = 1e27;

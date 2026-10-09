@@ -161,16 +161,6 @@ interface IAtmosphereLut
     float4 SampleTop(float2 uv);
 }
 
-struct CombinedAtmosphereLut : IAtmosphereLut
-{
-    Sampler2D lut;
-
-    float4 SampleTop(float2 uv)
-    {
-        return lut.SampleLevel(uv, 0.0);
-    }
-}
-
 struct SeparateAtmosphereLut : IAtmosphereLut
 {
     Texture2D lut;
@@ -180,13 +170,6 @@ struct SeparateAtmosphereLut : IAtmosphereLut
     {
         return lut.SampleLevel(lutSampler, uv, 0.0);
     }
-}
-
-CombinedAtmosphereLut AtmosphereLut(Sampler2D lut)
-{
-    CombinedAtmosphereLut result;
-    result.lut = lut;
-    return result;
 }
 
 SeparateAtmosphereLut AtmosphereLut(Texture2D lut, SamplerState lutSampler)

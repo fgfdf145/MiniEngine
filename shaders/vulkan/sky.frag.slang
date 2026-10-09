@@ -1,3 +1,4 @@
+#include "d3d_register.slang"
 #include "scene_common.slang"
 #include "atmosphere_sampling.slang"
 #include "volumetric_clouds.slang"
@@ -12,11 +13,11 @@ struct SkyConstants
     // 0 for the map itself.
     float4 backgroundRadiance;
 };
-[[vk::push_constant]] ConstantBuffer<SkyConstants> skyData;
+[[vk::push_constant]] ConstantBuffer<SkyConstants> skyData D3D_PUSH_CONSTANTS(1);
 
 // Set 0 binding 28: the clouds at the scene's extent on the unjittered pixel grid (cloud_resolve.comp),
 // rgb times CLOUD_TARGET_SCALE over the transmittance.
-[[vk::binding(28, 0)]] Texture2D cloudTarget;
+[[vk::binding(28, 0)]] Texture2D cloudTarget : register(t28, space0);
 
 [shader("fragment")]
 float4 main([[vk::location(0)]] float2 fragTexCoord : TEXCOORD0, float4 fragCoord : SV_Position) : SV_Target0

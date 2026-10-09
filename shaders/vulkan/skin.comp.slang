@@ -9,22 +9,24 @@ static const uint kNormal = 8u;
 static const uint kTangent = 11u;
 static const uint kOutlineNormal = 17u;
 
-[[vk::binding(0, 0)]] StructuredBuffer<float> bindPose;
+[[vk::binding(0, 0)]] StructuredBuffer<float> bindPose : register(t0, space0);
 // VertexSkin, six words a vertex: four 16-bit joints in two words, then four float weights.
-[[vk::binding(1, 0)]] StructuredBuffer<uint> skin;
-[[vk::binding(2, 0)]] RWStructuredBuffer<float> vertices;
+[[vk::binding(1, 0)]] StructuredBuffer<uint> skin : register(t1, space0);
+[[vk::binding(2, 0)]] RWStructuredBuffer<float> vertices : register(u2, space0);
 // Read as well: last frame's pose rolls into previousPositions before this one is written.
-[[vk::binding(3, 0)]] RWStructuredBuffer<float> positions;
-[[vk::binding(4, 0)]] RWStructuredBuffer<float> previousPositions;
+[[vk::binding(3, 0)]] RWStructuredBuffer<float> positions : register(u3, space0);
+[[vk::binding(4, 0)]] RWStructuredBuffer<float> previousPositions : register(u4, space0);
 // This frame's joint matrices, every skinned submesh's run in turn.
-[[vk::binding(0, 1)]] StructuredBuffer<float4x4> palette;
+[[vk::binding(0, 1)]] StructuredBuffer<float4x4> palette : register(t0, space1);
 
 struct Constants
 {
     uint vertexCount;
     uint paletteBase;
 };
-[[vk::push_constant]] ConstantBuffer<Constants> constants;
+#include "d3d_register.slang"
+
+[[vk::push_constant]] ConstantBuffer<Constants> constants D3D_PUSH_CONSTANTS(0);
 
 float3 ReadVec3(uint base)
 {

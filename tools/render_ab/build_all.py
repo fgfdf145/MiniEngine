@@ -6,6 +6,8 @@ defined): the shaders' portability check for a future Direct3D 12 backend
 (docs/design/2026-10-09-dxil-shader-portability-design.md)."""
 
 import concurrent.futures
+import glob
+import json
 import os
 import re
 import subprocess
@@ -16,14 +18,21 @@ SHADERS = os.path.join(ROOT, "shaders", "vulkan")
 DXIL = "--dxil" in sys.argv[1:]
 OUT = os.environ.get("SLANG_OUT") or os.path.join(ROOT, "out", "slang", "dxil" if DXIL else "spv")
 STAGES = {"comp": "compute", "vert": "vertex", "frag": "fragment"}
-SLANGC = os.environ.get("SLANGC") or os.path.join(os.environ.get("VULKAN_SDK", r"C:\VulkanSDK\1.4.357.0"), "Bin", "slangc.exe")
+# The slangc the CMake build uses (vcpkg's shader-slang, MINIENGINE_SLANGC_EXECUTABLE) when this checkout
+# has it, so the checks see the compiler the engine ships with; otherwise the Vulkan SDK's. DXIL needs
+# dxcompiler.dll on PATH (the Vulkan SDK's Bin has it).
+VCPKG_SLANGC = os.path.join(ROOT, ".deps", "vcpkg_installed", "x64", "x64-windows", "tools", "shader-slang", "slangc.exe")
+SLANGC = os.environ.get("SLANGC") or (VCPKG_SLANGC if os.path.exists(VCPKG_SLANGC) else
+                                      os.path.join(os.environ.get("VULKAN_SDK", r"C:\VulkanSDK\1.4.357.0"), "Bin", "slangc.exe"))
 
 
 def cmake_list(text, name):
+    # Comments first: one may hold a ")" (path_trace_common.slang's in the define variants).
+    text = "\n".join(line.split("#")[0] for line in text.splitlines())
     m = re.search(r"set\(" + name + r"\s+(.*?)\)", text, re.S)
     items = []
     for line in m.group(1).splitlines():
-        line = line.split("#")[0].strip()
+        line = line.strip()
         if line:
             items.extend(x.strip('"') for x in line.split())
     return items
@@ -56,24 +65,90 @@ def builds():
     return result
 
 
+def slangc(source, target, defines, path, reflection=None):
+    cmd = [SLANGC, os.path.join(SHADERS, source + ".slang")] + target + ["-entry", "main",
+           "-matrix-layout-column-major", "-warnings-disable", "41012"] + [f"-D{d}" for d in defines] + ["-o", path]
+    if reflection:
+        cmd += ["-reflection-json", reflection]
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def spirv_target(ray_query):
+    return ["-target", "spirv", "-profile", "spirv_1_4" if ray_query else "spirv_1_3"]
+
+
+def bindings(reflection):
+    params = json.load(open(reflection, encoding="utf-8"))["parameters"]
+    return {p["name"]: p["binding"] for p in params if "binding" in p}
+
+
+def check_registers(output, vulkan, d3d):
+    """Every resource's D3D register and space must be its Vulkan binding and set, which is what NVRHI's
+    binding layouts give (zero binding offsets, registerSpaceIsDescriptorSet); push constants are b0
+    (NVRHI's PushConstants(0)) in the space of the layout that carries them. Returns the problems."""
+    problems = []
+    for name, vk in vulkan.items():
+        if vk["kind"] not in ("pushConstantBuffer", "descriptorTableSlot"):
+            continue  # specialization constants
+        dx = d3d.get(name)
+        if dx is None:
+            problems.append(f"{name}: not in the DXIL reflection")
+        elif vk["kind"] == "pushConstantBuffer":
+            if dx["kind"] != "constantBuffer" or dx["index"] != 0:
+                problems.append(f"{name}: push constants at {dx['kind']} {dx['index']} space {dx.get('space', 0)}, want b0")
+        elif vk["kind"] == "descriptorTableSlot":
+            if (dx["index"], dx.get("space", 0)) != (vk["index"], vk.get("space", 0)):
+                problems.append(f"{name}: Vulkan binding {vk['index']} set {vk.get('space', 0)}, D3D {dx['kind']} {dx['index']} space {dx.get('space', 0)}")
+    # Two parameters on one register (a push constant block in a space a constant buffer uses).
+    seen = {}
+    for name, dx in d3d.items():
+        key = (dx["kind"], dx["index"], dx.get("space", 0))
+        if key in seen:
+            problems.append(f"{name} and {seen[key]} share {dx['kind']} {dx['index']} space {dx.get('space', 0)}")
+        seen[key] = name
+    return problems
+
+
 def compile_one(build):
     source, output, ray_query, defines = build
     defines = list(defines) + (["RAY_QUERY"] if ray_query else [])
-    if DXIL:
-        target = ["-target", "dxil", "-profile", "sm_6_8", "-stage", STAGES[source.rsplit(".", 1)[1]]]
-        defines.append("MINIENGINE_DXIL")
-        path = os.path.join(OUT, output + ".dxil")
-    else:
-        target = ["-target", "spirv", "-profile", "spirv_1_4" if ray_query else "spirv_1_3"]
-        path = os.path.join(OUT, output + ".spv")
-    cmd = [SLANGC, os.path.join(SHADERS, source + ".slang")] + target + ["-entry", "main",
-           "-matrix-layout-column-major", "-warnings-disable", "41012"] + [f"-D{d}" for d in defines] + ["-o", path]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    return output, r.returncode, (r.stdout + r.stderr).strip()
+    if not DXIL:
+        r = slangc(source, spirv_target(ray_query), defines, os.path.join(OUT, output + ".spv"))
+        return output, r.returncode, (r.stdout + r.stderr).strip()
+    target = ["-target", "dxil", "-profile", "sm_6_8", "-stage", STAGES[source.rsplit(".", 1)[1]]]
+    d3d_reflection = os.path.join(OUT, output + ".dxil.json")
+    r = slangc(source, target, defines + ["MINIENGINE_DXIL"], os.path.join(OUT, output + ".dxil"), d3d_reflection)
+    log = (r.stdout + r.stderr).strip()
+    if r.returncode != 0:
+        return output, r.returncode, log
+    vulkan_reflection = os.path.join(OUT, output + ".spv.json")
+    v = slangc(source, spirv_target(ray_query), defines, os.path.join(OUT, output + ".spv"), vulkan_reflection)
+    if v.returncode != 0:
+        return output, v.returncode, (v.stdout + v.stderr).strip()
+    problems = check_registers(output, bindings(vulkan_reflection), bindings(d3d_reflection))
+    if problems:
+        return output, 1, "\n".join(f"error: register {p}" for p in problems)
+    return output, 0, log
+
+
+def unregistered_declarations():
+    """Resource and push constant declarations without an explicit D3D register: Slang would place
+    them by declaration order, differently in each shader."""
+    missing = []
+    for path in sorted(glob.glob(os.path.join(SHADERS, "*.slang"))):
+        for number, line in enumerate(open(path, encoding="utf-8"), 1):
+            code = line.split("//")[0]
+            if ("vk::binding(" in code or "vk::push_constant" in code) and "register(" not in code and "D3D_REGISTER(" not in code and "D3D_PUSH_CONSTANTS(" not in code:
+                missing.append(f"{os.path.basename(path)}:{number}: {line.strip()}")
+    return missing
 
 
 def main():
     os.makedirs(OUT, exist_ok=True)
+    if DXIL:
+        missing = unregistered_declarations()
+        for line in missing:
+            print(f"NO REGISTER {line}")
     wanted = set(a for a in sys.argv[1:] if a != "--dxil")
     todo = [b for b in builds() if not wanted or b[1] in wanted or b[0] in wanted]
     failed = 0
@@ -91,6 +166,10 @@ def main():
             else:
                 print(f"ok   {output}")
     print(f"{len(todo) - failed}/{len(todo)} compiled")
+    if DXIL and missing:
+        print(f"{len(missing)} declarations without a D3D register")
+        failed += 1
+    sys.exit(1 if failed else 0)
 
 
 if __name__ == "__main__":

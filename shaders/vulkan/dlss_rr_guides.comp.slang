@@ -10,21 +10,22 @@
 // ray went in front of it, reprojected through last frame's camera (exact for a flat mirror and a
 // still scene), so a glossy reflection is not dragged along with the surface it is seen in.
 
+#include "d3d_register.slang"
 #include "scene_common.slang"
 #include "gbuffer_common.slang"
 
 // Set 1 is VulkanTaaPass's NVRHI binding set; every input is read with Load.
-[[vk::binding(0, 1)]] Texture2D albedoTexture;   // GB0
-[[vk::binding(1, 1)]] Texture2D normalTexture;   // GB1
-[[vk::binding(2, 1)]] Texture2D surfaceTexture;  // GB2
-[[vk::binding(3, 1)]] Texture2D specularTexture; // GB5
-[[vk::binding(4, 1)]] Texture2D depthTexture;
-[[vk::binding(5, 1)]] [[vk::image_format("rgba8")]] RWTexture2D<float4> diffuseAlbedoImage;
-[[vk::binding(6, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> specularAlbedoImage;
-[[vk::binding(7, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> normalRoughnessImage;
-[[vk::binding(8, 1)]] Texture2D reflectionsTexture;  // the path tracer's specular result
-[[vk::binding(9, 1)]] [[vk::image_format("r16f")]] RWTexture2D<float> hitDistanceImage;
-[[vk::binding(10, 1)]] [[vk::image_format("rg16f")]] RWTexture2D<float2> reflectionMotionImage;
+[[vk::binding(0, 1)]] Texture2D albedoTexture : register(t0, space1);   // GB0
+[[vk::binding(1, 1)]] Texture2D normalTexture : register(t1, space1);   // GB1
+[[vk::binding(2, 1)]] Texture2D surfaceTexture : register(t2, space1);  // GB2
+[[vk::binding(3, 1)]] Texture2D specularTexture : register(t3, space1); // GB5
+[[vk::binding(4, 1)]] Texture2D depthTexture : register(t4, space1);
+[[vk::binding(5, 1)]] [[vk::image_format("rgba8")]] RWTexture2D<float4> diffuseAlbedoImage : register(u5, space1);
+[[vk::binding(6, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> specularAlbedoImage : register(u6, space1);
+[[vk::binding(7, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> normalRoughnessImage : register(u7, space1);
+[[vk::binding(8, 1)]] Texture2D reflectionsTexture : register(t8, space1);  // the path tracer's specular result
+[[vk::binding(9, 1)]] [[vk::image_format("r16f")]] RWTexture2D<float> hitDistanceImage : register(u9, space1);
+[[vk::binding(10, 1)]] [[vk::image_format("rg16f")]] RWTexture2D<float2> reflectionMotionImage : register(u10, space1);
 
 // DlssMotionPushConstants in engine/renderer/vulkan/taa_pass.cpp, shared with dlss_motion_vectors.comp.
 struct GuideConstants
@@ -35,7 +36,7 @@ struct GuideConstants
     // x: 1 to write the hit distance and the reflections' motion vectors.
     float2 hitDistance;
 };
-[[vk::push_constant]] ConstantBuffer<GuideConstants> guide;
+[[vk::push_constant]] ConstantBuffer<GuideConstants> guide D3D_PUSH_CONSTANTS(1);
 
 // The split sum's (scale, bias) for the GGX lobe (Karis 2014, "Physically Based Shading on Mobile").
 float2 EnvironmentBrdfApprox(float roughness, float NdV)

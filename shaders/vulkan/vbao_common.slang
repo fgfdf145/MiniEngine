@@ -4,6 +4,15 @@
 // Shared by vbao_trace.comp and vbao_resolve.comp, and by the indirect diffuse passes that march the
 // same bitmask (gi_trace.comp, gi_resolve.comp). Include scene_common.slang first.
 
+#include "d3d_register.slang"
+
+// The set of the pass's own binding layout, which carries the push constants on Direct3D
+// (d3d_register.slang): the AO trace and resolve's and the indirect diffuse passes' set 1, the ray
+// traced occlusion's set 2.
+#ifndef AO_PASS_SET
+#define AO_PASS_SET 1
+#endif
+
 // Must match AoPushConstants in engine/renderer/vulkan/ao_pass.cpp and GiPushConstants in
 // engine/renderer/vulkan/gi_pass.cpp.
 struct AoConstants
@@ -19,7 +28,7 @@ struct AoConstants
     uint frameIndex;
     uint flags;
 };
-[[vk::push_constant]] ConstantBuffer<AoConstants> aoConstants;
+[[vk::push_constant]] ConstantBuffer<AoConstants> aoConstants D3D_PUSH_CONSTANTS(AO_PASS_SET);
 
 static const uint AO_FLAG_ENABLED = 1u;
 static const uint AO_FLAG_SPATIAL = 2u;

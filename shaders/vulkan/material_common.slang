@@ -25,6 +25,6 @@ struct MaterialData
     float4 detailLayerParams;   // x the detail layers' intensity
 };
 
-[[vk::binding(12, 0)]] StructuredBuffer<MaterialData> materials;
+[[vk::binding(12, 0)]] StructuredBuffer<MaterialData> materials : register(t12, space0);
 
 #endif

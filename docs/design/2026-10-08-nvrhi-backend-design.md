@@ -369,6 +369,13 @@ A/B 的预热帧数：同一个 exe 两次运行，`--wait-for-scene` 开始数�
 之前单步验证：bloom、直方图、TAA 各自对比前一个提交：fixture 场景（TAA 开）`same`，打开自动曝光的两个 fixture
 `same`；道路的光栅、DLSS、DLSS RR 在噪声底内；`MINIENGINE_NVRHI_VALIDATION=1` 无报告。
 
+### 着色器可编 DXIL（2026-10-09）
+
+为以后的 D3D12 后端，着色器改成同一份既编 SPIR-V 也编 DXIL（`2026-10-09-dxil-shader-portability-design.md`）。
+对这里的影响：原生 pass 里的 combined image sampler 全部拆掉了（只 Load 的输入是不带采样器的 sampled image，
+采样的在 b + 64 配单独的采样器），迁这些 pass 时不用再拆；每个资源声明都带了和 Vulkan binding 一致的 D3D
+寄存器，push constant 约定为 pass 自己那个 set 的 `PushConstants(0)`，`build_all.py --dxil` 会检查。
+
 ### 验证工具
 
 `tools/render_ab/`：`ab.py`（A/B 截图，`AB_MODE=exe` 对比 `out/baseline_src` 里编的基线 exe；基线 = 改动前的

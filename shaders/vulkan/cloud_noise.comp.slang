@@ -8,8 +8,8 @@
 //   detail 128^3: r g b a 2, 4, 8 and 16 spheres per tile.
 // Every octave wraps at the tile edge, so the REPEAT sampler shows no seam.
 // Set 1 bindings 7 and 8 of the atmosphere's compute set.
-[[vk::binding(7, 1)]] [[vk::image_format("rgba8")]] RWTexture3D<float4> shapeNoiseOut;
-[[vk::binding(8, 1)]] [[vk::image_format("rgba8")]] RWTexture3D<float4> detailNoiseOut;
+[[vk::binding(7, 1)]] [[vk::image_format("rgba8")]] RWTexture3D<float4> shapeNoiseOut : register(u7, space1);
+[[vk::binding(8, 1)]] [[vk::image_format("rgba8")]] RWTexture3D<float4> detailNoiseOut : register(u8, space1);
 
 // Must match kCloudNoiseSizes in engine/renderer/vulkan/atmosphere.cpp.
 static const int SHAPE_SIZE = 128;

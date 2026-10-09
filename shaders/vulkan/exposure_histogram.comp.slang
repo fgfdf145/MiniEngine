@@ -1,3 +1,4 @@
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 #include "exposure_histogram.slang"
 #include "reverse_depth.slang"
@@ -5,8 +6,8 @@
 // One invocation per pixel, and one per bin: the workgroup has exactly
 // kExposureHistogramBinCount invocations, so each clears and flushes one shared bin.
 // Read with Load only, so no samplers (VulkanExposureHistogramPass's NVRHI binding set).
-[[vk::binding(0, 0)]] Texture2D hdrTexture;
-[[vk::binding(1, 0)]] Texture2D depthTexture;
+[[vk::binding(0, 0)]] Texture2D hdrTexture : register(t0, space0);
+[[vk::binding(1, 0)]] Texture2D depthTexture : register(t1, space0);
 
 // Cleared by the pass before this dispatch and read back on the CPU once the frame's fence has
 // signaled.
@@ -19,7 +20,7 @@ struct HistogramBuffer
     uint colorSums[3];
     uint colorCount;
 };
-[[vk::binding(2, 0)]] RWStructuredBuffer<HistogramBuffer> histogram; // one element
+[[vk::binding(2, 0)]] RWStructuredBuffer<HistogramBuffer> histogram : register(u2, space0); // one element
 
 static const float kColorScale = 1024.0;
 
@@ -31,7 +32,7 @@ struct HistogramConstants
     // The HDR target is pre-exposed; this turns it back into physical luminance for the bins.
     float invPreExposure;
 };
-[[vk::push_constant]] ConstantBuffer<HistogramConstants> constants;
+[[vk::push_constant]] ConstantBuffer<HistogramConstants> constants D3D_PUSH_CONSTANTS(0);
 
 groupshared uint localBins[kExposureHistogramBinCount];
 groupshared uint localColor[4];

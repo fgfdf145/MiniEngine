@@ -5,11 +5,12 @@
 
 #define EMISSIVE_LIGHT_SET 2
 #define EMISSIVE_LIGHTS_WRITE
+#include "d3d_register.slang"
 #include "scene_common.slang"
 #include "light_grid_common.slang"
 
 // The scene's lights, as pbr_common.slang declares them (set 0 binding 10).
-[[vk::binding(10, 0)]] StructuredBuffer<SceneLightData> sceneLights;
+[[vk::binding(10, 0)]] StructuredBuffer<SceneLightData> sceneLights : register(t10, space0);
 
 // EmissiveBuildConstants in engine/renderer/vulkan/path_trace_lights.cpp; frame carries the frame
 // index here, which reseeds the subsets.
@@ -20,7 +21,7 @@ struct LightGridConstants
     uint frame;
     uint depth;
 };
-[[vk::push_constant]] ConstantBuffer<LightGridConstants> build;
+[[vk::push_constant]] ConstantBuffer<LightGridConstants> build D3D_PUSH_CONSTANTS(EMISSIVE_LIGHT_SET);
 
 groupshared float4 sharedSpheres[64];
 

@@ -11,6 +11,8 @@
 #ifndef PATH_TRACE_COMMON_SLANG
 #define PATH_TRACE_COMMON_SLANG
 
+#include "d3d_register.slang"
+
 #ifndef PATH_TRACE_SET
 #define PATH_TRACE_SET 1
 #endif
@@ -19,40 +21,41 @@
 #endif
 
 // The G-buffer, nearest.
-[[vk::binding(0, PATH_TRACE_SET)]] Sampler2D ptDepth;
-[[vk::binding(1, PATH_TRACE_SET)]] Sampler2D ptNormal;   // GB1
-[[vk::binding(2, PATH_TRACE_SET)]] Sampler2D ptAlbedo;   // GB0
-[[vk::binding(3, PATH_TRACE_SET)]] Sampler2D ptSurface;  // GB2
-[[vk::binding(4, PATH_TRACE_SET)]] Sampler2D ptCoat;     // GB6
-[[vk::binding(5, PATH_TRACE_SET)]] Sampler2D ptVelocity; // rg motion, ba a mapped coat's normal
-[[vk::binding(6, PATH_TRACE_SET)]] Sampler2D ptSpecular; // GB5
-[[vk::binding(7, PATH_TRACE_SET)]] Sampler2D ptSheen;    // GB7
+[[vk::binding(0, PATH_TRACE_SET)]] Texture2D ptDepth : D3D_REGISTER(t, 0, PATH_TRACE_SET);
+[[vk::binding(1, PATH_TRACE_SET)]] Texture2D ptNormal : D3D_REGISTER(t, 1, PATH_TRACE_SET);   // GB1
+[[vk::binding(2, PATH_TRACE_SET)]] Texture2D ptAlbedo : D3D_REGISTER(t, 2, PATH_TRACE_SET);   // GB0
+[[vk::binding(3, PATH_TRACE_SET)]] Texture2D ptSurface : D3D_REGISTER(t, 3, PATH_TRACE_SET);  // GB2
+[[vk::binding(4, PATH_TRACE_SET)]] Texture2D ptCoat : D3D_REGISTER(t, 4, PATH_TRACE_SET);     // GB6
+[[vk::binding(5, PATH_TRACE_SET)]] Texture2D ptVelocity : D3D_REGISTER(t, 5, PATH_TRACE_SET); // rg motion, ba a mapped coat's normal
+[[vk::binding(6, PATH_TRACE_SET)]] Texture2D ptSpecular : D3D_REGISTER(t, 6, PATH_TRACE_SET); // GB5
+[[vk::binding(7, PATH_TRACE_SET)]] Texture2D ptSheen : D3D_REGISTER(t, 7, PATH_TRACE_SET);    // GB7
 // Three pairs of images, diffuse then specular: the trace's raw paths; the accumulation this frame
 // writes (a: the frames it averages); the result the lighting pass reads (SceneGi and
 // SceneReflections, which path tracing mode takes over).
-[[vk::binding(8, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptRawDiffuse;
-[[vk::binding(9, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptRawSpecular;
+[[vk::binding(8, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptRawDiffuse : D3D_REGISTER(u, 8, PATH_TRACE_SET);
+[[vk::binding(9, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptRawSpecular : D3D_REGISTER(u, 9, PATH_TRACE_SET);
 // The offline mode's accumulation is full float (PT_HISTORY_FLOAT32, the _float32 variants of the
 // temporal and filter shaders): a half float's running mean stops moving after a few thousand frames.
 #if PT_HISTORY_FLOAT32
-[[vk::binding(10, PATH_TRACE_SET)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> ptHistoryDiffuse;
-[[vk::binding(11, PATH_TRACE_SET)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> ptHistorySpecular;
+[[vk::binding(10, PATH_TRACE_SET)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> ptHistoryDiffuse : D3D_REGISTER(u, 10, PATH_TRACE_SET);
+[[vk::binding(11, PATH_TRACE_SET)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> ptHistorySpecular : D3D_REGISTER(u, 11, PATH_TRACE_SET);
 #else
-[[vk::binding(10, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptHistoryDiffuse;
-[[vk::binding(11, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptHistorySpecular;
+[[vk::binding(10, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptHistoryDiffuse : D3D_REGISTER(u, 10, PATH_TRACE_SET);
+[[vk::binding(11, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptHistorySpecular : D3D_REGISTER(u, 11, PATH_TRACE_SET);
 #endif
-[[vk::binding(12, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptFinalDiffuse;
-[[vk::binding(13, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptFinalSpecular;
+[[vk::binding(12, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptFinalDiffuse : D3D_REGISTER(u, 12, PATH_TRACE_SET);
+[[vk::binding(13, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptFinalSpecular : D3D_REGISTER(u, 13, PATH_TRACE_SET);
 // Last frame's accumulation and the surfaces it was made on (x view depth, yz the shading normal,
 // octahedral; x 0 where there was none; w the specular path's hit distance for ray reconstruction),
 // nearest; and this frame's surfaces.
-[[vk::binding(14, PATH_TRACE_SET)]] Sampler2D ptPreviousDiffuse;
-[[vk::binding(15, PATH_TRACE_SET)]] Sampler2D ptPreviousSpecular;
-[[vk::binding(16, PATH_TRACE_SET)]] Sampler2D ptPreviousSurface;
-[[vk::binding(17, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptHistorySurface;
+[[vk::binding(14, PATH_TRACE_SET)]] Texture2D ptPreviousDiffuse : D3D_REGISTER(t, 14, PATH_TRACE_SET);
+[[vk::binding(15, PATH_TRACE_SET)]] Texture2D ptPreviousSpecular : D3D_REGISTER(t, 15, PATH_TRACE_SET);
+[[vk::binding(16, PATH_TRACE_SET)]] Texture2D ptPreviousSurface : D3D_REGISTER(t, 16, PATH_TRACE_SET);
+[[vk::binding(17, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptHistorySurface : D3D_REGISTER(u, 17, PATH_TRACE_SET);
 // The atmosphere's multiple-scattering LUT (GENERAL), with which the trace integrates the air along
 // its rays.
-[[vk::binding(18, PATH_TRACE_SET)]] Sampler2D ptMultiScatteringLut;
+[[vk::binding(18, PATH_TRACE_SET)]] Texture2D ptMultiScatteringLut : D3D_REGISTER(t, 18, PATH_TRACE_SET);
+[[vk::binding(82, PATH_TRACE_SET)]] SamplerState ptMultiScatteringLutSampler : D3D_REGISTER(s, 82, PATH_TRACE_SET);
 
 // PathTracePushConstants in engine/renderer/vulkan/path_trace_pass.cpp.
 struct PathTraceConstants
@@ -88,7 +91,7 @@ struct PathTraceConstants
     uint emissiveNeeBounces;
     uint2 padding;
 };
-[[vk::push_constant]] ConstantBuffer<PathTraceConstants> pathTrace;
+[[vk::push_constant]] ConstantBuffer<PathTraceConstants> pathTrace D3D_PUSH_CONSTANTS(PATH_TRACE_SET);
 
 // Must match kFlag* in path_trace_pass.cpp.
 static const uint PT_FLAG_ACCUMULATE = 1u;

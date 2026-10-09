@@ -40,17 +40,19 @@ VulkanDdgiDebugPass::VulkanDdgiDebugPass(
         m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         static constexpr std::array<VkDescriptorType, 4> kTypes = {
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes);
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE};
+        // Depth, normal and HDR colour are all sampled (nearest) at the view's UVs.
+        static constexpr std::array<uint32_t, 3> kSampled = {1, 2, 3};
+        m_setLayout = CreateComputeSetLayout(m_device, kTypes, kSampled);
         const std::array<VkDescriptorSetLayout, 3> setLayouts = {frameSetLayout, m_rayScene.GetSetLayout(), m_setLayout};
         CreateComputePipeline(m_device, pipelineCache, setLayouts, "ddgi_debug.comp.spv", sizeof(DdgiDebugConstants), m_pipelineLayout, m_pipeline);
         if (m_rayScene.HasHardwareRayTracing())
         {
             m_rayQueryPipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "ddgi_debug_ray_query.comp.spv");
         }
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 3, 1);
+        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 3, 1, 3);
         CreateDescriptorSets(targets);
     }
     catch (...)
@@ -121,14 +123,18 @@ void VulkanDdgiDebugPass::CreateDescriptorSets(const SceneRenderTargets& targets
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
         const VkDescriptorImageInfo outputInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneGi, slot), VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo depthInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-        const VkDescriptorImageInfo normalInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-        const VkDescriptorImageInfo hdrInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneHdr, slot), kReadLayout};
-        const std::array<VkWriteDescriptorSet, 4> writes = {
+        const VkDescriptorImageInfo depthInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
+        const VkDescriptorImageInfo normalInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
+        const VkDescriptorImageInfo hdrInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::SceneHdr, slot), kReadLayout};
+        const VkDescriptorImageInfo samplerInfo{NativeSampler(m_sampler), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+        const std::array<VkWriteDescriptorSet, 7> writes = {
             ImageWrite(m_descriptorSets[slot], 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outputInfo),
-            ImageWrite(m_descriptorSets[slot], 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
-            ImageWrite(m_descriptorSets[slot], 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
-            ImageWrite(m_descriptorSets[slot], 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &hdrInfo)};
+            ImageWrite(m_descriptorSets[slot], 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &depthInfo),
+            ImageWrite(m_descriptorSets[slot], 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &normalInfo),
+            ImageWrite(m_descriptorSets[slot], 3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &hdrInfo),
+            ImageWrite(m_descriptorSets[slot], kSplitSamplerBindingOffset + 1, VK_DESCRIPTOR_TYPE_SAMPLER, &samplerInfo),
+            ImageWrite(m_descriptorSets[slot], kSplitSamplerBindingOffset + 2, VK_DESCRIPTOR_TYPE_SAMPLER, &samplerInfo),
+            ImageWrite(m_descriptorSets[slot], kSplitSamplerBindingOffset + 3, VK_DESCRIPTOR_TYPE_SAMPLER, &samplerInfo)};
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
 }

@@ -1,3 +1,4 @@
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 #include "draw_parameters.slang"
 #include "scene_common.slang"
@@ -7,11 +8,11 @@ struct DrawConstants
 {
     float4x4 model;
 };
-[[vk::push_constant]] ConstantBuffer<DrawConstants> drawData;
+[[vk::push_constant]] ConstantBuffer<DrawConstants> drawData D3D_PUSH_CONSTANTS(1);
 
 // Each draw's model matrix from last frame, indexed by the draw's firstInstance (see
 // VulkanDrawItem::motionSlot). Push constants are full, so it cannot ride with the current one.
-[[vk::binding(2, 0)]] StructuredBuffer<float4x4> previousModels;
+[[vk::binding(2, 0)]] StructuredBuffer<float4x4> previousModels : register(t2, space0);
 
 struct VertexInput
 {

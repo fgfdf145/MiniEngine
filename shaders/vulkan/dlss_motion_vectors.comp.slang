@@ -4,12 +4,13 @@
 // previous, in UV) for the surfaces it draws; the background writes nothing, so it moves with the
 // camera alone and is reprojected here, as the TAA resolve does.
 
+#include "d3d_register.slang"
 #include "scene_common.slang"
 
 // Set 1 is VulkanTaaPass's NVRHI binding set; both inputs are read with Load.
-[[vk::binding(0, 1)]] Texture2D depthTexture;
-[[vk::binding(1, 1)]] Texture2D velocityTexture;
-[[vk::binding(2, 1)]] [[vk::image_format("rg16f")]] RWTexture2D<float2> motionImage;
+[[vk::binding(0, 1)]] Texture2D depthTexture : register(t0, space1);
+[[vk::binding(1, 1)]] Texture2D velocityTexture : register(t1, space1);
+[[vk::binding(2, 1)]] [[vk::image_format("rg16f")]] RWTexture2D<float2> motionImage : register(u2, space1);
 
 // Must match DlssMotionPushConstants in engine/renderer/vulkan/taa_pass.cpp.
 struct DlssMotionConstants
@@ -21,7 +22,7 @@ struct DlssMotionConstants
     float2 jitterPixels;
     float2 unused;
 };
-[[vk::push_constant]] ConstantBuffer<DlssMotionConstants> motion;
+[[vk::push_constant]] ConstantBuffer<DlssMotionConstants> motion D3D_PUSH_CONSTANTS(1);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]

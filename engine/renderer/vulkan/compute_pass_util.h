@@ -30,6 +30,19 @@ VkDescriptorSetLayout CreateComputeSetLayout(
     std::span<const VkDescriptorType> types,
     VkShaderStageFlags stages = VK_SHADER_STAGE_COMPUTE_BIT);
 
+// A sampled texture's own sampler sits at the texture's binding plus this (the shaders' b + 64):
+// the shaders take separate textures and samplers, which every target has, rather than combined
+// image samplers, which DXIL does not.
+inline constexpr uint32_t kSplitSamplerBindingOffset = 64;
+
+// The same plus a VK_DESCRIPTOR_TYPE_SAMPLER binding at kSplitSamplerBindingOffset + b for each b in
+// samplerBindings (bindings of sampled images the shader samples, not only loads).
+VkDescriptorSetLayout CreateComputeSetLayout(
+    VkDevice device,
+    std::span<const VkDescriptorType> types,
+    std::span<const uint32_t> samplerBindings,
+    VkShaderStageFlags stages = VK_SHADER_STAGE_COMPUTE_BIT);
+
 // Set 0 is the frame set, set 1 the pass's own; one compute-stage push constant range of
 // pushConstantSize bytes.
 void CreateComputePipeline(
@@ -66,7 +79,10 @@ void DispatchCompute(
     uint32_t constantSize,
     VkExtent2D extent);
 
-VkDescriptorPool CreateImageDescriptorPool(VkDevice device, uint32_t setCount, uint32_t samplersPerSet, uint32_t storagePerSet);
+// Room for setCount sets of sampledPerSet sampled images, storagePerSet storage images and
+// samplersPerSet separate samplers.
+VkDescriptorPool CreateImageDescriptorPool(
+    VkDevice device, uint32_t setCount, uint32_t sampledPerSet, uint32_t storagePerSet, uint32_t samplersPerSet = 0);
 
 // Resets the pool, then allocates count sets of one layout from it.
 std::vector<VkDescriptorSet> AllocateDescriptorSets(VkDevice device, VkDescriptorPool pool, VkDescriptorSetLayout layout, uint32_t count);

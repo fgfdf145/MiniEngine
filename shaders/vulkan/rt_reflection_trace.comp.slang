@@ -11,6 +11,7 @@
 // HDR target units, a confidence that is the roughness fade alone.
 
 #define RAY_TEXTURED_ALPHA
+#include "d3d_register.slang"
 #include "scene_common.slang"
 #include "gbuffer_common.slang"
 #include "pbr_common.slang"
@@ -22,13 +23,14 @@
 #include "ray_hit_common.slang"
 
 // VulkanSsrTracePass's set, here at set 2 (set 1 is the ray scene).
-[[vk::binding(0, 2)]] Sampler2D depthTexture;   // nearest
-[[vk::binding(1, 2)]] Sampler2D normalTexture;  // GB1, nearest
-[[vk::binding(2, 2)]] Sampler2D surfaceTexture; // GB2, nearest
-[[vk::binding(3, 2)]] Sampler2D historyTexture; // TAA history, last frame, linear
-[[vk::binding(4, 2)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ssrRawImage;
-[[vk::binding(5, 2)]] Sampler2D coatTexture;     // GB6, nearest
-[[vk::binding(6, 2)]] Sampler2D velocityTexture; // .ba: a mapped coat's normal, nearest
+[[vk::binding(0, 2)]] Texture2D depthTexture : register(t0, space2);   // nearest
+[[vk::binding(1, 2)]] Texture2D normalTexture : register(t1, space2);  // GB1, nearest
+[[vk::binding(2, 2)]] Texture2D surfaceTexture : register(t2, space2); // GB2, nearest
+[[vk::binding(3, 2)]] Texture2D historyTexture : register(t3, space2); // TAA history, last frame, linear
+[[vk::binding(67, 2)]] SamplerState historyTextureSampler : register(s67, space2);
+[[vk::binding(4, 2)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ssrRawImage : register(u4, space2);
+[[vk::binding(5, 2)]] Texture2D coatTexture : register(t5, space2);     // GB6, nearest
+[[vk::binding(6, 2)]] Texture2D velocityTexture : register(t6, space2); // .ba: a mapped coat's normal, nearest
 
 #include "ssr_lobe.slang"
 
@@ -43,7 +45,7 @@ struct SsrConstants
     uint frameIndex;
     uint flags;
 };
-[[vk::push_constant]] ConstantBuffer<SsrConstants> ssr;
+[[vk::push_constant]] ConstantBuffer<SsrConstants> ssr D3D_PUSH_CONSTANTS(2);
 
 // The screen's own colour stands for a hit that lies on the surface the depth buffer holds there
 // within this much (plus a share of its distance).
@@ -155,7 +157,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
                 if (!IsFarDepth(sceneDepth) && abs(sceneDistance - hitDistance) < SCREEN_MATCH_BASE + SCREEN_MATCH_PER_METRE * hitDistance &&
                     previousClip.w > 0.0 && all(previousUv >= float2(0.0)) && all(previousUv <= float2(1.0)))
                 {
-                    radiance = historyTexture.SampleLevel(previousUv, 0.0).rgb * ssr.historyScale;
+                    radiance = historyTexture.SampleLevel(historyTextureSampler, previousUv, 0.0).rgb * ssr.historyScale;
                     shaded = false;
                 }
             }

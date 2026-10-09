@@ -9,17 +9,18 @@
 //   current 3x3 (variance clipping), which removes ghosts left by disocclusion and changing light;
 // - a 10% / 90% blend weighted by 1 / (1 + exposed luma), so one bright sample cannot dominate.
 
+#include "d3d_register.slang"
 #include "scene_common.slang"
 #include "pre_exposure.slang"
 
 // Set 1 is VulkanTaaPass's NVRHI binding set: the inputs read with Load have no samplers.
-[[vk::binding(0, 1)]] Texture2D currentTexture;  // SceneHdr
-[[vk::binding(1, 1)]] Texture2D depthTexture;
-[[vk::binding(2, 1)]] Texture2D velocityTexture;
-[[vk::binding(3, 1)]] Texture2D historyTexture;  // last frame's result
-[[vk::binding(67, 1)]] SamplerState historyTextureSampler; // linear
-[[vk::binding(4, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> historyImage;
-[[vk::binding(5, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> outputImage; // SceneTaa
+[[vk::binding(0, 1)]] Texture2D currentTexture : register(t0, space1);  // SceneHdr
+[[vk::binding(1, 1)]] Texture2D depthTexture : register(t1, space1);
+[[vk::binding(2, 1)]] Texture2D velocityTexture : register(t2, space1);
+[[vk::binding(3, 1)]] Texture2D historyTexture : register(t3, space1);  // last frame's result
+[[vk::binding(67, 1)]] SamplerState historyTextureSampler : register(s67, space1); // linear
+[[vk::binding(4, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> historyImage : register(u4, space1);
+[[vk::binding(5, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> outputImage : register(u5, space1); // SceneTaa
 
 // Must match TaaPushConstants in engine/renderer/vulkan/taa_pass.cpp.
 struct TaaConstants
@@ -33,7 +34,7 @@ struct TaaConstants
     uint flags;
     float2 unused;
 };
-[[vk::push_constant]] ConstantBuffer<TaaConstants> taa;
+[[vk::push_constant]] ConstantBuffer<TaaConstants> taa D3D_PUSH_CONSTANTS(1);
 
 static const uint TAA_FLAG_ENABLED = 1u;
 static const uint TAA_FLAG_HISTORY_VALID = 2u;

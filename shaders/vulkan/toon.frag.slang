@@ -17,8 +17,8 @@ SPECIALIZATION_BOOL(0, kOutline);
 
 // The toon prepass's targets (VulkanToonPass's set 3): the characters' linear view depth and the eye
 // mask, fetched by pixel.
-[[vk::binding(0, 3)]] Sampler2D toonLinearDepth;
-[[vk::binding(1, 3)]] Sampler2D toonMask;
+[[vk::binding(0, 3)]] Texture2D toonLinearDepth : register(t0, space3);
+[[vk::binding(1, 3)]] Texture2D toonMask : register(t1, space3);
 
 struct FragmentInput
 {

@@ -5,19 +5,21 @@
 // motion vector and clipped to the current neighbourhood, so a reflection that moved or appeared
 // does not trail. Values are premultiplied by confidence while they are averaged.
 
+#include "d3d_register.slang"
 #include "scene_common.slang"
 #include "gbuffer_common.slang"
 #include "ssr_half_res.slang"
 
-[[vk::binding(0, 1)]] Sampler2D ssrRawTexture;  // nearest
-[[vk::binding(1, 1)]] Sampler2D depthTexture;   // nearest
-[[vk::binding(2, 1)]] Sampler2D normalTexture;  // GB1, nearest
-[[vk::binding(3, 1)]] Sampler2D surfaceTexture; // GB2, nearest
-[[vk::binding(4, 1)]] Sampler2D velocityTexture;
-[[vk::binding(5, 1)]] Sampler2D historyTexture; // linear
-[[vk::binding(6, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> historyImage;
-[[vk::binding(7, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> reflectionsImage;
-[[vk::binding(8, 1)]] Sampler2D coatTexture;       // GB6, nearest
+[[vk::binding(0, 1)]] Texture2D ssrRawTexture : register(t0, space1);  // nearest
+[[vk::binding(1, 1)]] Texture2D depthTexture : register(t1, space1);   // nearest
+[[vk::binding(2, 1)]] Texture2D normalTexture : register(t2, space1);  // GB1, nearest
+[[vk::binding(3, 1)]] Texture2D surfaceTexture : register(t3, space1); // GB2, nearest
+[[vk::binding(4, 1)]] Texture2D velocityTexture : register(t4, space1);
+[[vk::binding(5, 1)]] Texture2D historyTexture : register(t5, space1); // linear
+[[vk::binding(69, 1)]] SamplerState historyTextureSampler : register(s69, space1);
+[[vk::binding(6, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> historyImage : register(u6, space1);
+[[vk::binding(7, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> reflectionsImage : register(u7, space1);
+[[vk::binding(8, 1)]] Texture2D coatTexture : register(t8, space1);       // GB6, nearest
 
 #include "ssr_lobe.slang"
 
@@ -33,7 +35,7 @@ struct SsrResolveConstants
     uint frameIndex;
     float unused;
 };
-[[vk::push_constant]] ConstantBuffer<SsrResolveConstants> resolve;
+[[vk::push_constant]] ConstantBuffer<SsrResolveConstants> resolve D3D_PUSH_CONSTANTS(1);
 
 static const uint SSR_FLAG_TRACED = 1u;
 static const uint SSR_FLAG_HISTORY_VALID = 2u;
@@ -159,7 +161,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float2 previousUv = uv - velocityTexture.Load(int3(pixel, 0)).rg;
         if (all(previousUv >= float2(0.0)) && all(previousUv <= float2(1.0)))
         {
-            float4 history = historyTexture.SampleLevel(previousUv, 0.0);
+            float4 history = historyTexture.SampleLevel(historyTextureSampler, previousUv, 0.0);
             history.rgb *= resolve.historyScale;
             history = clamp(history, neighbourhoodMin, neighbourhoodMax);
             result = lerp(history, current, CURRENT_WEIGHT);

@@ -15,7 +15,9 @@ struct CloudReconstruction
     // are there to reproject, zw the scene's extent.
     uint4 frame;
 };
-[[vk::push_constant]] ConstantBuffer<CloudReconstruction> cloudReconstruction;
+#include "d3d_register.slang"
+
+[[vk::push_constant]] ConstantBuffer<CloudReconstruction> cloudReconstruction D3D_PUSH_CONSTANTS(1);
 
 // Over four frames every pixel of the block, the diagonal first so two frames already cover it
 // evenly.

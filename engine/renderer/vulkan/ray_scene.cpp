@@ -309,7 +309,8 @@ void VulkanRayScene::SetContent(
                 m_materialPools = std::make_unique<VulkanDescriptorPoolList>(
                     m_device,
                     m_materialSetLayout,
-                    std::vector<VkDescriptorPoolSize>{VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2}},
+                    std::vector<VkDescriptorPoolSize>{
+                        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 2}, VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, 2}},
                     kMaterialSetsPerPool);
             }
             const VulkanDescriptorPoolList::Allocation allocation = m_materialPools->Allocate();
@@ -323,11 +324,15 @@ void VulkanRayScene::SetContent(
     for (const uint32_t index : rewrite)
     {
         MaterialSlot& slot = m_materialSlots[index];
-        const VkDescriptorImageInfo baseColor{slot.source.baseColor.sampler, slot.source.baseColor.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        const VkDescriptorImageInfo emissive{slot.source.emissive.sampler, slot.source.emissive.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        const std::array<VkWriteDescriptorSet, 2> writes = {
-            ImageWrite(slot.set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &baseColor),
-            ImageWrite(slot.set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &emissive)};
+        const VkDescriptorImageInfo baseColor{VK_NULL_HANDLE, slot.source.baseColor.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo emissive{VK_NULL_HANDLE, slot.source.emissive.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo baseColorSampler{slot.source.baseColor.sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+        const VkDescriptorImageInfo emissiveSampler{slot.source.emissive.sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+        const std::array<VkWriteDescriptorSet, 4> writes = {
+            ImageWrite(slot.set, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &baseColor),
+            ImageWrite(slot.set, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &emissive),
+            ImageWrite(slot.set, kSplitSamplerBindingOffset + 0, VK_DESCRIPTOR_TYPE_SAMPLER, &baseColorSampler),
+            ImageWrite(slot.set, kSplitSamplerBindingOffset + 1, VK_DESCRIPTOR_TYPE_SAMPLER, &emissiveSampler)};
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         m_dirtyMaterialSlots.push_back(index);
     }
@@ -1355,10 +1360,10 @@ void VulkanRayScene::WriteSet(uint32_t slot)
 
 void VulkanRayScene::CreateMaterialPipeline(VkPipelineCache pipelineCache)
 {
-    constexpr std::array<VkDescriptorType, 2> kTypes = {
-        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
-    m_materialSetLayout = CreateComputeSetLayout(m_device, kTypes);
+    // The base colour and emissive textures, each with its material sampler (ray_material_average.comp).
+    constexpr std::array<VkDescriptorType, 2> kTypes = {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE};
+    constexpr std::array<uint32_t, 2> kSampled = {0, 1};
+    m_materialSetLayout = CreateComputeSetLayout(m_device, kTypes, kSampled);
     constexpr std::array<VkDescriptorType, 1> kOutputTypes = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
     m_materialOutputLayout = CreateComputeSetLayout(m_device, kOutputTypes);
     const VkDescriptorPoolSize outputPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1};

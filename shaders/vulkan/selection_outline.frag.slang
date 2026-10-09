@@ -1,3 +1,4 @@
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 #include "reverse_depth.slang"
 
@@ -7,8 +8,8 @@
 
 // Reverse-Z depths, DEPTH_FAR where nothing was drawn: the selected entity's own, unjittered, and the
 // scene's.
-[[vk::binding(0, 0)]] Sampler2D selectionDepth;
-[[vk::binding(1, 0)]] Sampler2D sceneDepth;
+[[vk::binding(0, 0)]] Texture2D selectionDepth : register(t0, space0);
+[[vk::binding(1, 0)]] Texture2D sceneDepth : register(t1, space0);
 
 // SelectionOutlinePushConstants in selection_outline_pass.cpp.
 struct OutlineConstants
@@ -19,7 +20,7 @@ struct OutlineConstants
     int radius;
     uint enabled;
 };
-[[vk::push_constant]] ConstantBuffer<OutlineConstants> outline;
+[[vk::push_constant]] ConstantBuffer<OutlineConstants> outline D3D_PUSH_CONSTANTS(0);
 
 // How much farther than the scene's surface the entity may be and still count as in view: the scene
 // depth is jittered by TAA and the entity's is not, so on a surface of the entity itself the two

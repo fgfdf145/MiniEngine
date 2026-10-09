@@ -100,11 +100,10 @@ VulkanRestirPtPass::VulkanRestirPtPass(
     }
     try
     {
-        m_nearestSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         std::array<VkDescriptorType, kBindingCount> types{};
         for (uint32_t binding = 0; binding < kSampledBindings; ++binding)
         {
-            types[binding] = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            types[binding] = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         }
         types[kSampledBindings] = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         for (uint32_t binding = kSampledBindings + 1; binding < kBindingCount; ++binding)
@@ -321,7 +320,7 @@ void VulkanRestirPtPass::CreateResources(const SceneRenderTargets& targets)
         const uint32_t copyCount = targets.GetTransientCopyCount();
         const uint32_t setCount = copyCount * 2;
         const std::array<VkDescriptorPoolSize, 3> poolSizes = {
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, setCount * kSampledBindings},
+            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, setCount * kSampledBindings},
             VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, setCount},
             VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, setCount * kBufferBindings}};
         VkDescriptorPoolCreateInfo poolInfo{};
@@ -348,8 +347,8 @@ void VulkanRestirPtPass::CreateResources(const SceneRenderTargets& targets)
                 std::array<VkWriteDescriptorSet, kBindingCount> writes{};
                 for (uint32_t binding = 0; binding < kSampledBindings; ++binding)
                 {
-                    images[binding] = VkDescriptorImageInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(kSampled[binding], slot), kReadLayout};
-                    writes[binding] = ImageWrite(set, binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &images[binding]);
+                    images[binding] = VkDescriptorImageInfo{VK_NULL_HANDLE, targets.GetSampledView(kSampled[binding], slot), kReadLayout};
+                    writes[binding] = ImageWrite(set, binding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &images[binding]);
                 }
                 images[kSampledBindings] =
                     VkDescriptorImageInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::ScenePathTrace, slot), VK_IMAGE_LAYOUT_GENERAL};
@@ -425,6 +424,5 @@ void VulkanRestirPtPass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    m_nearestSampler = nullptr;
 }
 }

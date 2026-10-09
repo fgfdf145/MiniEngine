@@ -60,7 +60,7 @@ class VulkanSelectionMaskPass : public IScenePass
 class VulkanSelectionOutlinePass : public IScenePass
 {
   public:
-    VulkanSelectionOutlinePass(VkDevice device, nvrhi::IDevice* nvrhiDevice, VkPipelineCache pipelineCache, const SceneRenderTargets& targets);
+    VulkanSelectionOutlinePass(VkDevice device, VkPipelineCache pipelineCache, const SceneRenderTargets& targets);
     ~VulkanSelectionOutlinePass() override;
 
     VulkanSelectionOutlinePass(const VulkanSelectionOutlinePass&) = delete;
@@ -76,7 +76,6 @@ class VulkanSelectionOutlinePass : public IScenePass
 
   private:
     void CreateDescriptorSetLayout();
-    void CreateSampler(nvrhi::IDevice* nvrhiDevice);
     void CreatePipeline(VkPipelineCache pipelineCache, const SceneRenderTargets& targets);
     void CreateDescriptorSets(const SceneRenderTargets& targets);
     void CreateFramebuffers(const SceneRenderTargets& targets);
@@ -87,7 +86,6 @@ class VulkanSelectionOutlinePass : public IScenePass
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    nvrhi::SamplerHandle m_sampler;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     // The two depths it reads are transient, so the sets are indexed by frame slot; the outline is

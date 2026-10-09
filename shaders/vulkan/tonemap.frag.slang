@@ -1,3 +1,4 @@
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 #include "gt7_tonemap.slang"
 #include "pre_exposure.slang"
@@ -7,8 +8,8 @@
 #include "gbuffer_inputs.slang"
 
 // Set 0 is VulkanTonemapPass's NVRHI binding set: the texture's sampler at 64.
-[[vk::binding(0, 0)]] Texture2D hdrTexture;
-[[vk::binding(64, 0)]] SamplerState hdrTextureSampler;
+[[vk::binding(0, 0)]] Texture2D hdrTexture : register(t0, space0);
+[[vk::binding(64, 0)]] SamplerState hdrTextureSampler : register(s64, space0);
 
 // Must match GBufferDebugView in engine/renderer/render_types.h.
 static const uint GBUFFER_VIEW_OFF = 0u;
@@ -49,7 +50,7 @@ struct TonemapConstants
     // Auto white balance, linear Rec.709 to linear Rec.709, as three columns (xyz used).
     float4 whiteBalance[3];
 };
-[[vk::push_constant]] ConstantBuffer<TonemapConstants> constants;
+[[vk::push_constant]] ConstantBuffer<TonemapConstants> constants D3D_PUSH_CONSTANTS(0);
 
 struct FragmentInput
 {

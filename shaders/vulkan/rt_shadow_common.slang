@@ -5,6 +5,8 @@
 #ifndef RT_SHADOW_COMMON_SLANG
 #define RT_SHADOW_COMMON_SLANG
 
+#include "d3d_register.slang"
+
 #ifndef RT_SHADOW_SET
 #define RT_SHADOW_SET 1
 #endif
@@ -19,25 +21,26 @@ struct RtShadowConstants
     float unused0;
     float unused1;
 };
-[[vk::push_constant]] ConstantBuffer<RtShadowConstants> rtShadow;
+[[vk::push_constant]] ConstantBuffer<RtShadowConstants> rtShadow D3D_PUSH_CONSTANTS(RT_SHADOW_SET);
 
 static const uint RT_SHADOW_FLAG_ENABLED = 1u;
 static const uint RT_SHADOW_FLAG_DENOISE = 2u;
 static const uint RT_SHADOW_FLAG_HISTORY_VALID = 4u;
 
-[[vk::binding(0, RT_SHADOW_SET)]] Sampler2D rtShadowDepth;
-[[vk::binding(1, RT_SHADOW_SET)]] Sampler2D rtShadowNormal;
-[[vk::binding(2, RT_SHADOW_SET)]] Sampler2D rtShadowVelocity;
+[[vk::binding(0, RT_SHADOW_SET)]] Texture2D rtShadowDepth : D3D_REGISTER(t, 0, RT_SHADOW_SET);
+[[vk::binding(1, RT_SHADOW_SET)]] Texture2D rtShadowNormal : D3D_REGISTER(t, 1, RT_SHADOW_SET);
+[[vk::binding(2, RT_SHADOW_SET)]] Texture2D rtShadowVelocity : D3D_REGISTER(t, 2, RT_SHADOW_SET);
 // x visibility (0 or 1), y the occluder's distance (0 when lit).
-[[vk::binding(3, RT_SHADOW_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> rtShadowRaw;
+[[vk::binding(3, RT_SHADOW_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> rtShadowRaw : D3D_REGISTER(u, 3, RT_SHADOW_SET);
 // x accumulated visibility, y the view distance it was accumulated at, z sample count, w the
 // occluders' mean distance.
-[[vk::binding(4, RT_SHADOW_SET)]] Sampler2D rtShadowHistoryRead;
-[[vk::binding(5, RT_SHADOW_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> rtShadowHistoryWrite;
+[[vk::binding(4, RT_SHADOW_SET)]] Texture2D rtShadowHistoryRead : D3D_REGISTER(t, 4, RT_SHADOW_SET);
+[[vk::binding(68, RT_SHADOW_SET)]] SamplerState rtShadowHistoryReadSampler : D3D_REGISTER(s, 68, RT_SHADOW_SET);
+[[vk::binding(5, RT_SHADOW_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> rtShadowHistoryWrite : D3D_REGISTER(u, 5, RT_SHADOW_SET);
 // x visibility the lighting reads, y 1 where the traced shadow ran.
-[[vk::binding(6, RT_SHADOW_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> rtShadowOutput;
+[[vk::binding(6, RT_SHADOW_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> rtShadowOutput : D3D_REGISTER(u, 6, RT_SHADOW_SET);
 // The history the temporal filter just wrote, which the spatial filter reads.
-[[vk::binding(7, RT_SHADOW_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> rtShadowAccumulated;
+[[vk::binding(7, RT_SHADOW_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> rtShadowAccumulated : D3D_REGISTER(u, 7, RT_SHADOW_SET);
 
 // glm's perspectiveRH_ZO with reverse Z: view-space depth (positive) from a 0..1 depth sample.
 float RtShadowViewDistance(float depth)

@@ -16,6 +16,7 @@
 // - DDGI irradiance (view 15): what the probes send each pixel's surface, irradiance / pi pre-exposed
 //   like SceneGi, before the albedo; black where the volume does not reach (the SH sky lights it).
 
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 #include "scene_common.slang"
 #include "ray_tracing_common.slang"
@@ -23,11 +24,13 @@
 #include "ground_plane.slang"
 #include "gbuffer_common.slang"
 
-[[vk::binding(10, 0)]] StructuredBuffer<SceneLightData> sceneLights;
+[[vk::binding(10, 0)]] StructuredBuffer<SceneLightData> sceneLights : register(t10, space0);
 
-[[vk::binding(0, 2)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> outputImage;
-[[vk::binding(1, 2)]] Sampler2D depthTexture;
-[[vk::binding(2, 2)]] Sampler2D normalTexture;
+[[vk::binding(0, 2)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> outputImage : register(u0, space2);
+[[vk::binding(1, 2)]] Texture2D depthTexture : register(t1, space2);
+[[vk::binding(65, 2)]] SamplerState depthTextureSampler : register(s65, space2);
+[[vk::binding(2, 2)]] Texture2D normalTexture : register(t2, space2);
+[[vk::binding(66, 2)]] SamplerState normalTextureSampler : register(s66, space2);
 
 // Must match DdgiDebugConstants in engine/renderer/vulkan/ddgi_debug_pass.cpp.
 struct DdgiDebugConstants
@@ -37,13 +40,14 @@ struct DdgiDebugConstants
     uint view;
     uint frameIndex;
 };
-[[vk::push_constant]] ConstantBuffer<DdgiDebugConstants> constants;
+[[vk::push_constant]] ConstantBuffer<DdgiDebugConstants> constants D3D_PUSH_CONSTANTS(2);
 
 static const uint VIEW_RAY_TRACED = 14u;
 static const uint VIEW_DDGI_IRRADIANCE = 15u;
 static const uint VIEW_DDGI_PROBES = 16u;
 
-[[vk::binding(3, 2)]] Sampler2D hdrTexture;
+[[vk::binding(3, 2)]] Texture2D hdrTexture : register(t3, space2);
+[[vk::binding(67, 2)]] SamplerState hdrTextureSampler : register(s67, space2);
 
 // The nearest probe sphere of one level the ray meets before maxT: walks the level's cells along the
 // ray (Amanatides and Woo) and tests the eight probes around each.
@@ -151,13 +155,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float2 uv = (float2(pixel) + 0.5) * constants.invExtent;
     if (constants.view == VIEW_DDGI_PROBES)
     {
-        float depth = depthTexture.SampleLevel(uv, 0.0).r;
+        float depth = depthTexture.SampleLevel(depthTextureSampler, uv, 0.0).r;
         float4 world = mul(ubo.invViewProj, float4(uv * 2.0 - 1.0, depth, 1.0));
         float4 far = mul(ubo.invViewProj, float4(uv * 2.0 - 1.0, DEPTH_FAR, 1.0));
         float3 origin = ubo.cameraWorldPosition.xyz;
         float3 direction = normalize(far.xyz / far.w - origin);
         float maxT = !IsFarDepth(depth) ? length(world.xyz / world.w - origin) : 1e30;
-        float3 color = hdrTexture.SampleLevel(uv, 0.0).rgb;
+        float3 color = hdrTexture.SampleLevel(hdrTextureSampler, uv, 0.0).rgb;
         float bestT = maxT;
         uint level = uint(ubo.ddgiParams.y);
         float3 probeColor;
@@ -170,13 +174,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
     if (constants.view == VIEW_DDGI_IRRADIANCE)
     {
-        float depth = depthTexture.SampleLevel(uv, 0.0).r;
+        float depth = depthTexture.SampleLevel(depthTextureSampler, uv, 0.0).r;
         float3 irradiance = float3(0.0);
         if (!IsFarDepth(depth) && DdgiLevelCount() > 0u)
         {
             float4 world = mul(ubo.invViewProj, float4(uv * 2.0 - 1.0, depth, 1.0));
             float3 P = world.xyz / world.w;
-            float3 N = DecodeNormalOctahedral(normalTexture.SampleLevel(uv, 0.0).rg);
+            float3 N = DecodeNormalOctahedral(normalTexture.SampleLevel(normalTextureSampler, uv, 0.0).rg);
             float weight;
             irradiance = DdgiIrradiance(P, N, normalize(ubo.cameraWorldPosition.xyz - P), weight).rgb * ubo.exposure.x;
         }

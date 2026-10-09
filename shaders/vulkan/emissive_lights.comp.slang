@@ -12,6 +12,7 @@
 #define EMISSIVE_LIGHT_SET 2
 #define RAY_TEXTURE_SET 3
 #define EMISSIVE_LIGHTS_WRITE
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 #include "scene_common.slang"
 #include "ray_tracing_common.slang"
@@ -29,7 +30,7 @@ struct EmissiveBuildConstants
     uint level;
     uint depth;
 };
-[[vk::push_constant]] ConstantBuffer<EmissiveBuildConstants> build;
+[[vk::push_constant]] ConstantBuffer<EmissiveBuildConstants> build D3D_PUSH_CONSTANTS(EMISSIVE_LIGHT_SET);
 
 void SetTreeValue(uint index, float value)
 {

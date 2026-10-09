@@ -13,6 +13,8 @@
 #ifndef LIGHT_GRID_COMMON_SLANG
 #define LIGHT_GRID_COMMON_SLANG
 
+#include "d3d_register.slang"
+
 // Must match kLightGrid* in engine/renderer/vulkan/path_trace_lights.cpp.
 static const uint3 LIGHT_GRID_DIMS = uint3(64u, 16u, 64u);
 static const float LIGHT_GRID_CELL = 8.0;
@@ -23,11 +25,13 @@ static const uint LIGHT_GRID_STRIDE = 1u + LIGHT_GRID_SLOTS / 2u;
 #ifndef EmissiveBuffer
 #ifdef EMISSIVE_LIGHTS_WRITE
 #define EmissiveBuffer RWStructuredBuffer
+#define EMISSIVE_BUFFER_CLASS u
 #else
 #define EmissiveBuffer StructuredBuffer
+#define EMISSIVE_BUFFER_CLASS t
 #endif
 #endif
-[[vk::binding(5, EMISSIVE_LIGHT_SET)]] EmissiveBuffer<uint> lightGrid;
+[[vk::binding(5, EMISSIVE_LIGHT_SET)]] EmissiveBuffer<uint> lightGrid : D3D_REGISTER(EMISSIVE_BUFFER_CLASS, 5, EMISSIVE_LIGHT_SET);
 
 // The grid's lowest corner: centred on the camera, in whole cells so a cell keeps its place as the
 // camera moves.

@@ -22,32 +22,33 @@
 #ifndef RESTIR_PT_COMMON_SLANG
 #define RESTIR_PT_COMMON_SLANG
 
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 
 // The pass's own set (VulkanRestirPtPass), set 2 of every ReSTIR PT pipeline; each shader uses a part.
-[[vk::binding(0, 2)]] Sampler2D ptDepth;    // nearest
-[[vk::binding(1, 2)]] Sampler2D ptNormal;   // GB1, nearest
-[[vk::binding(2, 2)]] Sampler2D ptAlbedo;   // GB0, nearest
-[[vk::binding(3, 2)]] Sampler2D ptSurface;  // GB2, nearest
-[[vk::binding(4, 2)]] Sampler2D ptCoat;     // GB6, nearest
-[[vk::binding(5, 2)]] Sampler2D ptVelocity; // rg uv motion, ba a mapped coat's normal
-[[vk::binding(6, 2)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptOutput;
+[[vk::binding(0, 2)]] Texture2D ptDepth : register(t0, space2);    // nearest
+[[vk::binding(1, 2)]] Texture2D ptNormal : register(t1, space2);   // GB1, nearest
+[[vk::binding(2, 2)]] Texture2D ptAlbedo : register(t2, space2);   // GB0, nearest
+[[vk::binding(3, 2)]] Texture2D ptSurface : register(t3, space2);  // GB2, nearest
+[[vk::binding(4, 2)]] Texture2D ptCoat : register(t4, space2);     // GB6, nearest
+[[vk::binding(5, 2)]] Texture2D ptVelocity : register(t5, space2); // rg uv motion, ba a mapped coat's normal
+[[vk::binding(6, 2)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptOutput : register(u6, space2);
 // Reservoirs, four uint4 each: the frame's working reservoirs (initial, then temporal in place) and the
 // history (last frame's final reservoirs, read by the temporal reuse, then this frame's final ones).
-[[vk::binding(7, 2)]] RWStructuredBuffer<uint4> workReservoirs;
-[[vk::binding(8, 2)]] RWStructuredBuffer<uint4> historyReservoirs;
+[[vk::binding(7, 2)]] RWStructuredBuffer<uint4> workReservoirs : register(u7, space2);
+[[vk::binding(8, 2)]] RWStructuredBuffer<uint4> historyReservoirs : register(u8, space2);
 // Primary surface records, two uint4 each: this frame's and last frame's.
-[[vk::binding(9, 2)]] RWStructuredBuffer<uint4> currentSurfaces;
-[[vk::binding(10, 2)]] StructuredBuffer<uint4> previousSurfaces;
+[[vk::binding(9, 2)]] RWStructuredBuffer<uint4> currentSurfaces : register(u9, space2);
+[[vk::binding(10, 2)]] StructuredBuffer<uint4> previousSurfaces : register(t10, space2);
 // The paired spatial reuse's shifts, one uint4 per pixel and pairing texture: this pixel's sample
 // shifted onto its partner's surface (PtPackShift).
-[[vk::binding(11, 2)]] RWStructuredBuffer<uint4> spatialShifts;
+[[vk::binding(11, 2)]] RWStructuredBuffer<uint4> spatialShifts : register(u11, space2);
 // The duplication score of each pixel's final reservoir (restir_pt_duplication.comp).
-[[vk::binding(12, 2)]] RWStructuredBuffer<float> duplication;
+[[vk::binding(12, 2)]] RWStructuredBuffer<float> duplication : register(u12, space2);
 // The pairing textures (engine/renderer/restir_pairing.h), two signed bytes a texel, two texels a word.
-[[vk::binding(13, 2)]] StructuredBuffer<uint> pairing;
+[[vk::binding(13, 2)]] StructuredBuffer<uint> pairing : register(t13, space2);
 // The running average of the accumulate mode.
-[[vk::binding(14, 2)]] RWStructuredBuffer<float4> accumulation;
+[[vk::binding(14, 2)]] RWStructuredBuffer<float4> accumulation : register(u14, space2);
 
 // RestirPtPushConstants in engine/renderer/vulkan/restir_pt_pass.cpp.
 struct RestirPtConstants
@@ -70,7 +71,7 @@ struct RestirPtConstants
     // xyz last frame's camera position, the camera the history's surfaces were seen from.
     float4 previousCamera;
 };
-[[vk::push_constant]] ConstantBuffer<RestirPtConstants> pt;
+[[vk::push_constant]] ConstantBuffer<RestirPtConstants> pt D3D_PUSH_CONSTANTS(2);
 
 #define PT_FLAG_TEMPORAL 1u
 #define PT_FLAG_SPATIAL 2u

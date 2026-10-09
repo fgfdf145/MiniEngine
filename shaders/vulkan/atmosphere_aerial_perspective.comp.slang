@@ -2,12 +2,12 @@
 #include "atmosphere_common.slang"
 #include "atmosphere_integrate.slang"
 
-[[vk::binding(3, 1)]] [[vk::image_format("rgba16f")]] RWTexture3D<float4> aerialPerspectiveOut;
+[[vk::binding(3, 1)]] [[vk::image_format("rgba16f")]] RWTexture3D<float4> aerialPerspectiveOut : register(u3, space1);
 // Set 1 is VulkanAtmosphere's NVRHI binding set: each sampled LUT's sampler at its binding + 64.
-[[vk::binding(4, 1)]] Texture2D transmittanceLut;
-[[vk::binding(68, 1)]] SamplerState transmittanceLutSampler;
-[[vk::binding(5, 1)]] Texture2D multiScatteringLut;
-[[vk::binding(69, 1)]] SamplerState multiScatteringLutSampler;
+[[vk::binding(4, 1)]] Texture2D transmittanceLut : register(t4, space1);
+[[vk::binding(68, 1)]] SamplerState transmittanceLutSampler : register(s68, space1);
+[[vk::binding(5, 1)]] Texture2D multiScatteringLut : register(t5, space1);
+[[vk::binding(69, 1)]] SamplerState multiScatteringLutSampler : register(s69, space1);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]

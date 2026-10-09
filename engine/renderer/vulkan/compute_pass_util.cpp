@@ -32,13 +32,27 @@ nvrhi::SamplerHandle CreateClampSampler(nvrhi::IDevice* device, VkFilter filter)
 
 VkDescriptorSetLayout CreateComputeSetLayout(VkDevice device, std::span<const VkDescriptorType> types, VkShaderStageFlags stages)
 {
-    std::vector<VkDescriptorSetLayoutBinding> bindings(types.size());
+    return CreateComputeSetLayout(device, types, {}, stages);
+}
+
+VkDescriptorSetLayout CreateComputeSetLayout(
+    VkDevice device, std::span<const VkDescriptorType> types, std::span<const uint32_t> samplerBindings, VkShaderStageFlags stages)
+{
+    std::vector<VkDescriptorSetLayoutBinding> bindings(types.size() + samplerBindings.size());
     for (uint32_t binding = 0; binding < static_cast<uint32_t>(types.size()); ++binding)
     {
         bindings[binding].binding = binding;
         bindings[binding].descriptorType = types[binding];
         bindings[binding].descriptorCount = 1;
         bindings[binding].stageFlags = stages;
+    }
+    for (size_t i = 0; i < samplerBindings.size(); ++i)
+    {
+        VkDescriptorSetLayoutBinding& binding = bindings[types.size() + i];
+        binding.binding = kSplitSamplerBindingOffset + samplerBindings[i];
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        binding.descriptorCount = 1;
+        binding.stageFlags = stages;
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -135,11 +149,19 @@ void DispatchCompute(
         1);
 }
 
-VkDescriptorPool CreateImageDescriptorPool(VkDevice device, uint32_t setCount, uint32_t samplersPerSet, uint32_t storagePerSet)
+VkDescriptorPool CreateImageDescriptorPool(
+    VkDevice device, uint32_t setCount, uint32_t sampledPerSet, uint32_t storagePerSet, uint32_t samplersPerSet)
 {
-    const std::array<VkDescriptorPoolSize, 2> poolSizes = {
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, setCount * samplersPerSet},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, setCount * storagePerSet}};
+    std::vector<VkDescriptorPoolSize> poolSizes;
+    const auto add = [&](VkDescriptorType type, uint32_t perSet) {
+        if (perSet > 0)
+        {
+            poolSizes.push_back(VkDescriptorPoolSize{type, setCount * perSet});
+        }
+    };
+    add(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, sampledPerSet);
+    add(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, storagePerSet);
+    add(VK_DESCRIPTOR_TYPE_SAMPLER, samplersPerSet);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;

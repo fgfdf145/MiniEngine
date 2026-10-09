@@ -6,10 +6,13 @@
 // through; the emission the emissive texture's average. Texture
 // transforms and the second UV set are ignored: an average does not depend on them much.
 
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 
-[[vk::binding(0, 0)]] Sampler2D baseColorTexture;
-[[vk::binding(1, 0)]] Sampler2D emissiveTexture;
+[[vk::binding(0, 0)]] Texture2D baseColorTexture : register(t0, space0);
+[[vk::binding(64, 0)]] SamplerState baseColorTextureSampler : register(s64, space0);
+[[vk::binding(1, 0)]] Texture2D emissiveTexture : register(t1, space0);
+[[vk::binding(65, 0)]] SamplerState emissiveTextureSampler : register(s65, space0);
 
 struct RayMaterial
 {
@@ -19,7 +22,7 @@ struct RayMaterial
 };
 
 // Every slot's set names its textures; the materials buffer is one set for all of them.
-[[vk::binding(0, 1)]] RWStructuredBuffer<RayMaterial> rayMaterials;
+[[vk::binding(0, 1)]] RWStructuredBuffer<RayMaterial> rayMaterials : register(u0, space1);
 
 // Must match RayMaterialConstants in engine/renderer/vulkan/ray_scene.cpp.
 struct RayMaterialConstants
@@ -29,7 +32,7 @@ struct RayMaterialConstants
     uint4 params;           // x output index, y alpha mode, z flags, w transmission as float bits
     uint4 samplers;         // RayMaterial's samplers, passed through
 };
-[[vk::push_constant]] ConstantBuffer<RayMaterialConstants> constants;
+[[vk::push_constant]] ConstantBuffer<RayMaterialConstants> constants D3D_PUSH_CONSTANTS(0);
 
 static const uint ALPHA_OPAQUE = 0u;
 static const uint ALPHA_MASK = 1u;
@@ -37,7 +40,7 @@ static const uint ALPHA_MASK = 1u;
 groupshared float4 sharedAlbedo[256];   // rgb covered albedo sum, a covered count
 groupshared float4 sharedEmission[256]; // rgb emission sum, a coverage sum
 
-float LodForSize(Sampler2D image, float texels)
+float LodForSize(Texture2D image, float texels)
 {
     float levels = float(TextureLevels(image));
     float width = float(TextureSize(image, 0).x);
@@ -50,8 +53,8 @@ void main(uint3 groupThreadId : SV_GroupThreadID, uint groupIndex : SV_GroupInde
 {
     uint index = groupIndex;
     float2 uv = (float2(groupThreadId.xy) + 0.5) / 16.0;
-    float4 base = baseColorTexture.SampleLevel(uv, LodForSize(baseColorTexture, 16.0)) * constants.baseColorFactor;
-    float3 emission = emissiveTexture.SampleLevel(uv, LodForSize(emissiveTexture, 16.0)).rgb * constants.emissiveAndCutoff.rgb;
+    float4 base = baseColorTexture.SampleLevel(baseColorTextureSampler, uv, LodForSize(baseColorTexture, 16.0)) * constants.baseColorFactor;
+    float3 emission = emissiveTexture.SampleLevel(emissiveTextureSampler, uv, LodForSize(emissiveTexture, 16.0)).rgb * constants.emissiveAndCutoff.rgb;
 
     float coverage = 1.0;
     if (constants.params.y == ALPHA_MASK)

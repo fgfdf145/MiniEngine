@@ -10,12 +10,12 @@
 
 // Set 0 bindings 24, 25 and 27: the large and small billows and the plume map (VulkanAtmosphere),
 // REPEAT and linear.
-[[vk::binding(24, 0)]] Texture3D cloudShapeNoise;
-[[vk::binding(FRAME_SAMPLER(24), 0)]] SamplerState cloudShapeNoiseSampler;
-[[vk::binding(25, 0)]] Texture3D cloudDetailNoise;
-[[vk::binding(FRAME_SAMPLER(25), 0)]] SamplerState cloudDetailNoiseSampler;
-[[vk::binding(27, 0)]] Texture2D cloudWeatherMap;
-[[vk::binding(FRAME_SAMPLER(27), 0)]] SamplerState cloudWeatherMapSampler;
+[[vk::binding(24, 0)]] Texture3D cloudShapeNoise : register(t24, space0);
+[[vk::binding(FRAME_SAMPLER(24), 0)]] SamplerState cloudShapeNoiseSampler : register(s88, space0);
+[[vk::binding(25, 0)]] Texture3D cloudDetailNoise : register(t25, space0);
+[[vk::binding(FRAME_SAMPLER(25), 0)]] SamplerState cloudDetailNoiseSampler : register(s89, space0);
+[[vk::binding(27, 0)]] Texture2D cloudWeatherMap : register(t27, space0);
+[[vk::binding(FRAME_SAMPLER(27), 0)]] SamplerState cloudWeatherMapSampler : register(s91, space0);
 
 // Must match kCloudScatteringOctaves and kCloudOctave* in engine/renderer/volumetric_clouds.h.
 static const int CLOUD_SCATTERING_OCTAVES = 5;

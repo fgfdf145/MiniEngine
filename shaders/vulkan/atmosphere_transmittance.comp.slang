@@ -1,7 +1,7 @@
 #include "scene_common.slang"
 #include "atmosphere_common.slang"
 
-[[vk::binding(0, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> transmittanceOut;
+[[vk::binding(0, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> transmittanceOut : register(u0, space1);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]

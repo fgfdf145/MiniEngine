@@ -308,7 +308,7 @@ PathMedium RayMedium(float3 origin, float3 direction, float distance, bool toSky
         {
             float3 startKm = ubo.atmosphereCameraPositionKm.xyz + (origin - ubo.cameraWorldPosition.xyz) * kilometresPerUnit;
             ScatteringResult air = IntegrateScatteredLuminance(
-                startKm, direction, ubo.sunDirectionAndMode.xyz, ubo.sunIlluminance.rgb, FrameTransmittanceLut(), AtmosphereLut(ptMultiScatteringLut),
+                startKm, direction, ubo.sunDirectionAndMode.xyz, ubo.sunIlluminance.rgb, FrameTransmittanceLut(), AtmosphereLut(ptMultiScatteringLut, ptMultiScatteringLutSampler),
                 false, clamp(ceil(lengthKm * 2.0), 1.0, 8.0), lengthKm, true, true);
             medium.transmittance = air.transmittance;
             medium.inscatter = air.luminance;

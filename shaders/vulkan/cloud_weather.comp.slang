@@ -15,7 +15,7 @@
 // Set 1 binding 10 of the atmosphere's compute set: the map; binding 14 the plume table, every
 // cell of every scale drawn once on the CPU (BuildCloudPlumeTable), so a rebuild only shapes the
 // domes for the plumes' current lives.
-[[vk::binding(10, 1)]] [[vk::image_format("rg16")]] RWTexture2D<float2> weatherOut;
+[[vk::binding(10, 1)]] [[vk::image_format("rg16")]] RWTexture2D<float2> weatherOut : register(u10, space1);
 
 // Must match CloudPlumeCell in engine/renderer/volumetric_clouds.h.
 struct PlumeCell
@@ -25,7 +25,7 @@ struct PlumeCell
     float4 turrets[5]; // xy centre from the plume's, z radius, w height
     float4 bobs[2];    // each turret's bob start: 0-3 in bobs[0], 4 in bobs[1].x
 };
-[[vk::binding(14, 1)]] StructuredBuffer<PlumeCell> plumeCells;
+[[vk::binding(14, 1)]] StructuredBuffer<PlumeCell> plumeCells : register(t14, space1);
 
 // Must match kCloudWeatherSize, kCloudWeatherFloor, kCloudWeatherSlopeScale, kCloudDomeExponent,
 // kCloudDomeBlend, kCloudPlumeLevels' cells and kCloudPlumeTableOffsets in

@@ -4,10 +4,10 @@
 
 // One workgroup per texel; its 64 invocations each integrate one direction of an 8 x 8 grid that
 // is uniform over the sphere, then reduce.
-[[vk::binding(1, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> multiScatteringOut;
+[[vk::binding(1, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> multiScatteringOut : register(u1, space1);
 // Set 1 is VulkanAtmosphere's NVRHI binding set: each sampled LUT's sampler at its binding + 64.
-[[vk::binding(4, 1)]] Texture2D transmittanceLut;
-[[vk::binding(68, 1)]] SamplerState transmittanceLutSampler;
+[[vk::binding(4, 1)]] Texture2D transmittanceLut : register(t4, space1);
+[[vk::binding(68, 1)]] SamplerState transmittanceLutSampler : register(s68, space1);
 
 groupshared float3 sharedMultiScatteringAs1[64];
 groupshared float3 sharedLuminance[64];

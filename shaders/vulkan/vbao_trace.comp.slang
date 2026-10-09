@@ -8,10 +8,10 @@
 #include "gbuffer_common.slang"
 #include "vbao_common.slang"
 
-[[vk::binding(0, 1)]] Sampler2D depthTexture;
-[[vk::binding(1, 1)]] Sampler2D normalTexture;
+[[vk::binding(0, 1)]] Texture2D depthTexture : register(t0, space1);
+[[vk::binding(1, 1)]] Texture2D normalTexture : register(t1, space1);
 // r the AO; g the DDGI probe occlusion, 1 here (rt_occlusion.comp writes it after this pass).
-[[vk::binding(2, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> aoRawImage;
+[[vk::binding(2, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> aoRawImage : register(u2, space1);
 
 static const float PI = 3.14159265359;
 static const float HALF_PI = 1.57079632679;

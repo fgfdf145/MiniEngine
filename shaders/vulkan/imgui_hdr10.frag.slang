@@ -9,8 +9,8 @@
 #include "gt7_tonemap.slang"
 #include "hdr_output.slang"
 
-[[vk::binding(0, 0)]] Texture2D _Texture;
-[[vk::binding(0, 1)]] SamplerState _Sampler;
+[[vk::binding(0, 0)]] Texture2D _Texture : register(t0, space0);
+[[vk::binding(0, 1)]] SamplerState _Sampler : register(s0, space1);
 
 float3 SrgbToLinear(float3 encoded)
 {

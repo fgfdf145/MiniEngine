@@ -3,16 +3,18 @@
 // Pre-exposed values, as the HDR target holds them (pre_exposure.slang).
 
 // Set 1 is VulkanTransmissionCopyPass's NVRHI binding set: the texture's sampler at 64.
-[[vk::binding(0, 1)]] Texture2D sceneHdr;
-[[vk::binding(64, 1)]] SamplerState sceneHdrSampler;
-[[vk::binding(1, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> copyLevel0;
+[[vk::binding(0, 1)]] Texture2D sceneHdr : register(t0, space1);
+[[vk::binding(64, 1)]] SamplerState sceneHdrSampler : register(s64, space1);
+[[vk::binding(1, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> copyLevel0 : register(u1, space1);
 
 // Must match TransmissionCopyConstants in engine/renderer/vulkan/transmission_copy.cpp.
 struct TransmissionCopyConstants
 {
     uint2 extent;
 };
-[[vk::push_constant]] ConstantBuffer<TransmissionCopyConstants> constants;
+#include "d3d_register.slang"
+
+[[vk::push_constant]] ConstantBuffer<TransmissionCopyConstants> constants D3D_PUSH_CONSTANTS(1);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]

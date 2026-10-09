@@ -15,6 +15,7 @@
 // The ground plane (ground_plane.slang), when drawn, is a front face like any other, and its underside
 // a single-sided back face.
 
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 #include "scene_common.slang"
 #include "atmosphere_sampling.slang"
@@ -23,10 +24,10 @@
 #include "ddgi_common.slang"
 #include "ground_plane.slang"
 
-[[vk::binding(10, 0)]] StructuredBuffer<SceneLightData> sceneLights;
+[[vk::binding(10, 0)]] StructuredBuffer<SceneLightData> sceneLights : register(t10, space0);
 
-[[vk::binding(0, 2)]] StructuredBuffer<uint> scheduledProbes;
-[[vk::binding(1, 2)]] RWStructuredBuffer<float4> rays;
+[[vk::binding(0, 2)]] StructuredBuffer<uint> scheduledProbes : register(t0, space2);
+[[vk::binding(1, 2)]] RWStructuredBuffer<float4> rays : register(u1, space2);
 
 // Must match DdgiTraceConstants in engine/renderer/vulkan/ddgi.cpp.
 struct DdgiTraceConstants
@@ -35,7 +36,7 @@ struct DdgiTraceConstants
     uint scheduledCount;
     uint frameIndex;
 };
-[[vk::push_constant]] ConstantBuffer<DdgiTraceConstants> constants;
+[[vk::push_constant]] ConstantBuffer<DdgiTraceConstants> constants D3D_PUSH_CONSTANTS(2);
 
 static const float PI = 3.14159265359;
 static const float DDGI_MISS_DISTANCE = 1e27;

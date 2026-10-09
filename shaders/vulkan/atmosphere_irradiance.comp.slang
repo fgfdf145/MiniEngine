@@ -8,7 +8,7 @@ struct SkyIrradianceOut
 {
     float4 coefficients[9];
 };
-[[vk::binding(6, 1)]] RWStructuredBuffer<SkyIrradianceOut> irradianceOut; // one element
+[[vk::binding(6, 1)]] RWStructuredBuffer<SkyIrradianceOut> irradianceOut : register(u6, space1); // one element
 
 groupshared float3 sharedSums[64][9];
 // The SH of the ground's view transmittance times its diffuse share over the directions that meet it, and the sky's

@@ -55,7 +55,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float2 previousUv = uv - rtShadowVelocity.Load(int3(pixel, 0)).rg;
         if (all(previousUv >= float2(0.0)) && all(previousUv <= float2(1.0)))
         {
-            float4 history = rtShadowHistoryRead.SampleLevel(previousUv, 0.0);
+            float4 history = rtShadowHistoryRead.SampleLevel(rtShadowHistoryReadSampler, previousUv, 0.0);
             float3 world = RtShadowWorldPosition(pixel, depth);
             float expectedDistance = mul(ubo.prevViewProj, float4(world, 1.0)).w;
             if (abs(history.y - expectedDistance) < TEMPORAL_DEPTH_TOLERANCE * expectedDistance)

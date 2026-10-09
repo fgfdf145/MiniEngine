@@ -1,10 +1,11 @@
+#include "d3d_register.slang"
 #include "cubemap_common.slang"
 
 // One mip of the prefiltered cube: GGX importance sampling with N = V = R (Karis 2013), each
 // sample read from the radiance cube at the mip whose texel solid angle matches its own.
-[[vk::binding(1, 1)]] TextureCube radianceCube;
-[[vk::binding(65, 1)]] SamplerState radianceCubeSampler;
-[[vk::binding(2, 1)]] [[vk::image_format("rgba16f")]] RWTexture2DArray<float4> prefilteredOut;
+[[vk::binding(1, 1)]] TextureCube radianceCube : register(t1, space1);
+[[vk::binding(65, 1)]] SamplerState radianceCubeSampler : register(s65, space1);
+[[vk::binding(2, 1)]] [[vk::image_format("rgba16f")]] RWTexture2DArray<float4> prefilteredOut : register(u2, space1);
 
 // Must match PrefilterConstants in engine/renderer/vulkan/environment_probe.cpp.
 struct PrefilterConstants
@@ -12,7 +13,7 @@ struct PrefilterConstants
     float roughness;
     uint size;
 };
-[[vk::push_constant]] ConstantBuffer<PrefilterConstants> constants;
+[[vk::push_constant]] ConstantBuffer<PrefilterConstants> constants D3D_PUSH_CONSTANTS(1);
 
 static const float PI = 3.14159265358979;
 static const uint SAMPLE_COUNT = 64u;

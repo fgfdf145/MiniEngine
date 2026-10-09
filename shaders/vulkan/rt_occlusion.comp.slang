@@ -14,6 +14,7 @@
 #define RAY_TEXTURED_ALPHA
 #include "scene_common.slang"
 #include "gbuffer_common.slang"
+#define AO_PASS_SET 2
 #include "vbao_common.slang"
 #include "ray_tracing_common.slang"
 #include "material_common.slang"
@@ -21,9 +22,9 @@
 #include "ray_hit_common.slang"
 #include "ddgi_common.slang"
 
-[[vk::binding(0, 2)]] Sampler2D depthTexture;
-[[vk::binding(1, 2)]] Sampler2D normalTexture;
-[[vk::binding(2, 2)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> aoRawImage;
+[[vk::binding(0, 2)]] Texture2D depthTexture : register(t0, space2);
+[[vk::binding(1, 2)]] Texture2D normalTexture : register(t1, space2);
+[[vk::binding(2, 2)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> aoRawImage : register(u2, space2);
 
 static const float PI = 3.14159265359;
 

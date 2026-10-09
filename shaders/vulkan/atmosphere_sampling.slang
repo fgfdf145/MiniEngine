@@ -9,14 +9,14 @@
 #include "spherical_harmonics.slang"
 
 // Set 0 bindings 3 to 6; see VulkanFrameDescriptorSetLayout.
-[[vk::binding(3, 0)]] Texture2D atmosphereTransmittanceLut;
-[[vk::binding(FRAME_SAMPLER(3), 0)]] SamplerState atmosphereTransmittanceLutSampler;
-[[vk::binding(4, 0)]] Texture2D atmosphereSkyViewLut;
-[[vk::binding(FRAME_SAMPLER(4), 0)]] SamplerState atmosphereSkyViewLutSampler;
-[[vk::binding(5, 0)]] Texture3D atmosphereAerialPerspective;
-[[vk::binding(FRAME_SAMPLER(5), 0)]] SamplerState atmosphereAerialPerspectiveSampler;
-[[vk::binding(6, 0)]] Texture2D environmentMap;
-[[vk::binding(FRAME_SAMPLER(6), 0)]] SamplerState environmentMapSampler;
+[[vk::binding(3, 0)]] Texture2D atmosphereTransmittanceLut : register(t3, space0);
+[[vk::binding(FRAME_SAMPLER(3), 0)]] SamplerState atmosphereTransmittanceLutSampler : register(s67, space0);
+[[vk::binding(4, 0)]] Texture2D atmosphereSkyViewLut : register(t4, space0);
+[[vk::binding(FRAME_SAMPLER(4), 0)]] SamplerState atmosphereSkyViewLutSampler : register(s68, space0);
+[[vk::binding(5, 0)]] Texture3D atmosphereAerialPerspective : register(t5, space0);
+[[vk::binding(FRAME_SAMPLER(5), 0)]] SamplerState atmosphereAerialPerspectiveSampler : register(s69, space0);
+[[vk::binding(6, 0)]] Texture2D environmentMap : register(t6, space0);
+[[vk::binding(FRAME_SAMPLER(6), 0)]] SamplerState environmentMapSampler : register(s70, space0);
 
 // The transmittance LUT, for the atmosphere functions that take an IAtmosphereLut.
 SeparateAtmosphereLut FrameTransmittanceLut()
@@ -28,13 +28,13 @@ struct SkyIrradiance
 {
     float4 coefficients[9];
 };
-[[vk::binding(7, 0)]] StructuredBuffer<SkyIrradiance> skyIrradiance; // one element
+[[vk::binding(7, 0)]] StructuredBuffer<SkyIrradiance> skyIrradiance : register(t7, space0); // one element
 // Set 0 bindings 8 and 9: the GGX-prefiltered sky (mip m for roughness m / 5) and the DFG table
 // (x = N.V, y = roughness).
-[[vk::binding(8, 0)]] TextureCube prefilteredEnvironment;
-[[vk::binding(FRAME_SAMPLER(8), 0)]] SamplerState prefilteredEnvironmentSampler;
-[[vk::binding(9, 0)]] Texture2D environmentBrdfLut;
-[[vk::binding(FRAME_SAMPLER(9), 0)]] SamplerState environmentBrdfLutSampler;
+[[vk::binding(8, 0)]] TextureCube prefilteredEnvironment : register(t8, space0);
+[[vk::binding(FRAME_SAMPLER(8), 0)]] SamplerState prefilteredEnvironmentSampler : register(s72, space0);
+[[vk::binding(9, 0)]] Texture2D environmentBrdfLut : register(t9, space0);
+[[vk::binding(FRAME_SAMPLER(9), 0)]] SamplerState environmentBrdfLutSampler : register(s73, space0);
 
 #include "height_fog.slang"
 #include "cloud_shadow.slang"

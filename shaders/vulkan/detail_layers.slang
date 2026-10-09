@@ -5,16 +5,16 @@
 // mask's channels weigh four tiling detail maps. Set 1 bindings 27 to 31, after the layer maps of
 // material_layers.slang. All five are bound as linear data: AC combines the sRGB-encoded values, and
 // the sum is decoded once here. Include after material_common.slang.
-[[vk::binding(27, 1)]] Texture2D detailMaskTexture;
-[[vk::binding(MATERIAL_SAMPLER(27), 1)]] SamplerState detailMaskTextureSampler;
-[[vk::binding(28, 1)]] Texture2D detailLayerRTexture;
-[[vk::binding(MATERIAL_SAMPLER(28), 1)]] SamplerState detailLayerRTextureSampler;
-[[vk::binding(29, 1)]] Texture2D detailLayerGTexture;
-[[vk::binding(MATERIAL_SAMPLER(29), 1)]] SamplerState detailLayerGTextureSampler;
-[[vk::binding(30, 1)]] Texture2D detailLayerBTexture;
-[[vk::binding(MATERIAL_SAMPLER(30), 1)]] SamplerState detailLayerBTextureSampler;
-[[vk::binding(31, 1)]] Texture2D detailLayerATexture;
-[[vk::binding(MATERIAL_SAMPLER(31), 1)]] SamplerState detailLayerATextureSampler;
+[[vk::binding(27, 1)]] Texture2D detailMaskTexture : register(t27, space1);
+[[vk::binding(MATERIAL_SAMPLER(27), 1)]] SamplerState detailMaskTextureSampler : register(s91, space1);
+[[vk::binding(28, 1)]] Texture2D detailLayerRTexture : register(t28, space1);
+[[vk::binding(MATERIAL_SAMPLER(28), 1)]] SamplerState detailLayerRTextureSampler : register(s92, space1);
+[[vk::binding(29, 1)]] Texture2D detailLayerGTexture : register(t29, space1);
+[[vk::binding(MATERIAL_SAMPLER(29), 1)]] SamplerState detailLayerGTextureSampler : register(s93, space1);
+[[vk::binding(30, 1)]] Texture2D detailLayerBTexture : register(t30, space1);
+[[vk::binding(MATERIAL_SAMPLER(30), 1)]] SamplerState detailLayerBTextureSampler : register(s94, space1);
+[[vk::binding(31, 1)]] Texture2D detailLayerATexture : register(t31, space1);
+[[vk::binding(MATERIAL_SAMPLER(31), 1)]] SamplerState detailLayerATextureSampler : register(s95, space1);
 
 float3 DetailLayersSrgbToLinear(float3 encoded)
 {

@@ -5,7 +5,7 @@
 
 // The sky's radiance into mip 0 of the radiance cube: 2 x 2 samples per texel, no sun disk, with
 // the volumetric clouds in front of it.
-[[vk::binding(0, 1)]] [[vk::image_format("rgba16f")]] RWTexture2DArray<float4> radianceOut;
+[[vk::binding(0, 1)]] [[vk::image_format("rgba16f")]] RWTexture2DArray<float4> radianceOut : register(u0, space1);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]

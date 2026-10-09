@@ -14,7 +14,7 @@
 #include "material_uv.slang"
 #include "ray_hit_common.slang"
 
-[[vk::binding(10, 0)]] StructuredBuffer<SceneLightData> sceneLights;
+[[vk::binding(10, 0)]] StructuredBuffer<SceneLightData> sceneLights : register(t10, space0);
 
 static const float PI = 3.14159265359;
 // How far a shadow ray looks: past every map the engine loads.

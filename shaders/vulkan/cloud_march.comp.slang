@@ -10,7 +10,7 @@
 // times CLOUD_TARGET_SCALE; a the transmittance through them. cloud_resolve.comp builds the full
 // extent from it and the history.
 // Set 1 binding 11 of the atmosphere's compute set.
-[[vk::binding(11, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> cloudSamplesOut;
+[[vk::binding(11, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> cloudSamplesOut : register(u11, space1);
 
 [shader("compute")]
 [numthreads(8, 8, 1)]

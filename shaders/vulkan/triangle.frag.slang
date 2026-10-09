@@ -17,52 +17,52 @@ SPECIALIZATION_BOOL(1, kScatterPrepass);
 #include "specular_aa.slang"
 #include "pre_exposure.slang"
 
-[[vk::binding(0, 1)]] Texture2D baseColorTexture;
-[[vk::binding(MATERIAL_SAMPLER(0), 1)]] SamplerState baseColorTextureSampler;
-[[vk::binding(1, 1)]] Texture2D normalTexture;
-[[vk::binding(MATERIAL_SAMPLER(1), 1)]] SamplerState normalTextureSampler;
-[[vk::binding(2, 1)]] Texture2D metallicTexture;
-[[vk::binding(MATERIAL_SAMPLER(2), 1)]] SamplerState metallicTextureSampler;
-[[vk::binding(3, 1)]] Texture2D roughnessTexture;
-[[vk::binding(MATERIAL_SAMPLER(3), 1)]] SamplerState roughnessTextureSampler;
-[[vk::binding(4, 1)]] Texture2D occlusionTexture;
-[[vk::binding(MATERIAL_SAMPLER(4), 1)]] SamplerState occlusionTextureSampler;
-[[vk::binding(5, 1)]] Texture2D emissiveTexture;
-[[vk::binding(MATERIAL_SAMPLER(5), 1)]] SamplerState emissiveTextureSampler;
-[[vk::binding(6, 1)]] Texture2D secondaryBaseColorTexture;
-[[vk::binding(MATERIAL_SAMPLER(6), 1)]] SamplerState secondaryBaseColorTextureSampler;
-[[vk::binding(7, 1)]] Texture2D secondaryNormalTexture;
-[[vk::binding(MATERIAL_SAMPLER(7), 1)]] SamplerState secondaryNormalTextureSampler;
-[[vk::binding(8, 1)]] Texture2D secondaryMetallicTexture;
-[[vk::binding(MATERIAL_SAMPLER(8), 1)]] SamplerState secondaryMetallicTextureSampler;
-[[vk::binding(9, 1)]] Texture2D secondaryRoughnessTexture;
-[[vk::binding(MATERIAL_SAMPLER(9), 1)]] SamplerState secondaryRoughnessTextureSampler;
-[[vk::binding(10, 1)]] Texture2D secondaryOcclusionTexture;
-[[vk::binding(MATERIAL_SAMPLER(10), 1)]] SamplerState secondaryOcclusionTextureSampler;
-[[vk::binding(11, 1)]] Texture2D secondaryEmissiveTexture;
-[[vk::binding(MATERIAL_SAMPLER(11), 1)]] SamplerState secondaryEmissiveTextureSampler;
-[[vk::binding(12, 1)]] Texture2D blendMaskTexture;
-[[vk::binding(MATERIAL_SAMPLER(12), 1)]] SamplerState blendMaskTextureSampler;
+[[vk::binding(0, 1)]] Texture2D baseColorTexture : register(t0, space1);
+[[vk::binding(MATERIAL_SAMPLER(0), 1)]] SamplerState baseColorTextureSampler : register(s64, space1);
+[[vk::binding(1, 1)]] Texture2D normalTexture : register(t1, space1);
+[[vk::binding(MATERIAL_SAMPLER(1), 1)]] SamplerState normalTextureSampler : register(s65, space1);
+[[vk::binding(2, 1)]] Texture2D metallicTexture : register(t2, space1);
+[[vk::binding(MATERIAL_SAMPLER(2), 1)]] SamplerState metallicTextureSampler : register(s66, space1);
+[[vk::binding(3, 1)]] Texture2D roughnessTexture : register(t3, space1);
+[[vk::binding(MATERIAL_SAMPLER(3), 1)]] SamplerState roughnessTextureSampler : register(s67, space1);
+[[vk::binding(4, 1)]] Texture2D occlusionTexture : register(t4, space1);
+[[vk::binding(MATERIAL_SAMPLER(4), 1)]] SamplerState occlusionTextureSampler : register(s68, space1);
+[[vk::binding(5, 1)]] Texture2D emissiveTexture : register(t5, space1);
+[[vk::binding(MATERIAL_SAMPLER(5), 1)]] SamplerState emissiveTextureSampler : register(s69, space1);
+[[vk::binding(6, 1)]] Texture2D secondaryBaseColorTexture : register(t6, space1);
+[[vk::binding(MATERIAL_SAMPLER(6), 1)]] SamplerState secondaryBaseColorTextureSampler : register(s70, space1);
+[[vk::binding(7, 1)]] Texture2D secondaryNormalTexture : register(t7, space1);
+[[vk::binding(MATERIAL_SAMPLER(7), 1)]] SamplerState secondaryNormalTextureSampler : register(s71, space1);
+[[vk::binding(8, 1)]] Texture2D secondaryMetallicTexture : register(t8, space1);
+[[vk::binding(MATERIAL_SAMPLER(8), 1)]] SamplerState secondaryMetallicTextureSampler : register(s72, space1);
+[[vk::binding(9, 1)]] Texture2D secondaryRoughnessTexture : register(t9, space1);
+[[vk::binding(MATERIAL_SAMPLER(9), 1)]] SamplerState secondaryRoughnessTextureSampler : register(s73, space1);
+[[vk::binding(10, 1)]] Texture2D secondaryOcclusionTexture : register(t10, space1);
+[[vk::binding(MATERIAL_SAMPLER(10), 1)]] SamplerState secondaryOcclusionTextureSampler : register(s74, space1);
+[[vk::binding(11, 1)]] Texture2D secondaryEmissiveTexture : register(t11, space1);
+[[vk::binding(MATERIAL_SAMPLER(11), 1)]] SamplerState secondaryEmissiveTextureSampler : register(s75, space1);
+[[vk::binding(12, 1)]] Texture2D blendMaskTexture : register(t12, space1);
+[[vk::binding(MATERIAL_SAMPLER(12), 1)]] SamplerState blendMaskTextureSampler : register(s76, space1);
 #include "material_layers.slang"
 #include "detail_layers.slang"
 #include "transmission_common.slang"
 #include "volume_scatter_common.slang"
 
 // The scene behind transmissive surfaces (VulkanTransmissionCopyPass): pre-exposed, full mip chain.
-[[vk::binding(18, 0)]] Texture2D transmissionCopy;
-[[vk::binding(FRAME_SAMPLER(18), 0)]] SamplerState transmissionCopySampler;
+[[vk::binding(18, 0)]] Texture2D transmissionCopy : register(t18, space0);
+[[vk::binding(FRAME_SAMPLER(18), 0)]] SamplerState transmissionCopySampler : register(s82, space0);
 // The scatter pre-pass (VulkanScatterPass): the light entering each scattering surface, pre-exposed,
 // with its draw slot + 1 in alpha (0 where nothing scatters), and that surface's own depth.
-[[vk::binding(19, 0)]] Texture2D scatterLight;
-[[vk::binding(FRAME_SAMPLER(19), 0)]] SamplerState scatterLightSampler;
-[[vk::binding(20, 0)]] Texture2D scatterDepth;
-[[vk::binding(FRAME_SAMPLER(20), 0)]] SamplerState scatterDepthSampler;
+[[vk::binding(19, 0)]] Texture2D scatterLight : register(t19, space0);
+[[vk::binding(FRAME_SAMPLER(19), 0)]] SamplerState scatterLightSampler : register(s83, space0);
+[[vk::binding(20, 0)]] Texture2D scatterDepth : register(t20, space0);
+[[vk::binding(FRAME_SAMPLER(20), 0)]] SamplerState scatterDepthSampler : register(s84, space0);
 // Path tracing mode (camera block textureParams.y): the nearest forward-shaded surface's depth
 // (VulkanPathTraceLayerPass) and the light the path tracer found for it through its diffuse and
 // specular lobes, demodulated and pre-exposed (VulkanPathTracePass).
-[[vk::binding(29, 0)]] Texture2D pathTraceLayerDepth;
-[[vk::binding(30, 0)]] Texture2D pathTraceLayerDiffuse;
-[[vk::binding(31, 0)]] Texture2D pathTraceLayerSpecular;
+[[vk::binding(29, 0)]] Texture2D pathTraceLayerDepth : register(t29, space0);
+[[vk::binding(30, 0)]] Texture2D pathTraceLayerDiffuse : register(t30, space0);
+[[vk::binding(31, 0)]] Texture2D pathTraceLayerSpecular : register(t31, space0);
 
 struct FragmentInput
 {

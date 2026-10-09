@@ -9,7 +9,7 @@ SPECIALIZATION_BOOL(0, kOutline);
 #include "draw_parameters.slang"
 #include "toon_common.slang"
 
-[[vk::binding(2, 0)]] StructuredBuffer<float4x4> previousModels;
+[[vk::binding(2, 0)]] StructuredBuffer<float4x4> previousModels : register(t2, space0);
 
 struct VertexInput
 {

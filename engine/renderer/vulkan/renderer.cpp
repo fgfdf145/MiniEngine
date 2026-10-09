@@ -3186,7 +3186,6 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::move(restirPtPass));
     view.passes.push_back(std::make_unique<VulkanAoTracePass>(
         m_device->GetHandle(),
-        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3233,7 +3232,6 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         *view.toonMaterials));
     view.passes.push_back(std::make_unique<VulkanToonPass>(
         m_device->GetHandle(),
-        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3277,7 +3275,6 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_materialSetLayout->GetHandle()));
     view.passes.push_back(std::make_unique<VulkanSelectionOutlinePass>(
         m_device->GetHandle(),
-        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets));
 }

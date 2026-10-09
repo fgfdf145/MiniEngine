@@ -6,7 +6,7 @@
 // the ray from its point of the ground (world y = 0) toward the sun, through the base shape without
 // the detail, which a texel of 31 m could not hold anyway.
 // Set 1 binding 9 of the atmosphere's compute set.
-[[vk::binding(9, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> cloudShadowOut;
+[[vk::binding(9, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> cloudShadowOut : register(u9, space1);
 
 static const int CLOUD_SHADOW_STEPS = 16;
 // Far enough for the sun 3 degrees up to cross a 10 km layer.

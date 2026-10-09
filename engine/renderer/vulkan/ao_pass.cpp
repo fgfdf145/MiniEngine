@@ -16,6 +16,8 @@ namespace
 {
 constexpr float kMaxPixelRadius = 256.0f;
 constexpr VkFormat kHistoryFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+// vbao_resolve.comp's historyTexture, the one input it samples rather than loads.
+constexpr uint32_t kHistoryReadBinding = 3;
 
 // Must match AoConstants in shaders/vulkan/vbao_common.glsl.
 struct AoPushConstants
@@ -72,7 +74,6 @@ AoPushConstants BuildPushConstants(const ScenePassFrameContext& frame)
 
 VulkanAoTracePass::VulkanAoTracePass(
     VkDevice device,
-    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout,
@@ -81,10 +82,9 @@ VulkanAoTracePass::VulkanAoTracePass(
 {
     try
     {
-        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         static constexpr std::array<VkDescriptorType, 3> kTypes = {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
         CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "vbao_trace.comp.spv", sizeof(AoPushConstants), m_pipelineLayout, m_pipeline);
@@ -190,12 +190,12 @@ void VulkanAoTracePass::CreateDescriptorSets(const SceneRenderTargets& targets)
     m_descriptorSets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, copyCount);
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
-        const VkDescriptorImageInfo depthInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-        const VkDescriptorImageInfo normalInfo{NativeSampler(m_sampler), targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
+        const VkDescriptorImageInfo depthInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
+        const VkDescriptorImageInfo normalInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
         const VkDescriptorImageInfo aoInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::AoRaw, slot), VK_IMAGE_LAYOUT_GENERAL};
         const std::array<VkWriteDescriptorSet, 3> writes = {
-            ImageWrite(m_descriptorSets[slot], 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
-            ImageWrite(m_descriptorSets[slot], 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &normalInfo),
+            ImageWrite(m_descriptorSets[slot], 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &depthInfo),
+            ImageWrite(m_descriptorSets[slot], 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &normalInfo),
             ImageWrite(m_descriptorSets[slot], 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &aoInfo)};
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
@@ -234,7 +234,6 @@ void VulkanAoTracePass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    m_sampler = nullptr;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -254,18 +253,19 @@ VulkanAoResolvePass::VulkanAoResolvePass(
 {
     try
     {
-        m_nearestSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         m_linearSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
         static constexpr std::array<VkDescriptorType, 6> kTypes = {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes);
+        // The history is sampled (bilinear reprojection); the rest are loaded.
+        static constexpr std::array<uint32_t, 1> kSampled = {kHistoryReadBinding};
+        m_setLayout = CreateComputeSetLayout(m_device, kTypes, kSampled);
         CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "vbao_resolve.comp.spv", sizeof(AoPushConstants), m_pipelineLayout, m_pipeline);
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 2);
+        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 2, 1);
         m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
         CreateDescriptorSets(targets);
     }
@@ -337,17 +337,19 @@ void VulkanAoResolvePass::CreateDescriptorSets(const SceneRenderTargets& targets
         for (uint32_t readIndex = 0; readIndex < 2; ++readIndex)
         {
             const VkDescriptorSet set = m_descriptorSets[slot * 2 + readIndex];
-            const VkDescriptorImageInfo aoRawInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::AoRaw, slot), kReadLayout};
-            const VkDescriptorImageInfo depthInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-            const VkDescriptorImageInfo velocityInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
-            const VkDescriptorImageInfo historyReadInfo{NativeSampler(m_linearSampler), m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
+            const VkDescriptorImageInfo aoRawInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::AoRaw, slot), kReadLayout};
+            const VkDescriptorImageInfo depthInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
+            const VkDescriptorImageInfo velocityInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
+            const VkDescriptorImageInfo historyReadInfo{VK_NULL_HANDLE, m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
+            const VkDescriptorImageInfo historySamplerInfo{NativeSampler(m_linearSampler), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
             const VkDescriptorImageInfo historyWriteInfo{VK_NULL_HANDLE, m_history.GetView(1u - readIndex), VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorImageInfo aoInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneAo, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const std::array<VkWriteDescriptorSet, 6> writes = {
-                ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &aoRawInfo),
-                ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo),
-                ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &velocityInfo),
-                ImageWrite(set, 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &historyReadInfo),
+            const std::array<VkWriteDescriptorSet, 7> writes = {
+                ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &aoRawInfo),
+                ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &depthInfo),
+                ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &velocityInfo),
+                ImageWrite(set, kHistoryReadBinding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &historyReadInfo),
+                ImageWrite(set, kSplitSamplerBindingOffset + kHistoryReadBinding, VK_DESCRIPTOR_TYPE_SAMPLER, &historySamplerInfo),
                 ImageWrite(set, 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &historyWriteInfo),
                 ImageWrite(set, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &aoInfo)};
             vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
@@ -379,7 +381,6 @@ void VulkanAoResolvePass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    m_nearestSampler = nullptr;
     m_linearSampler = nullptr;
 }
 }

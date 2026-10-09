@@ -6,18 +6,21 @@
 // target units, a confidence (see ssr_common.slang for the fades). GT7 traces the same lobe with
 // hardware rays; this is the screen-space version of that one term.
 
+#include "d3d_register.slang"
 #include "scene_common.slang"
 #include "gbuffer_common.slang"
 #include "ssr_common.slang"
 #include "ssr_half_res.slang"
 
-[[vk::binding(0, 1)]] Sampler2D depthTexture;   // nearest
-[[vk::binding(1, 1)]] Sampler2D normalTexture;  // GB1, nearest
-[[vk::binding(2, 1)]] Sampler2D surfaceTexture; // GB2, nearest
-[[vk::binding(3, 1)]] Sampler2D historyTexture; // TAA history, last frame, linear
-[[vk::binding(4, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ssrRawImage;
-[[vk::binding(5, 1)]] Sampler2D coatTexture;     // GB6, nearest
-[[vk::binding(6, 1)]] Sampler2D velocityTexture; // .ba: a mapped coat's normal, nearest
+[[vk::binding(0, 1)]] Texture2D depthTexture : register(t0, space1);   // nearest
+[[vk::binding(64, 1)]] SamplerState depthTextureSampler : register(s64, space1);
+[[vk::binding(1, 1)]] Texture2D normalTexture : register(t1, space1);  // GB1, nearest
+[[vk::binding(2, 1)]] Texture2D surfaceTexture : register(t2, space1); // GB2, nearest
+[[vk::binding(3, 1)]] Texture2D historyTexture : register(t3, space1); // TAA history, last frame, linear
+[[vk::binding(67, 1)]] SamplerState historyTextureSampler : register(s67, space1);
+[[vk::binding(4, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ssrRawImage : register(u4, space1);
+[[vk::binding(5, 1)]] Texture2D coatTexture : register(t5, space1);     // GB6, nearest
+[[vk::binding(6, 1)]] Texture2D velocityTexture : register(t6, space1); // .ba: a mapped coat's normal, nearest
 
 #include "ssr_lobe.slang"
 
@@ -34,7 +37,7 @@ struct SsrConstants
     // SSR_TRACE_FLAG_* (ssr_half_res.slang).
     uint flags;
 };
-[[vk::push_constant]] ConstantBuffer<SsrConstants> ssr;
+[[vk::push_constant]] ConstantBuffer<SsrConstants> ssr D3D_PUSH_CONSTANTS(1);
 
 static const int STEP_COUNT = 48;
 static const int REFINE_COUNT = 6;
@@ -131,7 +134,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
             break;
         }
         float rayZ = lerp(qStart, qEnd, t) / lerp(kStart, kEnd, t);
-        float sceneDepth = depthTexture.SampleLevel(sampleUv, 0.0).r;
+        float sceneDepth = depthTexture.SampleLevel(depthTextureSampler, sampleUv, 0.0).r;
         if (!IsFarDepth(sceneDepth))
         {
             float sceneZ = ViewZFromDepth(sceneDepth);
@@ -159,7 +162,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float middle = 0.5 * (low + high);
         float2 sampleUv = lerp(uvStart, uvEnd, middle);
         float rayZ = lerp(qStart, qEnd, middle) / lerp(kStart, kEnd, middle);
-        float sceneZ = ViewZFromDepth(depthTexture.SampleLevel(sampleUv, 0.0).r);
+        float sceneZ = ViewZFromDepth(depthTexture.SampleLevel(depthTextureSampler, sampleUv, 0.0).r);
         if (sceneZ - rayZ > 0.0)
         {
             high = middle;
@@ -191,7 +194,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
-    float3 radiance = historyTexture.SampleLevel(previousUv, 0.0).rgb * ssr.historyScale;
+    float3 radiance = historyTexture.SampleLevel(historyTextureSampler, previousUv, 0.0).rgb * ssr.historyScale;
     if (any(isnan(radiance)) || any(isinf(radiance)))
     {
         radiance = float3(0.0);

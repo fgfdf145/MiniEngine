@@ -5,11 +5,12 @@
 // shader have it. Include after scene_common.slang, ray_tracing_common.slang, material_common.slang and
 // material_uv.slang. The buffers are read through pointers, which need the device's shaderInt64.
 // DXIL has no pointers: the DXIL build (MINIENGINE_DXIL) reads them as raw buffers from the
-// shader-visible descriptor heap instead (see RayMeshGeometry).
+// shader-visible descriptor heap instead (see RayMeshGeometry and RayHeapBuffer).
 
 #ifndef RAY_HIT_COMMON_SLANG
 #define RAY_HIT_COMMON_SLANG
 
+#include "d3d_register.slang"
 #include "shader_helpers.slang"
 #include "normal_map.slang"
 
@@ -42,21 +43,29 @@ struct RayMeshGeometry
     uint2 vertices;
     uint2 indices;
 };
-#ifndef MINIENGINE_DXIL
+#ifdef MINIENGINE_DXIL
+// The raw buffer view at heapIndex in the shader-visible descriptor heap. Slang's DescriptorHandle
+// lowers to ResourceDescriptorHeap[heapIndex] (shader model 6.6), which the Slang the build uses has
+// no spelling of its own for; non-uniform, as the hits of one wave are on different meshes.
+ByteAddressBuffer RayHeapBuffer(uint heapIndex)
+{
+    return DescriptorHandle<ByteAddressBuffer>(uint2(NonUniformResourceIndex(heapIndex), 0u));
+}
+#else
 // A device address from the two 32-bit halves RayMeshGeometry stores.
 uint64_t RayDeviceAddress(uint2 address)
 {
     return uint64_t(address.x) | (uint64_t(address.y) << 32);
 }
 #endif
-[[vk::binding(6, RAY_SCENE_SET)]] StructuredBuffer<RayMeshGeometry> rayMeshGeometries;
+[[vk::binding(6, RAY_SCENE_SET)]] StructuredBuffer<RayMeshGeometry> rayMeshGeometries : D3D_REGISTER(t, 6, RAY_SCENE_SET);
 // Each leaf triangle's index in its mesh's index list / 3, laid out as meshTriangles.
-[[vk::binding(7, RAY_SCENE_SET)]] StructuredBuffer<uint> raySourceTriangles;
+[[vk::binding(7, RAY_SCENE_SET)]] StructuredBuffer<uint> raySourceTriangles : D3D_REGISTER(t, 7, RAY_SCENE_SET);
 // The texture table: every material sampler (VulkanSamplerCache::SamplerAt's order), then the slots'
 // textures; a texture's sampler is its slot's RayMaterial::samplers entry.
 #define RAY_SAMPLER_COUNT 108
-[[vk::binding(0, RAY_TEXTURE_SET)]] SamplerState raySamplers[RAY_SAMPLER_COUNT];
-[[vk::binding(1, RAY_TEXTURE_SET)]] Texture2D rayTextures[];
+[[vk::binding(0, RAY_TEXTURE_SET)]] SamplerState raySamplers[RAY_SAMPLER_COUNT] : D3D_REGISTER(s, 0, RAY_TEXTURE_SET);
+[[vk::binding(1, RAY_TEXTURE_SET)]] Texture2D rayTextures[] : D3D_REGISTER(t, 1, RAY_TEXTURE_SET);
 
 // Slot texture slotTexture (RAY_TEXTURE_*) of draw slot drawSlot at level lod.
 float4 RayTextureSampleLevel(uint drawSlot, uint slotTexture, float2 uv, float lod)
@@ -82,7 +91,7 @@ RayHitCorners RayHitCornersOf(uint instance, uint triangle)
 {
     RayMeshGeometry geometry = rayMeshGeometries[rayInstances[instance].data.w >> RAY_INSTANCE_MESH_SHIFT];
 #ifdef MINIENGINE_DXIL
-    ByteAddressBuffer indices = ResourceDescriptorHeap[NonUniformResourceIndex(geometry.indices.x)];
+    ByteAddressBuffer indices = RayHeapBuffer(geometry.indices.x);
     uint source = raySourceTriangles[triangle] * 3u;
     RayHitCorners corners;
     corners.vertexBuffer = geometry.vertices.x;
@@ -100,7 +109,7 @@ RayHitCorners RayHitCornersOf(uint instance, uint triangle)
 #ifdef MINIENGINE_DXIL
 ByteAddressBuffer RayVertexBuffer(RayHitCorners corners)
 {
-    return ResourceDescriptorHeap[NonUniformResourceIndex(corners.vertexBuffer)];
+    return RayHeapBuffer(corners.vertexBuffer);
 }
 #endif
 

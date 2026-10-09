@@ -9,7 +9,7 @@
 #define MATERIAL_TEXTURE_SLOT_COUNT 27u
 
 // Two rows per slot: (a, b, tx, UV set) and (c, d, ty, 0).
-[[vk::binding(17, 0)]] StructuredBuffer<float4> materialTextureTransforms;
+[[vk::binding(17, 0)]] StructuredBuffer<float4> materialTextureTransforms : register(t17, space0);
 
 float2 MaterialSlotUv(MaterialData material, uint drawSlot, uint slot, float2 uv0, float2 uv1)
 {

@@ -8,12 +8,13 @@
 // Level 0 ends up holding sum_k band_k * blur_k, the energy diffraction carries past 2 pixels, and
 // the composite takes exactly that much from each pixel where it was.
 
+#include "d3d_register.slang"
 #include "pre_exposure.slang"
 
 // Set 1 is VulkanBloomPass's NVRHI binding set: the texture at 0, its sampler at 64.
-[[vk::binding(0, 1)]] Texture2D sourceTexture;
-[[vk::binding(64, 1)]] SamplerState sourceTextureSampler;
-[[vk::binding(1, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> destinationImage;
+[[vk::binding(0, 1)]] Texture2D sourceTexture : register(t0, space1);
+[[vk::binding(64, 1)]] SamplerState sourceTextureSampler : register(s64, space1);
+[[vk::binding(1, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> destinationImage : register(u1, space1);
 
 // Must match BloomPushConstants in engine/renderer/vulkan/bloom_pass.cpp.
 struct BloomConstants
@@ -29,7 +30,7 @@ struct BloomConstants
     float4 destinationWeight;
     float4 sourceWeight;
 };
-[[vk::push_constant]] ConstantBuffer<BloomConstants> bloom;
+[[vk::push_constant]] ConstantBuffer<BloomConstants> bloom D3D_PUSH_CONSTANTS(1);
 
 static const uint MODE_FIRST_DOWNSAMPLE = 0u;
 static const uint MODE_DOWNSAMPLE = 1u;

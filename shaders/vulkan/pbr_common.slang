@@ -18,17 +18,17 @@
 #include "ddgi_common.slang"
 
 // One layer per cascade, sampled with a LESS_OR_EQUAL depth comparison (see VulkanShadowPass).
-[[vk::binding(1, 0)]] Texture2DArray<float> shadowMap;
-[[vk::binding(FRAME_SAMPLER(1), 0)]] SamplerComparisonState shadowMapSampler;
+[[vk::binding(1, 0)]] Texture2DArray<float> shadowMap : register(t1, space0);
+[[vk::binding(FRAME_SAMPLER(1), 0)]] SamplerComparisonState shadowMapSampler : register(s65, space0);
 
 // Every light the shader evaluates: ubo.lightCounts.x directional lights, then the local ones. The
 // C++ side is GpuLightData, written by VulkanUniformBuffer::Update.
-[[vk::binding(10, 0)]] StructuredBuffer<SceneLightData> sceneLights;
+[[vk::binding(10, 0)]] StructuredBuffer<SceneLightData> sceneLights : register(t10, space0);
 
 // The local lights each cluster may be lit by (LightClusterGrid in engine/renderer/light_clusters.h):
 // LIGHT_CLUSTER_COUNT ranges (offset, count) into the index list after them, whose entries index
 // sceneLights. Read as words, the layout of { uint2 ranges[LIGHT_CLUSTER_COUNT]; uint indices[]; }.
-[[vk::binding(11, 0)]] StructuredBuffer<uint> lightClusters;
+[[vk::binding(11, 0)]] StructuredBuffer<uint> lightClusters : register(t11, space0);
 
 uint2 LightClusterRange(uint cluster)
 {
@@ -43,8 +43,8 @@ uint LightClusterIndex(uint index)
 // The local lights' shadow atlas (see VulkanLocalShadowPass), sampled with a LESS_OR_EQUAL depth
 // comparison, and its tiles (GpuLocalShadowTile). A light's areaRightAxis.w is 1 + its first tile,
 // 0 when it casts no shadow; a point or area light's six cube faces follow in SelectCubeFace order.
-[[vk::binding(13, 0)]] Texture2D<float> localShadowAtlas;
-[[vk::binding(FRAME_SAMPLER(13), 0)]] SamplerComparisonState localShadowAtlasSampler;
+[[vk::binding(13, 0)]] Texture2D<float> localShadowAtlas : register(t13, space0);
+[[vk::binding(FRAME_SAMPLER(13), 0)]] SamplerComparisonState localShadowAtlasSampler : register(s77, space0);
 
 struct LocalShadowTileData
 {
@@ -53,14 +53,14 @@ struct LocalShadowTileData
     float4 params;    // x = world size of one texel at one metre from the light, y = 1 on a cube's tiles
 };
 
-[[vk::binding(14, 0)]] StructuredBuffer<LocalShadowTileData> localShadowTiles;
+[[vk::binding(14, 0)]] StructuredBuffer<LocalShadowTileData> localShadowTiles : register(t14, space0);
 
 // The area lights' LTC tables (engine/renderer/ltc_table.h): the inverse matrices and the lobe's
 // (albedo, Fresnel share), 64 x 64 RGBA32F, x = sqrt(1 - N.V), y = roughness.
-[[vk::binding(15, 0)]] Texture2D ltcInverseMatrices;
-[[vk::binding(FRAME_SAMPLER(15), 0)]] SamplerState ltcInverseMatricesSampler;
-[[vk::binding(16, 0)]] Texture2D ltcAmplitudes;
-[[vk::binding(FRAME_SAMPLER(16), 0)]] SamplerState ltcAmplitudesSampler;
+[[vk::binding(15, 0)]] Texture2D ltcInverseMatrices : register(t15, space0);
+[[vk::binding(FRAME_SAMPLER(15), 0)]] SamplerState ltcInverseMatricesSampler : register(s79, space0);
+[[vk::binding(16, 0)]] Texture2D ltcAmplitudes : register(t16, space0);
+[[vk::binding(FRAME_SAMPLER(16), 0)]] SamplerState ltcAmplitudesSampler : register(s80, space0);
 
 // Where (roughness, N.V) falls in the LTC tables, clamped to texel centres.
 float2 LtcTableUv(float roughness, float NdV)

@@ -7,8 +7,8 @@
 #define CLOUD_SHADOW_SLANG
 
 // Set 0 binding 26: the map, r the transmittance (VulkanAtmosphere), linear clamped.
-[[vk::binding(26, 0)]] Texture2D cloudShadowMap;
-[[vk::binding(FRAME_SAMPLER(26), 0)]] SamplerState cloudShadowMapSampler;
+[[vk::binding(26, 0)]] Texture2D cloudShadowMap : register(t26, space0);
+[[vk::binding(FRAME_SAMPLER(26), 0)]] SamplerState cloudShadowMapSampler : register(s90, space0);
 
 // Must match kCloudShadowMapSize, kCloudShadowExtentMeters, kCloudShadowMinSunHeight and
 // kCloudShadowEdgeFade in engine/renderer/volumetric_clouds.h.

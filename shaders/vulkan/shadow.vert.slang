@@ -10,7 +10,9 @@ struct ShadowConstants
     float4 baseColorTransformRow0;
     float4 baseColorTransformRow1;
 };
-[[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData;
+#include "d3d_register.slang"
+
+[[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData D3D_PUSH_CONSTANTS(0);
 
 struct VertexInput
 {

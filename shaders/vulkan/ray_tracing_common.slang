@@ -10,6 +10,8 @@
 #ifndef RAY_TRACING_COMMON_SLANG
 #define RAY_TRACING_COMMON_SLANG
 
+#include "d3d_register.slang"
+
 #ifndef RAY_SCENE_SET
 #define RAY_SCENE_SET 1
 #endif
@@ -82,14 +84,14 @@ struct RayMaterial
     uint4 samplers;
 };
 
-[[vk::binding(0, RAY_SCENE_SET)]] StructuredBuffer<BvhNode> meshNodes;
-[[vk::binding(1, RAY_SCENE_SET)]] StructuredBuffer<BvhTriangle> meshTriangles;
-[[vk::binding(2, RAY_SCENE_SET)]] StructuredBuffer<RayInstance> rayInstances;
-[[vk::binding(3, RAY_SCENE_SET)]] StructuredBuffer<BvhNode> topNodes;
-[[vk::binding(4, RAY_SCENE_SET)]] StructuredBuffer<RayMaterial> rayMaterials;
+[[vk::binding(0, RAY_SCENE_SET)]] StructuredBuffer<BvhNode> meshNodes : D3D_REGISTER(t, 0, RAY_SCENE_SET);
+[[vk::binding(1, RAY_SCENE_SET)]] StructuredBuffer<BvhTriangle> meshTriangles : D3D_REGISTER(t, 1, RAY_SCENE_SET);
+[[vk::binding(2, RAY_SCENE_SET)]] StructuredBuffer<RayInstance> rayInstances : D3D_REGISTER(t, 2, RAY_SCENE_SET);
+[[vk::binding(3, RAY_SCENE_SET)]] StructuredBuffer<BvhNode> topNodes : D3D_REGISTER(t, 3, RAY_SCENE_SET);
+[[vk::binding(4, RAY_SCENE_SET)]] StructuredBuffer<RayMaterial> rayMaterials : D3D_REGISTER(t, 4, RAY_SCENE_SET);
 
 #ifdef RAY_QUERY
-[[vk::binding(5, RAY_SCENE_SET)]] RaytracingAccelerationStructure rayTopLevel;
+[[vk::binding(5, RAY_SCENE_SET)]] RaytracingAccelerationStructure rayTopLevel : D3D_REGISTER(t, 5, RAY_SCENE_SET);
 #endif
 
 struct RayHit

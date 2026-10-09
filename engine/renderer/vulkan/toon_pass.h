@@ -116,7 +116,6 @@ class VulkanToonPass : public IScenePass
   public:
     VulkanToonPass(
         VkDevice device,
-        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
@@ -138,7 +137,6 @@ class VulkanToonPass : public IScenePass
   private:
     void CreateRenderPass(const SceneRenderTargets& targets);
     void CreateTargetSetLayout();
-    void CreateSampler(nvrhi::IDevice* nvrhiDevice);
     void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout, VkDescriptorSetLayout materialSetLayout);
     void CreateTargetSets(const SceneRenderTargets& targets);
     void CreateFramebuffers(const SceneRenderTargets& targets);
@@ -152,7 +150,6 @@ class VulkanToonPass : public IScenePass
     VkDescriptorSetLayout m_targetSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_targetPool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_targetSets;
-    nvrhi::SamplerHandle m_sampler;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     // Indexed by ToonPipelineIndex for the surfaces (opaque or transparent, culling back faces or
     // none), then the outline.

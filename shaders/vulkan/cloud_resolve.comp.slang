@@ -11,10 +11,10 @@
 // history (the first frame, a resize) every pixel interpolates this frame's samples. The sky pass
 // composites the result; the RecordClouds copy makes it next frame's history.
 // Set 1 bindings 11-13 of the atmosphere's compute set.
-[[vk::binding(11, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> cloudSamples;
-[[vk::binding(12, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> cloudResolvedOut;
-[[vk::binding(13, 1)]] Texture2D cloudHistory;
-[[vk::binding(77, 1)]] SamplerState cloudHistorySampler;
+[[vk::binding(11, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> cloudSamples : register(u11, space1);
+[[vk::binding(12, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> cloudResolvedOut : register(u12, space1);
+[[vk::binding(13, 1)]] Texture2D cloudHistory : register(t13, space1);
+[[vk::binding(77, 1)]] SamplerState cloudHistorySampler : register(s77, space1);
 
 // A freshly marched pixel keeps this much of its own sample over its history, which averages the
 // march's jitter over the frames before TAA does.

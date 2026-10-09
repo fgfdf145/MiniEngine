@@ -143,32 +143,8 @@ float2 UnpackHalf2x16(uint p)
     }
 }
 
-// textureSize / imageSize.
-int2 TextureSize(Sampler2D t, int lod)
-{
-    uint width, height, levels;
-    t.GetDimensions(uint(lod), width, height, levels);
-    return int2(width, height);
-}
-int2 TextureSize(Sampler2DArray t, int lod)
-{
-    uint width, height, elements, levels;
-    t.GetDimensions(uint(lod), width, height, elements, levels);
-    return int2(width, height);
-}
-int3 TextureSize(Sampler3D t, int lod)
-{
-    uint width, height, depth, levels;
-    t.GetDimensions(uint(lod), width, height, depth, levels);
-    return int3(width, height, depth);
-}
-int2 TextureSize(SamplerCube t, int lod)
-{
-    uint width, height, levels;
-    t.GetDimensions(uint(lod), width, height, levels);
-    return int2(width, height);
-}
-// The frame set's textures, whose samplers are bindings of their own.
+// textureSize / imageSize. The shaders take separate textures and samplers (no combined image
+// samplers, which DXIL lacks), so these are over the texture types.
 int2 TextureSize(Texture2D t, int lod)
 {
     uint width, height, levels;
@@ -181,13 +157,7 @@ int2 TextureSize(Texture2DArray t, int lod)
     t.GetDimensions(uint(lod), width, height, elements, levels);
     return int2(width, height);
 }
-int TextureLevels(Sampler2D t)
-{
-    uint width, height, levels;
-    t.GetDimensions(0, width, height, levels);
-    return int(levels);
-}
-int TextureLevels(SamplerCube t)
+int TextureLevels(Texture2D t)
 {
     uint width, height, levels;
     t.GetDimensions(0, width, height, levels);

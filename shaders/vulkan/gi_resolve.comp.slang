@@ -11,13 +11,13 @@
 
 // Set 1 is VulkanGiResolvePass's NVRHI binding set; the inputs are read with Load only, the history
 // as a storage image like the one written (both stay in GENERAL).
-[[vk::binding(0, 1)]] Texture2D giRawTexture;
-[[vk::binding(1, 1)]] Texture2D depthTexture;
-[[vk::binding(2, 1)]] Texture2D velocityTexture;
-[[vk::binding(3, 1)]] Texture2D normalTexture;
-[[vk::binding(4, 1)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> historyTexture;
-[[vk::binding(5, 1)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> historyImage;
-[[vk::binding(6, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> giImage;
+[[vk::binding(0, 1)]] Texture2D giRawTexture : register(t0, space1);
+[[vk::binding(1, 1)]] Texture2D depthTexture : register(t1, space1);
+[[vk::binding(2, 1)]] Texture2D velocityTexture : register(t2, space1);
+[[vk::binding(3, 1)]] Texture2D normalTexture : register(t3, space1);
+[[vk::binding(4, 1)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> historyTexture : register(u4, space1);
+[[vk::binding(5, 1)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> historyImage : register(u5, space1);
+[[vk::binding(6, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> giImage : register(u6, space1);
 
 // More than the AO's 16: the bounce is noisier (a few samples carry bright light) and changes slowly.
 static const float MAX_HISTORY = 32.0;
