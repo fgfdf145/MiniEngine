@@ -5,6 +5,7 @@
 #include <engine/renderer/render_types.h>
 
 #include <glm/glm.hpp>
+#include <nvrhi/nvrhi.h>
 
 #include <memory>
 #include <optional>
@@ -15,7 +16,8 @@ namespace me
 {
 
 // One image NGX reads or writes: the image, the view it is given, the view's format and the size of
-// the region it uses.
+// the region it uses. On Direct3D 12 NGX takes the resource alone (texture); image and view are
+// Vulkan's.
 struct DlssImage
 {
     VkImage image = VK_NULL_HANDLE;
@@ -23,6 +25,12 @@ struct DlssImage
     VkFormat format = VK_FORMAT_UNDEFINED;
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     VkExtent2D extent{};
+    nvrhi::ITexture* texture = nullptr;
+
+    bool IsSet() const
+    {
+        return image != VK_NULL_HANDLE || texture != nullptr;
+    }
 };
 
 // What one DLSS evaluation reads and writes. color, depth and motionVectors are at the render size
@@ -89,6 +97,9 @@ class VulkanDlss
         uint32_t graphicsQueueFamily,
         VkQueue graphicsQueue,
         bool extensionsEnabled);
+    // Starts NGX's Direct3D 12 API on device's ID3D12Device; features are made on command lists of
+    // device's own.
+    explicit VulkanDlss(nvrhi::IDevice* d3d12Device);
     ~VulkanDlss();
 
     VulkanDlss(const VulkanDlss&) = delete;
@@ -120,10 +131,14 @@ class VulkanDlss
     // The feature is ray reconstruction: Evaluate reads the guides.
     bool HasRayReconstruction(DlssFeatureSlot slot = DlssFeatureSlot::Viewport) const;
 
-    // Records the slot's evaluation into commandBuffer. False when it has no feature or NGX refused.
-    bool Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInputs& inputs, DlssFeatureSlot slot = DlssFeatureSlot::Viewport);
+    // Records the slot's evaluation into the command list's native command buffer or list. False when
+    // it has no feature or NGX refused. NGX binds what it likes: clear the list's state after.
+    bool Evaluate(nvrhi::ICommandList* commandList, const DlssEvaluateInputs& inputs, DlssFeatureSlot slot = DlssFeatureSlot::Viewport);
 
   private:
+    // The NGX capabilities read once NGX started (either API): sets m_available and the status.
+    void ReadCapabilities();
+
     struct Ngx;
     std::unique_ptr<Ngx> m_ngx;
     bool m_available = false;

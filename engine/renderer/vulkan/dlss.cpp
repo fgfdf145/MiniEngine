@@ -5,6 +5,7 @@
 #include <engine/core/log/log.h>
 
 #if MINIENGINE_WITH_DLSS
+#include "nvrhi_native.h"
 #include "upload_batch.h"
 
 #include <nvsdk_ngx_helpers.h>
@@ -12,6 +13,9 @@
 #include <nvsdk_ngx_vk.h>
 // After the Vulkan helpers, whose types and macros it uses.
 #include <nvsdk_ngx_helpers_dlssd_vk.h>
+// Direct3D 12's: NGX declares the D3D12 interfaces it names itself.
+#include <nvsdk_ngx_helpers_d3d.h>
+#include <nvsdk_ngx_helpers_dlssd_d3d.h>
 
 #include <filesystem>
 #include <format>
@@ -115,6 +119,17 @@ NVSDK_NGX_PerfQuality_Value ToPerfQuality(DlssMode mode)
     return NVSDK_NGX_PerfQuality_Value_MaxQuality;
 }
 
+ID3D12Resource* ToD3D12Resource(const DlssImage& image)
+{
+    return image.texture != nullptr ? static_cast<ID3D12Resource*>(image.texture->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource).pointer)
+                                    : nullptr;
+}
+
+ID3D12GraphicsCommandList* ToD3D12CommandList(nvrhi::ICommandList* commandList)
+{
+    return static_cast<ID3D12GraphicsCommandList*>(commandList->getNativeObject(nvrhi::ObjectTypes::D3D12_GraphicsCommandList).pointer);
+}
+
 NVSDK_NGX_Resource_VK ToResource(const DlssImage& image, bool readWrite)
 {
     const VkImageSubresourceRange range{image.aspect, 0, 1, 0, 1};
@@ -211,6 +226,9 @@ struct VulkanDlss::Ngx
     VkDevice device = VK_NULL_HANDLE;
     uint32_t queueFamily = 0;
     VkQueue queue = VK_NULL_HANDLE;
+    // Direct3D 12: the NVRHI device whose command lists make the features, and its ID3D12Device.
+    nvrhi::IDevice* nvrhiDevice = nullptr;
+    ID3D12Device* d3d12Device = nullptr;
     bool initialized = false;
     NVSDK_NGX_Parameter* parameters = nullptr;
     std::array<DlssSlotState, kDlssFeatureSlotCount> slots;
@@ -218,6 +236,29 @@ struct VulkanDlss::Ngx
     DlssSlotState& Slot(DlssFeatureSlot slot)
     {
         return slots.at(static_cast<uint32_t>(slot));
+    }
+    bool IsD3D12() const
+    {
+        return d3d12Device != nullptr;
+    }
+    // Records with make into a command list of its own and waits for the GPU: the features' creation.
+    template <typename Make>
+    NVSDK_NGX_Result Immediate(Make&& make)
+    {
+        if (IsD3D12())
+        {
+            nvrhi::CommandListHandle commandList = nvrhiDevice->createCommandList();
+            commandList->open();
+            const NVSDK_NGX_Result result = make(static_cast<void*>(ToD3D12CommandList(commandList)));
+            commandList->close();
+            nvrhiDevice->executeCommandList(commandList);
+            nvrhiDevice->waitForIdle();
+            return result;
+        }
+        VulkanImmediateCommands batch(device, queueFamily, queue);
+        const NVSDK_NGX_Result result = make(static_cast<void*>(batch.GetCommandBuffer()));
+        batch.Flush();
+        return result;
     }
 };
 
@@ -306,7 +347,42 @@ VulkanDlss::VulkanDlss(
         LOG_INFO("DLSS unavailable: {}", m_status);
         return;
     }
+    ReadCapabilities();
+}
 
+VulkanDlss::VulkanDlss(nvrhi::IDevice* d3d12Device)
+    : m_ngx(std::make_unique<Ngx>())
+{
+    m_ngx->nvrhiDevice = d3d12Device;
+    m_ngx->d3d12Device = static_cast<ID3D12Device*>(d3d12Device->getNativeObject(nvrhi::ObjectTypes::D3D12_Device).pointer);
+    const NVSDK_NGX_FeatureCommonInfo common = CommonInfo();
+    NVSDK_NGX_Result result = NVSDK_NGX_D3D12_Init_with_ProjectID(
+        kProjectId,
+        NVSDK_NGX_ENGINE_TYPE_CUSTOM,
+        kEngineVersion,
+        DataDirectory().c_str(),
+        m_ngx->d3d12Device,
+        &common);
+    if (NVSDK_NGX_FAILED(result))
+    {
+        m_status = std::format("NGX did not start: {}", ResultText(result));
+        LOG_INFO("DLSS unavailable: {}", m_status);
+        return;
+    }
+    m_ngx->initialized = true;
+
+    result = NVSDK_NGX_D3D12_GetCapabilityParameters(&m_ngx->parameters);
+    if (NVSDK_NGX_FAILED(result) || m_ngx->parameters == nullptr)
+    {
+        m_status = std::format("no NGX capability parameters: {}", ResultText(result));
+        LOG_INFO("DLSS unavailable: {}", m_status);
+        return;
+    }
+    ReadCapabilities();
+}
+
+void VulkanDlss::ReadCapabilities()
+{
     int needsUpdatedDriver = 0;
     unsigned int minDriverMajor = 0;
     unsigned int minDriverMinor = 0;
@@ -349,6 +425,18 @@ VulkanDlss::~VulkanDlss()
     for (uint32_t slot = 0; slot < kDlssFeatureSlotCount; ++slot)
     {
         ReleaseFeature(static_cast<DlssFeatureSlot>(slot));
+    }
+    if (m_ngx->IsD3D12())
+    {
+        if (m_ngx->parameters != nullptr)
+        {
+            NVSDK_NGX_D3D12_DestroyParameters(m_ngx->parameters);
+        }
+        if (m_ngx->initialized)
+        {
+            NVSDK_NGX_D3D12_Shutdown1(m_ngx->d3d12Device);
+        }
+        return;
     }
     if (m_ngx->parameters != nullptr)
     {
@@ -462,10 +550,14 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
         create.InTargetHeight = output.height;
         create.InPerfQualityValue = ToPerfQuality(mode);
         create.InFeatureCreateFlags = createFlags;
-        VulkanImmediateCommands batch(m_ngx->device, m_ngx->queueFamily, m_ngx->queue);
-        const NVSDK_NGX_Result result =
-            NGX_VULKAN_CREATE_DLSSD_EXT1(m_ngx->device, batch.GetCommandBuffer(), 1, 1, &f.feature, m_ngx->parameters, &create);
-        batch.Flush();
+        const NVSDK_NGX_Result result = m_ngx->Immediate(
+            [&](void* commandList)
+            {
+                return m_ngx->IsD3D12()
+                           ? NGX_D3D12_CREATE_DLSSD_EXT(static_cast<ID3D12GraphicsCommandList*>(commandList), 1, 1, &f.feature, m_ngx->parameters, &create)
+                           : NGX_VULKAN_CREATE_DLSSD_EXT1(
+                                 m_ngx->device, static_cast<VkCommandBuffer>(commandList), 1, 1, &f.feature, m_ngx->parameters, &create);
+            });
         if (NVSDK_NGX_FAILED(result) || f.feature == nullptr)
         {
             f.feature = nullptr;
@@ -501,10 +593,14 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
     create.InFeatureCreateFlags = createFlags;
     SetRenderPresetHints(m_ngx->parameters, preset);
 
-    VulkanImmediateCommands batch(m_ngx->device, m_ngx->queueFamily, m_ngx->queue);
-    const NVSDK_NGX_Result result =
-        NGX_VULKAN_CREATE_DLSS_EXT1(m_ngx->device, batch.GetCommandBuffer(), 1, 1, &f.feature, m_ngx->parameters, &create);
-    batch.Flush();
+    const NVSDK_NGX_Result result = m_ngx->Immediate(
+        [&](void* commandList)
+        {
+            return m_ngx->IsD3D12()
+                       ? NGX_D3D12_CREATE_DLSS_EXT(static_cast<ID3D12GraphicsCommandList*>(commandList), 1, 1, &f.feature, m_ngx->parameters, &create)
+                       : NGX_VULKAN_CREATE_DLSS_EXT1(
+                             m_ngx->device, static_cast<VkCommandBuffer>(commandList), 1, 1, &f.feature, m_ngx->parameters, &create);
+        });
     if (NVSDK_NGX_FAILED(result) || f.feature == nullptr)
     {
         f.feature = nullptr;
@@ -537,8 +633,16 @@ void VulkanDlss::ReleaseFeature(DlssFeatureSlot slot)
     if (f.feature != nullptr)
     {
         // Frames still in flight may evaluate it.
-        vkDeviceWaitIdle(m_ngx->device);
-        NVSDK_NGX_VULKAN_ReleaseFeature(f.feature);
+        if (m_ngx->IsD3D12())
+        {
+            m_ngx->nvrhiDevice->waitForIdle();
+            NVSDK_NGX_D3D12_ReleaseFeature(f.feature);
+        }
+        else
+        {
+            vkDeviceWaitIdle(m_ngx->device);
+            NVSDK_NGX_VULKAN_ReleaseFeature(f.feature);
+        }
         f.feature = nullptr;
     }
     f.featureMode = DlssMode::Off;
@@ -557,13 +661,86 @@ bool VulkanDlss::HasRayReconstruction(DlssFeatureSlot slot) const
     return f.feature != nullptr && f.featureRayReconstruction;
 }
 
-bool VulkanDlss::Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInputs& inputs, DlssFeatureSlot slot)
+namespace
+{
+// The Direct3D 12 evaluation: Evaluate's with resources for images. The inputs are in
+// ShaderResource (PIXEL_ and NON_PIXEL_SHADER_RESOURCE), the output in UnorderedAccess.
+bool EvaluateD3D12(
+    NVSDK_NGX_Handle* feature,
+    NVSDK_NGX_Parameter* parameters,
+    bool rayReconstruction,
+    ID3D12GraphicsCommandList* commandList,
+    const DlssEvaluateInputs& inputs)
+{
+    if (rayReconstruction)
+    {
+        glm::mat4 worldToView = inputs.worldToView;
+        glm::mat4 viewToClip = inputs.viewToClip;
+        NVSDK_NGX_D3D12_DLSSD_Eval_Params evaluate{};
+        evaluate.pInColor = ToD3D12Resource(inputs.color);
+        evaluate.pInOutput = ToD3D12Resource(inputs.output);
+        evaluate.pInDepth = ToD3D12Resource(inputs.depth);
+        evaluate.pInMotionVectors = ToD3D12Resource(inputs.motionVectors);
+        evaluate.pInDiffuseAlbedo = ToD3D12Resource(inputs.diffuseAlbedo);
+        evaluate.pInSpecularAlbedo = ToD3D12Resource(inputs.specularAlbedo);
+        evaluate.pInNormals = ToD3D12Resource(inputs.normalRoughness);
+        if (inputs.specularHitDistance.IsSet() && inputs.reflectionMotionVectors.IsSet())
+        {
+            evaluate.pInSpecularHitDistance = ToD3D12Resource(inputs.specularHitDistance);
+            evaluate.pInMotionVectorsReflections = ToD3D12Resource(inputs.reflectionMotionVectors);
+        }
+        evaluate.InJitterOffsetX = inputs.jitterPixels.x;
+        evaluate.InJitterOffsetY = inputs.jitterPixels.y;
+        evaluate.InRenderSubrectDimensions = {inputs.color.extent.width, inputs.color.extent.height};
+        evaluate.InReset = inputs.reset ? 1 : 0;
+        evaluate.InMVScaleX = 1.0f;
+        evaluate.InMVScaleY = 1.0f;
+        evaluate.InFrameTimeDeltaInMsec = inputs.frameTimeMs;
+        evaluate.pInWorldToViewMatrix = &worldToView[0][0];
+        evaluate.pInViewToClipMatrix = &viewToClip[0][0];
+        const NVSDK_NGX_Result result = NGX_D3D12_EVALUATE_DLSSD_EXT(commandList, feature, parameters, &evaluate);
+        if (NVSDK_NGX_FAILED(result))
+        {
+            LOG_WARN("DLSS ray reconstruction: evaluation failed ({})", ResultText(result));
+            return false;
+        }
+        return true;
+    }
+
+    NVSDK_NGX_D3D12_DLSS_Eval_Params evaluate{};
+    evaluate.Feature.pInColor = ToD3D12Resource(inputs.color);
+    evaluate.Feature.pInOutput = ToD3D12Resource(inputs.output);
+    evaluate.pInDepth = ToD3D12Resource(inputs.depth);
+    evaluate.pInMotionVectors = ToD3D12Resource(inputs.motionVectors);
+    evaluate.InJitterOffsetX = inputs.jitterPixels.x;
+    evaluate.InJitterOffsetY = inputs.jitterPixels.y;
+    evaluate.InRenderSubrectDimensions = {inputs.color.extent.width, inputs.color.extent.height};
+    evaluate.InReset = inputs.reset ? 1 : 0;
+    evaluate.InMVScaleX = 1.0f;
+    evaluate.InMVScaleY = 1.0f;
+    evaluate.InFrameTimeDeltaInMsec = inputs.frameTimeMs;
+    const NVSDK_NGX_Result result = NGX_D3D12_EVALUATE_DLSS_EXT(commandList, feature, parameters, &evaluate);
+    if (NVSDK_NGX_FAILED(result))
+    {
+        LOG_WARN("DLSS: evaluation failed ({})", ResultText(result));
+        return false;
+    }
+    return true;
+}
+}
+
+bool VulkanDlss::Evaluate(nvrhi::ICommandList* commandList, const DlssEvaluateInputs& inputs, DlssFeatureSlot slot)
 {
     DlssSlotState& f = m_ngx->Slot(slot);
     if (f.feature == nullptr)
     {
         return false;
     }
+    if (m_ngx->IsD3D12())
+    {
+        return EvaluateD3D12(f.feature, m_ngx->parameters, f.featureRayReconstruction, ToD3D12CommandList(commandList), inputs);
+    }
+    const VkCommandBuffer commandBuffer = ToNative<VkCommandBuffer>(commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer));
     NVSDK_NGX_Resource_VK color = ToResource(inputs.color, false);
     NVSDK_NGX_Resource_VK depth = ToResource(inputs.depth, false);
     NVSDK_NGX_Resource_VK motion = ToResource(inputs.motionVectors, false);
@@ -576,7 +753,7 @@ bool VulkanDlss::Evaluate(VkCommandBuffer commandBuffer, const DlssEvaluateInput
         NVSDK_NGX_Resource_VK normalRoughness = ToResource(inputs.normalRoughness, false);
         NVSDK_NGX_Resource_VK specularHitDistance{};
         NVSDK_NGX_Resource_VK reflectionMotion{};
-        const bool hasHitDistance = inputs.specularHitDistance.image != VK_NULL_HANDLE && inputs.reflectionMotionVectors.image != VK_NULL_HANDLE;
+        const bool hasHitDistance = inputs.specularHitDistance.IsSet() && inputs.reflectionMotionVectors.IsSet();
         if (hasHitDistance)
         {
             specularHitDistance = ToResource(inputs.specularHitDistance, false);
@@ -660,6 +837,12 @@ VulkanDlss::VulkanDlss(VkInstance, VkPhysicalDevice, VkDevice, uint32_t, VkQueue
 {
 }
 
+VulkanDlss::VulkanDlss(nvrhi::IDevice*)
+    : m_ngx(std::make_unique<Ngx>()),
+      m_status("built without the DLSS SDK (scripts/fetch-dlss-sdk.sh)")
+{
+}
+
 VulkanDlss::~VulkanDlss() = default;
 
 bool VulkanDlss::IsAvailable() const
@@ -701,7 +884,7 @@ bool VulkanDlss::HasFeature(DlssFeatureSlot) const
     return false;
 }
 
-bool VulkanDlss::Evaluate(VkCommandBuffer, const DlssEvaluateInputs&, DlssFeatureSlot)
+bool VulkanDlss::Evaluate(nvrhi::ICommandList*, const DlssEvaluateInputs&, DlssFeatureSlot)
 {
     return false;
 }

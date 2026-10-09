@@ -582,7 +582,7 @@ VulkanRenderer::VulkanRenderer(
     }
     else
     {
-        m_dlss = std::make_unique<VulkanDlss>(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, false);
+        m_dlss = std::make_unique<VulkanDlss>(m_nvrhi->Get());
     }
     m_imguiLayer = std::make_unique<VulkanImGuiLayer>(
         GetWindow().GetSDLWindow(), m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));

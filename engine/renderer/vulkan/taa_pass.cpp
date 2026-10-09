@@ -239,41 +239,45 @@ void VulkanTaaPass::RecordDlss(
     // NGX wants them; NGX leaves them so.
     const uint32_t slot = frame.frameSlot;
     const uint32_t outputSlot = targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot);
+    const auto guideImage = [](const DlssInputImage& image, VkExtent2D extent)
+    {
+        return DlssImage{image.image, image.view, image.format, VK_IMAGE_ASPECT_COLOR_BIT, extent, image.texture.Get()};
+    };
     DlssEvaluateInputs inputs{};
     inputs.color = {
         targets.GetImage(RenderTargetId::SceneHdr, slot),
         targets.GetSampledView(RenderTargetId::SceneHdr, slot),
         targets.GetFormat(RenderTargetId::SceneHdr),
         VK_IMAGE_ASPECT_COLOR_BIT,
-        frame.extent};
+        frame.extent,
+        targets.GetTexture(RenderTargetId::SceneHdr, slot)};
     inputs.depth = {
         targets.GetImage(RenderTargetId::SceneDepth, slot),
         targets.GetSampledView(RenderTargetId::SceneDepth, slot),
         targets.GetFormat(RenderTargetId::SceneDepth),
         VK_IMAGE_ASPECT_DEPTH_BIT,
-        frame.extent};
-    inputs.motionVectors = {m_motion.image, m_motion.view, m_motion.format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
+        frame.extent,
+        targets.GetTexture(RenderTargetId::SceneDepth, slot)};
+    inputs.motionVectors = guideImage(m_motion, frame.extent);
     inputs.output = {
         targets.GetImage(RenderTargetId::SceneTaa, outputSlot),
         targets.GetView(RenderTargetId::SceneTaa, outputSlot),
         targets.GetFormat(RenderTargetId::SceneTaa),
         VK_IMAGE_ASPECT_COLOR_BIT,
-        frame.outputExtent};
+        frame.outputExtent,
+        targets.GetTexture(RenderTargetId::SceneTaa, outputSlot)};
     inputs.jitterPixels = frame.jitterPixels;
     inputs.reset = frame.dlssReset;
     inputs.frameTimeMs = frame.frameTimeMs;
     if (frame.dlssRayReconstruction)
     {
-        inputs.diffuseAlbedo = {m_guides[0].image, m_guides[0].view, m_guides[0].format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
-        inputs.specularAlbedo = {m_guides[1].image, m_guides[1].view, m_guides[1].format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
-        inputs.normalRoughness = {m_guides[2].image, m_guides[2].view, m_guides[2].format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
+        inputs.diffuseAlbedo = guideImage(m_guides[0], frame.extent);
+        inputs.specularAlbedo = guideImage(m_guides[1], frame.extent);
+        inputs.normalRoughness = guideImage(m_guides[2], frame.extent);
         if (frame.pathTraceHitDistance)
         {
-            const DlssInputImage& hitDistance = m_guides[kGuideHitDistance];
-            const DlssInputImage& reflectionMotion = m_guides[kGuideReflectionMotion];
-            inputs.specularHitDistance = {hitDistance.image, hitDistance.view, hitDistance.format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
-            inputs.reflectionMotionVectors = {
-                reflectionMotion.image, reflectionMotion.view, reflectionMotion.format, VK_IMAGE_ASPECT_COLOR_BIT, frame.extent};
+            inputs.specularHitDistance = guideImage(m_guides[kGuideHitDistance], frame.extent);
+            inputs.reflectionMotionVectors = guideImage(m_guides[kGuideReflectionMotion], frame.extent);
         }
         inputs.worldToView = frame.view;
         inputs.viewToClip = frame.projection;
@@ -282,9 +286,11 @@ void VulkanTaaPass::RecordDlss(
     // transitions before this pass and the guides' states above put them there. It records into the
     // command list's native command buffer and binds what it likes, which NVRHI then forgets.
     nvrhi::ICommandList* commandList = frame.commandList;
+    commandList->setTextureState(inputs.color.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+    commandList->setTextureState(inputs.depth.texture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
     commandList->setTextureState(targets.GetTexture(RenderTargetId::SceneTaa, outputSlot), nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
     commandList->commitBarriers();
-    frame.dlss->Evaluate(commandBuffer, inputs, frame.dlssSlot);
+    frame.dlss->Evaluate(commandList, inputs, frame.dlssSlot);
     commandList->clearState();
 
     // The result becomes the history the SSR trace takes its colour from next frame, as the TAA
