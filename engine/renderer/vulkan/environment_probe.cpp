@@ -160,6 +160,10 @@ void VulkanEnvironmentProbe::Record(
     state.pipeline = m_capturePipeline;
     state.bindings = {frameBindingSet, m_bindingSets[0]};
     commandList->setComputeState(state);
+    // The capture reads no push constants, but its layout has the prefilter's, and NVRHI's
+    // validation drops a dispatch without them.
+    const PrefilterConstants noConstants{};
+    commandList->setPushConstants(&noConstants, sizeof(noConstants));
     commandList->dispatch(GroupCount(kCubeSize), GroupCount(kCubeSize), 6);
 
     RecordMipChain(commandBuffer, commandList);

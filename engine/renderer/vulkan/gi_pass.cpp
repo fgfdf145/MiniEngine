@@ -193,7 +193,10 @@ VulkanGiResolvePass::VulkanGiResolvePass(nvrhi::IDevice* nvrhiDevice, VkDevice d
     : m_nvrhiDevice(nvrhiDevice),
       m_device(device)
 {
-    m_setLayout = CreateSetLayout(m_nvrhiDevice, 5, 2, "Failed to create the GI resolve binding layout");
+    // The history is read as a storage image too: read through a shader resource view, in
+    // SHADER_READ_ONLY_OPTIMAL, the RGBA32F history gave other results on NVIDIA than read in GENERAL
+    // (the GI view about 9% darker; docs/design/2026-10-08-nvrhi-backend-design.md).
+    m_setLayout = CreateSetLayout(m_nvrhiDevice, 4, 3, "Failed to create the GI resolve binding layout");
     m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "gi_resolve.comp.spv", {frameSetLayout, m_setLayout});
     m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
     CreateBindingSets(targets);
@@ -236,7 +239,7 @@ void VulkanGiResolvePass::Record(
         return;
     }
     // Runs even with GI off: the debug view reads the zero it writes. Both history images are put in
-    // GENERAL first (discarded when the history is invalid).
+    // GENERAL first (discarded when the history is invalid), and stay there.
     m_history.RecordBarrier(commandBuffer, frame.giHistory.valid);
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneGi, frame.imageIndex, frame.frameSlot);
@@ -247,8 +250,6 @@ void VulkanGiResolvePass::Record(
         {{historyRead, nvrhi::ResourceStates::UnorderedAccess},
          {m_history.GetTexture(1u - frame.giHistory.readIndex), nvrhi::ResourceStates::UnorderedAccess},
          {targets.GetTexture(RenderTargetId::SceneGi, slot), nvrhi::ResourceStates::UnorderedAccess}});
-    commandList->setTextureState(historyRead, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
-    commandList->commitBarriers();
     Dispatch(commandList, m_pipeline, frame.frameBindingSet, m_bindingSets.at(slot * 2 + frame.giHistory.readIndex), BuildPushConstants(frame), frame.extent);
 }
 
@@ -273,7 +274,7 @@ void VulkanGiResolvePass::CreateBindingSets(const SceneRenderTargets& targets)
                 nvrhi::BindingSetItem::Texture_SRV(1, targets.GetTexture(RenderTargetId::SceneDepth, slot)),
                 nvrhi::BindingSetItem::Texture_SRV(2, targets.GetTexture(RenderTargetId::GBufferVelocity, slot)),
                 nvrhi::BindingSetItem::Texture_SRV(3, targets.GetTexture(RenderTargetId::GBufferNormal, slot)),
-                nvrhi::BindingSetItem::Texture_SRV(4, m_history.GetTexture(readIndex)),
+                nvrhi::BindingSetItem::Texture_UAV(4, m_history.GetTexture(readIndex)),
                 nvrhi::BindingSetItem::Texture_UAV(5, m_history.GetTexture(1u - readIndex)),
                 nvrhi::BindingSetItem::Texture_UAV(6, targets.GetTexture(RenderTargetId::SceneGi, slot)),
                 nvrhi::BindingSetItem::PushConstants(0, sizeof(GiPushConstants))};
