@@ -468,7 +468,8 @@ void DrivePathsPanel::DrawDriveLog(EditorContext& context)
         {
             ImGui::SetTooltip(
                 "Puts the car back at its start and writes every frame down (captures/drive_*.csv):\n"
-                "position, speed, controls, g, slip, and the path's error while following one. Replay it to drive it again exactly.");
+                "the body's position and rotation, speed, controls, g, slip, each wheel's pose, load, travel and slip, and the\n"
+                "path's error while following one. Replay plays it back frame by frame, exactly where it went.");
         }
     }
     else

@@ -266,8 +266,10 @@ class PhysicsWorld
     // useTractionControl): a car without one stays without it, one switched on works as the car's
     // settings give it.
     void SetVehicleDriverAids(VehicleId vehicle, bool abs, bool tractionControl);
-    // Puts the car at the pose, stopped, as it was when added.
-    void ResetVehicle(VehicleId vehicle, const PhysicsPose& pose);
+    // Puts the car at the pose, stopped, as it was when added: everything it carried from step to step
+    // starts again, so the same controls then drive it along the same line (a replayed drive). With
+    // keepTyres its tyres keep their temperatures and wear, as a car put back on its wheels does.
+    void ResetVehicle(VehicleId vehicle, const PhysicsPose& pose, bool keepTyres = false);
     // The height of the first static surface (track, ground, walls) straight below `from`, within
     // `maxDistance`; cars are not hit. Empty when there is none.
     std::optional<double> FindGroundBelow(const glm::dvec3& from, double maxDistance) const;

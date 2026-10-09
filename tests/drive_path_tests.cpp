@@ -282,6 +282,16 @@ void DriveLogRoundTrips(const std::filesystem::path& folder)
         sample.controls.brake = frame == 2 ? 1.0f : 0.0f;
         sample.controls.gearShifts = frame == 1 ? 1 : 0;
         sample.controls.manualGearbox = true;
+        sample.position = glm::dvec3(10.0 * frame, 100.25, -3.5);
+        sample.rotation = glm::normalize(glm::quat(0.9f, 0.01f * frame, 0.4f, -0.02f));
+        for (size_t wheel = 0; wheel < sample.wheels.size(); ++wheel)
+        {
+            DriveLogWheel& logged = sample.wheels[wheel];
+            logged.position = sample.position + glm::dvec3(0.8 * static_cast<double>(wheel), -0.3, 1.25);
+            logged.rotation = glm::normalize(glm::quat(0.5f, 0.5f, 0.1f * static_cast<float>(wheel + frame), 0.3f));
+            logged.inContact = wheel != 3;
+            logged.load = 3000.5f + 100.0f * static_cast<float>(wheel);
+        }
         writer.Write(sample);
     }
     writer.Close("done");
@@ -291,17 +301,35 @@ void DriveLogRoundTrips(const std::filesystem::path& folder)
     Require(std::count(columns.begin(), columns.end(), ',') == std::count(row.begin(), row.end(), ','), "a row's cells do not match the columns");
 
     const DriveReplay replay = ReadDriveLog(file);
-    Require(replay.frames.size() == 3, "the log reads back " + std::to_string(replay.frames.size()) + " frames");
+    Require(replay.samples.size() == 3, "the log reads back " + std::to_string(replay.samples.size()) + " frames");
     Require(replay.header.car == "skyline_r34_vspec" && replay.header.path == "lane change 2", "the header reads back wrong");
     Require(replay.header.startPosition == header.startPosition && replay.header.startRotation == header.startRotation, "the start reads back wrong");
     Require(replay.header.stepSeconds == header.stepSeconds, "the step reads back wrong");
     for (int frame = 0; frame < 3; ++frame)
     {
-        const DriveReplayFrame& read = replay.frames[frame];
+        const DriveLogSample& read = replay.samples[frame];
         Require(read.deltaSeconds == kFrame * (1.0f + 0.1f * frame) && read.physicsSteps == 16 + frame, "dt is not read back exactly");
         Require(read.controls.throttle == 0.123456789f * frame && read.controls.steering == -0.333333343f, "controls are not read back exactly");
         Require(read.controls.gearShifts == (frame == 1 ? 1 : 0) && read.controls.manualGearbox, "the gearbox is not read back");
+        const glm::quat rotation = glm::normalize(glm::quat(0.9f, 0.01f * frame, 0.4f, -0.02f));
+        Require(read.rotation == rotation && read.position == glm::dvec3(10.0 * frame, 100.25, -3.5), "the body is not read back exactly");
+        for (size_t wheel = 0; wheel < read.wheels.size(); ++wheel)
+        {
+            const DriveLogWheel& logged = read.wheels[wheel];
+            Require(logged.rotation == glm::normalize(glm::quat(0.5f, 0.5f, 0.1f * static_cast<float>(wheel + frame), 0.3f)), "a wheel's rotation reads back wrong");
+            Require(glm::length(logged.position - (read.position + glm::dvec3(0.8 * static_cast<double>(wheel), -0.3, 1.25))) < 1e-4, "a wheel's place reads back wrong");
+            Require(logged.inContact == (wheel != 3) && logged.load == 3000.5f + 100.0f * static_cast<float>(wheel), "a wheel's contact reads back wrong");
+        }
     }
+
+    // Played back between two frames, the body is between them; before the first and after the last, at them.
+    size_t cursor = 0;
+    const double between = 0.25 * replay.samples[0].time + 0.75 * replay.samples[1].time;
+    const DriveLogSample played = SampleDriveAt(replay.samples, between, cursor);
+    Require(cursor == 0 && std::abs(played.position.x - 7.5) < 1e-9, "a quarter from the second frame, x = " + std::to_string(played.position.x));
+    Require(SampleDriveAt(replay.samples, -1.0, cursor).position == replay.samples.front().position, "before the drive, its first frame");
+    Require(SampleDriveAt(replay.samples, 99.0, cursor).position == replay.samples.back().position && cursor == 2, "after it, its last");
+    Require(SampleDriveAt(replay.samples, 0.0, cursor).position == replay.samples.front().position && cursor == 0, "and back to the start");
     std::filesystem::remove(file);
 }
 
