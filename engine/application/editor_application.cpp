@@ -61,7 +61,7 @@ uint32_t ParsePositiveFrameCount(std::string_view value)
     return frameCount;
 }
 
-RenderExtent ParseViewportSize(std::string_view value)
+RenderExtent ParseViewportSize(std::string_view value, std::string_view argument = "--viewport-size")
 {
     const size_t separator = value.find('x');
     uint32_t width = 0;
@@ -72,7 +72,7 @@ RenderExtent ParseViewportSize(std::string_view value)
         std::from_chars(value.data() + separator + 1, value.data() + value.size(), height).ec == std::errc{};
     if (!parsed || width == 0 || height == 0 || width > 16384 || height > 16384)
     {
-        throw std::runtime_error("--viewport-size requires WIDTHxHEIGHT, for example 667x541");
+        throw std::runtime_error(std::string(argument) + " requires WIDTHxHEIGHT, for example 667x541");
     }
     return RenderExtent{width, height};
 }
@@ -256,6 +256,24 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--record")
         {
             options.recordPath = std::filesystem::path(std::string(ReadRequiredArgument(i, argc, argv, argument)));
+            continue;
+        }
+
+        if (argument == "--photo")
+        {
+            options.photoPath = std::filesystem::path(std::string(ReadRequiredArgument(i, argc, argv, argument)));
+            continue;
+        }
+
+        if (argument == "--photo-size")
+        {
+            options.photoSize = ParseViewportSize(ReadRequiredArgument(i, argc, argv, argument), argument);
+            continue;
+        }
+
+        if (argument == "--photo-warmup")
+        {
+            options.photoWarmupFrames = ParsePositiveFrameCount(ReadRequiredArgument(i, argc, argv, argument));
             continue;
         }
 
@@ -719,6 +737,7 @@ int EditorApplication::Run()
     uint32_t renderedFrameCount = 0;
     bool recordingStarted = false;
     bool quadRecordingStarted = false;
+    bool photoStarted = false;
     bool driveStarted = false;
     const bool automatedDrive = m_options.followPath.has_value() || m_options.replayDrive.has_value();
     int exitCode = 0;
@@ -845,6 +864,21 @@ int EditorApplication::Run()
                 throw std::runtime_error("Cannot record to '" + m_options.quadRecordPath->string() + "': " + error);
             }
         }
+        if (m_options.photoPath.has_value() && !waiting && !photoStarted)
+        {
+            photoStarted = true;
+            const PhotoModeSettings saved = ClampPhotoModeSettings(sharedState->engineSettings.photoMode);
+            IRenderBackend::PhotoRequest request;
+            request.path = *m_options.photoPath;
+            request.width = m_options.photoSize.has_value() ? m_options.photoSize->width : saved.width;
+            request.height = m_options.photoSize.has_value() ? m_options.photoSize->height : saved.height;
+            request.warmupFrames = m_options.photoWarmupFrames.value_or(saved.warmupFrames);
+            std::string error;
+            if (!renderer->TakePhoto(request, error))
+            {
+                throw std::runtime_error("Cannot take the photo '" + m_options.photoPath->string() + "': " + error);
+            }
+        }
         // The camera moves only on the frames that count, so it starts from where it was placed.
         if (!waiting && !minimized)
         {
@@ -887,6 +921,16 @@ int EditorApplication::Run()
     // Also when the window was closed before the last frame: the file is finished either way.
     renderer->StopVideoRecording();
     renderer->StopQuadRecording();
+    if (m_options.photoPath.has_value() && (!photoStarted || renderer->IsTakingPhoto()))
+    {
+        LOG_ERROR("--photo: the run ended before the photo was saved; give --frames more than its warm-up frames");
+        exitCode = exitCode == 0 ? 4 : exitCode;
+    }
+    else if (m_options.photoPath.has_value() && !std::filesystem::exists(*m_options.photoPath))
+    {
+        // Its view could not be made or read back; the log says why.
+        exitCode = exitCode == 0 ? 4 : exitCode;
+    }
     if (m_options.maxFrames > 0)
     {
         renderer->LogFrameTimings();

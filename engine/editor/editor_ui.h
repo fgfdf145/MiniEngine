@@ -133,6 +133,9 @@ struct EditorUiActions
     bool toggleVideoRecording = false;
     // Starts filming the car from four sides into one video under ProjectRoot()/captures, or stops.
     bool toggleQuadRecording = false;
+    // Photo Mode: a still from the viewport's camera at the Photo Mode window's size, written as a
+    // PNG under ProjectRoot()/captures once its view has rendered its warm-up frames.
+    bool takePhoto = false;
     bool newScene = false;        // confirmed by the user
     bool clearScene = false;      // confirmed by the user
     bool clearSelectedBaseColorTexture = false;
@@ -199,6 +202,8 @@ struct EditorUiFrameResult
     // renders them even while nothing is recorded).
     QuadRecordingSettings quadRecording;
     bool quadRecordingPreview = false;
+    // The Photo Mode window's photo size and how it is made.
+    PhotoModeSettings photoMode;
 };
 
 // The editor shell, as Unreal's level editor or Unity's main window: the main menu, the toolbar, the
@@ -294,6 +299,11 @@ class EditorUiController
     {
         m_state.gpuMemoryStatus = std::move(status);
     }
+    // The GPU memory as the render thread last measured it, for the Photo Mode window's estimate.
+    void SetGpuMemory(const GpuMemoryReport& report)
+    {
+        m_state.gpuMemory = report;
+    }
     // Whether the render backend can run DLSS, and what the Graphics Debug window says of it
     // (VulkanDlss::Status).
     void SetDlssStatus(bool available, bool rayReconstructionAvailable, std::string status)
@@ -333,6 +343,11 @@ class EditorUiController
     {
         m_state.quadRecordingStatus = std::move(status);
         m_state.quadRecordingTarget = std::move(target);
+    }
+    // The photo being made, or how the last one ended, for the Photo Mode window.
+    void SetPhotoStatus(PhotoStatus status)
+    {
+        m_state.photoStatus = std::move(status);
     }
     // The audio output the Preferences window names: the device, or why there is none.
     void SetAudioStatus(std::string status)

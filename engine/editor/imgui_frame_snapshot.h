@@ -24,6 +24,9 @@ inline constexpr std::array<ImTextureID, 4> kCaptureViewTextureIds = {
     0xFFFF'FFFF'FFFF'F011ull,
     0xFFFF'FFFF'FFFF'F012ull,
     0xFFFF'FFFF'FFFF'F013ull};
+// Photo Mode's view while a photo renders, the tone mapped image of its frame, for the Photo Mode
+// window's preview.
+inline constexpr ImTextureID kPhotoViewTextureId = 0xFFFF'FFFF'FFFF'F020ull;
 
 // One frame's ImGui draw data, copied for the render thread to draw while the main thread builds
 // the next frame in the same ImGui context. Every texture reference is resolved to its ID while

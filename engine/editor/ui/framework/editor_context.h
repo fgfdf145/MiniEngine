@@ -105,12 +105,17 @@ struct EditorSharedState
     bool quadRecordingPreview = false;
     VideoRecordingIndicator quadRecordingStatus;
     std::string quadRecordingTarget;
+    // The Photo Mode window: the photo's size and how it is made (kept in the engine settings), and,
+    // from the backend, the photo being made or how the last one ended.
+    PhotoModeSettings photoMode;
+    PhotoStatus photoStatus;
     ImTextureID minimapTexture = ImTextureID{};
     ImTextureID selectionOutlineTexture = ImTextureID{};
     bool dlssAvailable = false;
     bool dlssRayReconstructionAvailable = false;
     std::string dlssStatus;
     std::string gpuMemoryStatus;
+    GpuMemoryReport gpuMemory;
     // The size the backend renders the scene at whatever the editor asks (--viewport-size, or a
     // recording's size while it runs); unset when the viewport's own settings decide.
     std::optional<RenderExtent> forcedViewportExtent;

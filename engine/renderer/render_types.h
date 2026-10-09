@@ -22,6 +22,10 @@ struct GpuMemoryReport
     // What the render targets would need on top of today's to fill the display, plus a margin, so
     // that going fullscreen needs no room the world holds.
     uint64_t reserve = 0;
+    // The viewport's memory per output pixel that scales with its size: its targets and the ones
+    // outside them (the bloom chain, TAA's history and the like). What another view of the scene
+    // (Photo Mode's) costs per pixel, near enough.
+    double viewBytesPerPixel = 0.0;
 
     // The room left for more of the world; negative when over budget.
     int64_t Headroom() const

@@ -162,6 +162,10 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
 --quad-record <file.mp4|file.avi>
                     从前后左右四个方向同时拍摄驾驶中的车（--drive，否则选中的模型），边拍边拼成一个视频；
                     机位用 Window > Quad Recording 保存的设置
+--photo <file.png>  场景就绪后用视口相机拍一张照片（Photo Mode），照片有自己的分辨率，视口分辨率不变；
+                    预热帧数渲染完后保存，--frames 要比预热帧数多
+--photo-size <宽>x<高>  照片分辨率（默认取 Window > Photo Mode 保存的设置，最大 8192）
+--photo-warmup <n>  照片视图保存前渲染的帧数（TAA 等历史收敛，默认取 Photo Mode 设置，初始 32）
 --no-audio          不打开音频设备（--frames 的脚本运行本来就不打开）
 --priority <级别>    本次运行的进程优先级：below-normal、normal、above-normal 或 high（默认取 Preferences > Process，初始为 high）
 --cpus <核心>        本次运行可用的逻辑处理器：all、performance（混合架构的 P 核）或列表如 0,2,4-7；任务系统的工作线程数随之取核心数减二

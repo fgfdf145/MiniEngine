@@ -720,6 +720,7 @@ void VulkanRenderer::DrawFrame()
     State().editorUi.SetDlssStatus(m_dlss->IsAvailable(), m_dlss->IsRayReconstructionAvailable(), m_dlss->Status());
     State().editorUi.SetPathTracingStatus(m_rayScene->HasHardwareRayTracing(), m_pathTracingStatusShown);
     State().editorUi.SetGpuMemoryStatus(FormatGpuMemoryStatus(State().gpuMemory, State().worldStreaming));
+    State().editorUi.SetGpuMemory(State().gpuMemory);
     const EditorUiFrameResult uiFrame = DrawEditorUi(kViewportTextureId, viewportExtent);
     ApplyUiActions(uiFrame);
     EditorWorld().FlushDirtyTransforms();
@@ -1360,10 +1361,15 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         m_minimapBinding != VK_NULL_HANDLE ? static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(m_minimapBinding)) : ImTextureID_Invalid);
     for (size_t index = 0; index < kCaptureViewTextureIds.size(); ++index)
     {
+        const bool quadView = index < m_captureViews.size() && index != m_photoViewIndex;
         packet.ui.ReplaceTexture(
-            kCaptureViewTextureIds[index],
-            index < m_captureViews.size() ? m_captureViews[index]->targets->GetLdrTextureId(imageIndex) : ImTextureID_Invalid);
+            kCaptureViewTextureIds[index], quadView ? m_captureViews[index]->targets->GetLdrTextureId(imageIndex) : ImTextureID_Invalid);
     }
+    packet.ui.ReplaceTexture(
+        kPhotoViewTextureId,
+        m_photoViewIndex.has_value() && *m_photoViewIndex < m_captureViews.size()
+            ? m_captureViews[*m_photoViewIndex]->targets->GetLdrTextureId(imageIndex)
+            : ImTextureID_Invalid);
 
     m_cpuStages.Mark("FrameSetup");
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
@@ -2091,6 +2097,12 @@ GpuMemoryReport VulkanRenderer::MeasureGpuMemory(const RenderFramePacket& frame)
         growth = std::max(0.0, displayPixels / outputPixels - 1.0);
     }
     report.reserve = static_cast<uint64_t>(static_cast<double>(targetBytes) * kResolutionDependentFactor * growth) + kMargin;
+    if (m_view.targets)
+    {
+        const VkExtent2D output = m_view.targets->GetOutputExtent();
+        report.viewBytesPerPixel =
+            static_cast<double>(targetBytes) * kResolutionDependentFactor / std::max(1.0, static_cast<double>(output.width) * output.height);
+    }
     return report;
 }
 
@@ -2413,6 +2425,48 @@ void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
                                  });
 }
 
+void VulkanRenderer::CapturePhotoView(const std::filesystem::path& path)
+{
+    m_renderThread->RunExclusive([&]()
+                                 {
+                                     CapturePhotoViewNow(path);
+                                 });
+}
+
+void VulkanRenderer::CapturePhotoViewNow(const std::filesystem::path& path)
+{
+    if (!m_photoViewIndex.has_value() || *m_photoViewIndex >= m_captureViews.size())
+    {
+        throw std::runtime_error(m_photoViewError.empty() ? "no frame drew the photo" : m_photoViewError);
+    }
+    if (!m_lastRecordedImageIndex.has_value())
+    {
+        throw std::runtime_error("No frame has been drawn to capture");
+    }
+    vkDeviceWaitIdle(m_device->GetHandle());
+
+    const VulkanSceneView& view = *m_captureViews[*m_photoViewIndex];
+    ImageCaptureRequest request{};
+    request.physicalDevice = m_device->GetPhysicalDevice();
+    request.device = m_device->GetHandle();
+    request.queueFamily = m_device->GetQueueFamilies().graphicsFamily.value();
+    request.queue = m_device->GetGraphicsQueue();
+    // SceneLdr is indexed by swapchain image; the frame slot is ignored for it.
+    const uint32_t index = view.targets->ResolveIndex(RenderTargetId::SceneLdr, *m_lastRecordedImageIndex, 0);
+    request.image = view.targets->GetImage(RenderTargetId::SceneLdr, index);
+    request.format = view.targets->GetFormat(RenderTargetId::SceneLdr);
+    request.extent = view.targets->GetOutputExtent();
+    // The capture views end their frame with SceneLdr shader-read (kCaptureReads).
+    request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    CaptureImageToPng(request, path);
+    LOG_INFO(
+        "Photo: saved {}x{} to '{}' at EV100 {:.2f}",
+        request.extent.width,
+        request.extent.height,
+        path.string(),
+        view.exposureEv100.value_or(State().camera.exposureEv100));
+}
+
 void VulkanRenderer::CaptureDdgiReference(const DdgiReferenceRequest& reference)
 {
     m_renderThread->RunExclusive([&]()
@@ -2558,12 +2612,14 @@ void VulkanRenderer::FlushQuadVideoFrames()
 std::vector<VulkanVideoReadback::MosaicTile> VulkanRenderer::BuildQuadMosaicTiles(uint32_t imageIndex) const
 {
     const QuadVideoRecording* const recording = ActiveQuadRecording();
-    if (recording == nullptr || m_captureViews.size() != recording->mosaic.tiles.size())
+    // The quad cameras come first; Photo Mode's view may follow them.
+    if (recording == nullptr || m_captureViews.size() < recording->mosaic.tiles.size() ||
+        (m_photoViewIndex.has_value() && *m_photoViewIndex < recording->mosaic.tiles.size()))
     {
         return {};
     }
     std::vector<VulkanVideoReadback::MosaicTile> tiles;
-    for (size_t index = 0; index < m_captureViews.size(); ++index)
+    for (size_t index = 0; index < recording->mosaic.tiles.size(); ++index)
     {
         const VulkanSceneView& view = *m_captureViews[index];
         const VideoMosaicTile& tile = recording->mosaic.tiles[index];
@@ -3326,20 +3382,46 @@ void VulkanRenderer::SyncCaptureViews(std::span<const SceneCaptureView> cameras)
         m_captureViews.resize(cameras.size());
         LOG_INFO("Capture views: {}", cameras.size());
     }
+    m_photoViewIndex.reset();
     for (size_t index = 0; index < cameras.size(); ++index)
     {
         const VkExtent2D extent = ToVkExtent(cameras[index].extent);
-        if (index == m_captureViews.size())
+        try
         {
-            m_captureViews.push_back(CreateCaptureView(extent));
-            LOG_INFO("Capture view {} made at {}x{}", index, extent.width, extent.height);
-            continue;
+            if (index == m_captureViews.size())
+            {
+                m_captureViews.push_back(CreateCaptureView(extent));
+                LOG_INFO(
+                    "Capture view {} made at {}x{} ({} MB of targets)",
+                    index,
+                    extent.width,
+                    extent.height,
+                    m_captureViews.back()->targets->GetAllocatedBytes() >> 20);
+            }
+            else if (!m_captureViews[index]->targets->MatchesExtent(extent, extent))
+            {
+                RebuildViewTargets(*m_captureViews[index], extent, extent);
+                LOG_INFO("Capture view {} resized to {}x{}", index, extent.width, extent.height);
+            }
         }
-        VulkanSceneView& view = *m_captureViews[index];
-        if (!view.targets->MatchesExtent(extent, extent))
+        catch (const std::exception& error)
         {
-            RebuildViewTargets(view, extent, extent);
-            LOG_INFO("Capture view {} resized to {}x{}", index, extent.width, extent.height);
+            // A photo can ask for more than the GPU has; the views made so far still draw, and the
+            // photo reports why it has none.
+            if (!cameras[index].photo)
+            {
+                throw;
+            }
+            vkDeviceWaitIdle(m_device->GetHandle());
+            m_captureViews.resize(index);
+            m_photoViewError = fmt::format("its {}x{} view could not be made: {}", extent.width, extent.height, error.what());
+            LOG_ERROR("Photo: {}", m_photoViewError);
+            return;
+        }
+        if (cameras[index].photo)
+        {
+            m_photoViewIndex = index;
+            m_photoViewError.clear();
         }
     }
 }

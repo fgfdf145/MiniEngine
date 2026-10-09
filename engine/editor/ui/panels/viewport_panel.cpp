@@ -5,7 +5,9 @@
 #include <engine/editor/ui/editor_ui_internal.h>
 #include <engine/editor/ui/editor_vehicle_overlay.h>
 #include <engine/editor/ui/framework/editor_window_manager.h>
+#include <engine/editor/services/photo_mode.h>
 #include <engine/editor/ui/panels/drive_paths_panel.h>
+#include <engine/editor/ui/panels/photo_mode_panel.h>
 #include <engine/editor/ui/panels/suspension_rigs_panel.h>
 
 #include <engine/core/log/log.h>
@@ -110,6 +112,41 @@ ViewportOverlayRect BuildViewportOverlayRect(ImTextureID viewportTextureId, bool
     rect.focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
     return rect;
+}
+
+// Photo Mode's framing guide: what lies outside the photo darkened, its edge and its thirds drawn,
+// its size written over its top-left corner. The viewport renders as it does without it.
+void DrawPhotoFramingGuide(const ViewportOverlayRect& rect, float uiScale, const PhotoModeSettings& settings, RenderExtent viewportExtent)
+{
+    if (rect.drawList == nullptr || viewportExtent.width == 0 || viewportExtent.height == 0 || settings.height == 0)
+    {
+        return;
+    }
+    const PhotoFraming framing = ComputePhotoFraming(
+        static_cast<float>(viewportExtent.width) / static_cast<float>(viewportExtent.height),
+        static_cast<float>(settings.width) / static_cast<float>(settings.height));
+    const ImVec2 outerMin = rect.origin;
+    const ImVec2 outerMax(rect.origin.x + rect.size.x, rect.origin.y + rect.size.y);
+    const ImVec2 min(rect.origin.x + framing.x * rect.size.x, rect.origin.y + framing.y * rect.size.y);
+    const ImVec2 max(min.x + framing.width * rect.size.x, min.y + framing.height * rect.size.y);
+    ImDrawList& drawList = *rect.drawList;
+    constexpr ImU32 kShade = IM_COL32(0, 0, 0, 150);
+    drawList.AddRectFilled(outerMin, ImVec2(outerMax.x, min.y), kShade);
+    drawList.AddRectFilled(ImVec2(outerMin.x, max.y), outerMax, kShade);
+    drawList.AddRectFilled(ImVec2(outerMin.x, min.y), ImVec2(min.x, max.y), kShade);
+    drawList.AddRectFilled(ImVec2(max.x, min.y), ImVec2(outerMax.x, max.y), kShade);
+    constexpr ImU32 kThirds = IM_COL32(255, 255, 255, 50);
+    for (int third = 1; third <= 2; ++third)
+    {
+        const float x = min.x + (max.x - min.x) * static_cast<float>(third) / 3.0f;
+        const float y = min.y + (max.y - min.y) * static_cast<float>(third) / 3.0f;
+        drawList.AddLine(ImVec2(x, min.y), ImVec2(x, max.y), kThirds, uiScale);
+        drawList.AddLine(ImVec2(min.x, y), ImVec2(max.x, y), kThirds, uiScale);
+    }
+    drawList.AddRect(min, max, IM_COL32(255, 255, 255, 170), 0.0f, 0, uiScale);
+    const std::string label = fmt::format("PHOTO {} x {}", settings.width, settings.height);
+    const float margin = 6.0f * uiScale;
+    drawList.AddText(ImVec2(min.x + margin, min.y + margin), IM_COL32(255, 255, 255, 200), label.c_str());
 }
 
 // The panel's size is in points; the scene renders at the display's pixels (DisplayFramebufferScale,
@@ -1347,6 +1384,12 @@ void ViewportPanel::OnGui(EditorContext& context)
     {
         drivePathClick = drivePaths->DrawViewportOverlay(
             context, *viewportRect.drawList, viewportRect.origin, viewportRect.size, viewportRect.hovered, UiScale());
+    }
+    // While the Photo Mode window is open. (Absent where the window manager has no Photo Mode panel.)
+    if (const PhotoModePanel* photoMode = context.windows.Find<PhotoModePanel>();
+        photoMode != nullptr && photoMode->IsOpen() && state.photoMode.framingGuide)
+    {
+        DrawPhotoFramingGuide(viewportRect, UiScale(), ClampPhotoModeSettings(state.photoMode), result.viewportExtent);
     }
     DrawVideoRecordingIndicator(viewportRect, UiScale(), state.videoRecording);
     DrawVideoRecordingIndicator(viewportRect, UiScale(), state.quadRecordingStatus, "QUAD ", 1);

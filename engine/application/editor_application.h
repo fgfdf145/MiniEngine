@@ -46,6 +46,12 @@ struct EditorApplicationOptions
     // four sides at once into one video, its cameras as the Quad Recording window last saved them;
     // starts and paces as --record does, at --record-fps.
     std::optional<std::filesystem::path> quadRecordPath;
+    // --photo FILE.png: Photo Mode's still from the camera at --photo-size WxH (else the Photo Mode
+    // window's saved size), started once the scene is ready, its view rendering --photo-warmup frames
+    // (else the window's) before it is saved; the viewport keeps its own size. --frames must outlast it.
+    std::optional<std::filesystem::path> photoPath;
+    std::optional<RenderExtent> photoSize;
+    std::optional<uint32_t> photoWarmupFrames;
     // Starts with the Khronos reference view on (Graphics Debug), for comparing captures against the
     // Khronos glTF Sample Viewer.
     bool khronosReference = false;

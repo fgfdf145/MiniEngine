@@ -212,6 +212,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     bool WantsKeyboardCapture() const override;
     void FlushVideoFrames() override;
     void FlushQuadVideoFrames() override;
+    void CapturePhotoView(const std::filesystem::path& path) override;
     void RunWithRenderIdle(const std::function<void()>& work) override;
 
   private:
@@ -285,6 +286,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The device-local memory now (docs/design/2026-10-07-vram-budget-design.md). Render thread.
     GpuMemoryReport MeasureGpuMemory(const RenderFramePacket& frame) const;
     void CaptureViewportNow(const std::filesystem::path& path);
+    void CapturePhotoViewNow(const std::filesystem::path& path);
     // In ddgi_reference_capture.cpp.
     void CaptureDdgiReferenceNow(const DdgiReferenceRequest& reference);
     void LogFrameTimingsNow() const;
@@ -653,8 +655,13 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The viewport's camera: its targets, passes, frame sets and histories (scene_view.h). Its
     // shadow pass is made with the device; the rest with the swapchain.
     VulkanSceneView m_view;
-    // The quad recording's cameras, in the frame's order (RenderFramePacket::captureViews).
+    // The quad recording's cameras, then Photo Mode's, in the frame's order
+    // (RenderFramePacket::captureViews).
     std::vector<std::unique_ptr<VulkanSceneView>> m_captureViews;
+    // Which of them is Photo Mode's (SceneCaptureView::photo), as the frame last synced named them;
+    // and why it could not be made, when it could not (too large for the GPU's memory, typically).
+    std::optional<size_t> m_photoViewIndex;
+    std::string m_photoViewError;
     // The sun and sky references auto exposure meters against, gathered while recording the
     // previous frame; shared by every view.
     ExposureReferences m_exposureReferences;

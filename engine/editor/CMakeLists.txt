@@ -22,6 +22,8 @@ add_library(engine_editor
     services/model_animation_service.h
     services/model_import_service.cpp
     services/model_import_service.h
+    services/photo_mode.cpp
+    services/photo_mode.h
     services/quad_recording.cpp
     services/quad_recording.h
     services/scene_io_service.cpp
@@ -89,6 +91,8 @@ add_library(engine_editor
     ui/panels/graphics_debug_panel.h
     ui/panels/input_monitor_panel.cpp
     ui/panels/input_monitor_panel.h
+    ui/panels/photo_mode_panel.cpp
+    ui/panels/photo_mode_panel.h
     ui/panels/quad_recording_panel.cpp
     ui/panels/quad_recording_panel.h
     ui/panels/scene_panel.cpp
