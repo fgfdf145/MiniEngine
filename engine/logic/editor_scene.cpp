@@ -746,6 +746,11 @@ SerializedSceneData LoadEditorSceneDataFromFile(const std::string& path)
     return ReadSceneData(YAML::LoadFile(path));
 }
 
+std::string SerializeEditorSceneData(const SerializedSceneData& sceneData)
+{
+    return EmitSceneYaml(sceneData);
+}
+
 void SaveEditorSceneDataToFile(const SerializedSceneData& sceneData, const std::string& path)
 {
     // Atomic: a failed save must never destroy the scene already on disk.

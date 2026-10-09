@@ -717,6 +717,7 @@ void ScenePanel::OnGui(EditorContext& context)
     EditorUiFrameResult& result = context.result;
     const std::string& lastLoadError = context.frame.lastLoadError;
     const std::string& lastSceneIoError = context.frame.lastSceneIoError;
+    const bool sceneUnsaved = context.state.sceneUnsaved;
     const std::string& sceneUploadStatus = context.frame.sceneUploadStatus;
 
     // Model loads and uploads fail without interrupting the editor, so this line is the only
@@ -977,27 +978,16 @@ void ScenePanel::OnGui(EditorContext& context)
 
     // Scene I/O — always visible
     ImGui::Separator();
+    // Saving is File > Save Scene (Ctrl+S) and Save Scene As.
     ImGui::TextWrapped("Scene: %s", scene.GetSceneFilePath().empty() ? "<unsaved>" : scene.GetSceneFilePath().c_str());
+    if (sceneUnsaved)
+    {
+        ImGui::TextColored(ui_colors::kTextWarning, "Unsaved changes (File > Save Scene, Ctrl+S)");
+    }
     if (!lastSceneIoError.empty())
     {
         ImGui::TextColored(ui_colors::kTextDanger, "Error: %s", lastSceneIoError.c_str());
     }
-    // Save goes to the current path if already set; otherwise it asks, like Save As.
-    const bool savePressed = ImGui::Button("Save Scene");
-    const bool saveToCurrentPath = savePressed && !scene.GetSceneFilePath().empty();
-    if (saveToCurrentPath)
-    {
-        result.actions.selectedSceneSavePath = scene.GetSceneFilePath();
-    }
-    ImGui::SameLine();
-    const bool saveAsPressed = ImGui::Button("Save As...");
-    if (const std::optional<std::string> savePath =
-            PickFilePath(FileDialogType::SaveScene, (savePressed && !saveToCurrentPath) || saveAsPressed);
-        savePath.has_value())
-    {
-        result.actions.selectedSceneSavePath = *savePath;
-    }
-    ImGui::SameLine();
     if (const std::optional<std::string> loadPath =
             PickFilePath(FileDialogType::OpenScene, ImGui::Button("Load Scene"));
         loadPath.has_value())

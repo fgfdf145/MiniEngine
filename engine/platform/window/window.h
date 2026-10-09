@@ -27,6 +27,9 @@ class Window
     // that loop; the handler is called for each one so the caller can draw a frame at the new size.
     // Pass an empty function to remove it.
     void SetLiveResizeHandler(std::function<void()> handler);
+    // Asked when the window is to close (its close button, Alt+F4, File > Exit): false keeps it open,
+    // as when the scene has unsaved changes and the user is asked first. Empty closes it at once.
+    void SetQuitGuard(std::function<bool()> guard);
 
     SDL_Window* GetSDLWindow() const;
 
@@ -37,6 +40,7 @@ class Window
     SDL_Window* m_window = nullptr;
     bool m_running = true;
     std::function<void()> m_liveResizeHandler;
+    std::function<bool()> m_quitGuard;
     bool m_inLiveResizeHandler = false;
     // An exception cannot unwind through SDL's and the OS's C frames, so one thrown by the handler
     // is held here and rethrown by PollEvents once the event pump has returned.

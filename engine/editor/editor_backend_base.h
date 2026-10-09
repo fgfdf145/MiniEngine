@@ -10,6 +10,7 @@
 #include <engine/renderer/scene_capture_view.h>
 
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -39,6 +40,8 @@ class EditorRenderBackendBase : public IRenderBackend
   public:
     RenderBackendType GetBackendType() const override;
     void HandleEvent(const SDL_Event& event) override;
+    // With unsaved scene changes the window stays open and the editor asks about them first.
+    bool AllowQuit() override;
     bool StartVideoRecording(const VideoRecordingRequest& request, std::string& error) override;
     void StopVideoRecording() override;
     bool StartQuadRecording(const VideoRecordingRequest& request, std::string& error) override;
@@ -126,6 +129,15 @@ class EditorRenderBackendBase : public IRenderBackend
     virtual bool WantsKeyboardCapture() const = 0;
 
   private:
+    // Compares the scene with its saved state for the editor (SceneIoService::HasUnsavedChanges) twice a
+    // second, and the frame after it was saved, loaded or started again.
+    void UpdateSceneUnsaved(bool now);
+
+    // The user chose to close the editor, the scene's unsaved changes saved or dropped.
+    bool m_quitConfirmed = false;
+    bool m_sceneUnsaved = false;
+    std::chrono::steady_clock::time_point m_nextUnsavedCheck{};
+
     // Right mouse looks around; with Alt held it orbits `orbitPivot` instead, when there is one.
     static void UpdateCameraFromInput(
         Camera& camera,

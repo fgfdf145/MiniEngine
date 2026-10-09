@@ -28,6 +28,12 @@ class IRenderBackend
     virtual RenderBackendType GetBackendType() const = 0;
     virtual void HandleEvent(const SDL_Event& event) = 0;
     virtual void DrawFrame() = 0;
+    // Whether the window may close now (Window::SetQuitGuard). The editor first asks about a scene with
+    // unsaved changes and answers false; once the user has chosen, it closes the window itself.
+    virtual bool AllowQuit()
+    {
+        return true;
+    }
     // Writes the viewport of the last drawn frame to a PNG. For verification runs (--capture).
     virtual void CaptureViewport(const std::filesystem::path& path)
     {

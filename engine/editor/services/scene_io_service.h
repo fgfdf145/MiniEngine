@@ -31,5 +31,15 @@ void NewScene(RendererSharedState& state);
 // Scene > Clear Scene: removes every entity; the environment and the scene's file are kept.
 // Throws while a model or scene is loading.
 void ClearScene(RendererSharedState& state);
+
+// The scene as a save would write it, less what is not the user's edit: the selection and the gizmo
+// settings, a driven car or a car on the rig away from its start, a seated driver's place (its car's),
+// the clock of a running time of day, and a model being dragged in from the asset browser.
+std::string SceneFingerprint(RendererSharedState& state);
+// The scene as it is now is the saved one (after a load, a save or a new scene).
+void MarkSceneSaved(RendererSharedState& state);
+// Whether the scene differs from the one last loaded, saved or started; false while a scene loads.
+// The first call takes the scene as it is for the saved one.
+bool HasUnsavedChanges(RendererSharedState& state);
 }
 }

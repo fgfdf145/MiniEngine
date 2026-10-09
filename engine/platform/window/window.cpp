@@ -91,7 +91,7 @@ void Window::PollEvents(const std::function<void(const SDL_Event&)>& eventHandle
             eventHandler(event);
         }
 
-        if (event.type == SDL_EVENT_QUIT)
+        if (event.type == SDL_EVENT_QUIT && (!m_quitGuard || m_quitGuard()))
         {
             m_running = false;
         }
@@ -101,6 +101,11 @@ void Window::PollEvents(const std::function<void(const SDL_Event&)>& eventHandle
     {
         std::rethrow_exception(std::exchange(m_liveResizeError, nullptr));
     }
+}
+
+void Window::SetQuitGuard(std::function<bool()> guard)
+{
+    m_quitGuard = std::move(guard);
 }
 
 void Window::SetLiveResizeHandler(std::function<void()> handler)
