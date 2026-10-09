@@ -22,7 +22,6 @@
 #include "nvrhi_device.h"
 #include "pipeline_set.h"
 #include "render_frame_packet.h"
-#include "render_pass.h"
 #include "gi_pass.h"
 #include "gpu_timer.h"
 #include "ddgi_debug_pass.h"
@@ -456,7 +455,7 @@ class VulkanRenderer : public EditorRenderBackendBase
         const glm::vec3& ambientLuminance,
         const EnvironmentUniformData& environment,
         float preExposure);
-    void RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData) const;
+    void RecordEditorLayer(nvrhi::ICommandList* commandList, uint32_t imageIndex, uint32_t frameSlot, ImDrawData* drawData) const;
     // Meters the histogram the given frame slot last wrote and moves the frame camera's EV100
     // toward it. Must run after AcquireNextImage has waited on that slot's fence.
     void UpdateAutoExposure(VulkanSceneView& view, Camera& camera, const RenderFramePacket& frame, uint32_t frameSlot);
@@ -609,7 +608,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The scene's minimap picture (SceneMinimap) as ImGui samples it, and the path it was loaded for;
     // the texture is null when the scene has none or its file would not load.
     std::unique_ptr<VulkanTexture> m_minimapTexture;
-    VkDescriptorSet m_minimapBinding = VK_NULL_HANDLE;
+    ImTextureID m_minimapTextureId = ImTextureID_Invalid;
     std::string m_minimapPath;
     // A decode running on a worker thread, and the path it decodes.
     // A decoded HDRI and its SH, prepared together on the worker thread.
@@ -671,7 +670,11 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The scene behind transmissive surfaces, bound in set 0 (VulkanTransmissionCopyPass fills it).
     std::unique_ptr<VulkanTransmissionImage> m_transmissionImage;
     std::unique_ptr<VulkanSwapchain> m_swapchain;
-    std::unique_ptr<VulkanRenderPass> m_renderPass;
+    // The swapchain's images as NVRHI textures, and a framebuffer on each.
+    std::vector<nvrhi::TextureHandle> m_backBuffers;
+    std::vector<nvrhi::FramebufferHandle> m_backBufferFramebuffers;
+    // MINIENGINE_CAPTURE_WINDOW's copy of the last frame's window.
+    mutable nvrhi::StagingTextureHandle m_windowCaptureStaging;
     // The viewport's camera: its targets, passes, frame sets and histories (scene_view.h). Its
     // shadow pass is made with the device; the rest with the swapchain.
     VulkanSceneView m_view;

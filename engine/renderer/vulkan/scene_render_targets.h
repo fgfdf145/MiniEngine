@@ -109,9 +109,8 @@ class SceneRenderTargets
         VkImageView view = VK_NULL_HANDLE;
         // Only created when the target's aspect has more than one bit; see GetSampledView.
         VkImageView sampledView = VK_NULL_HANDLE;
-        // ImGui's view of an sRGB target: the same bytes as UNORM, see DisplayViewFormat.
-        VkImageView imguiView = VK_NULL_HANDLE;
-        VkDescriptorSet imguiBinding = VK_NULL_HANDLE;
+        // What ImGui shows it as: an sRGB target through a UNORM view, the same bytes (DisplayViewFormat).
+        ImTextureID imguiTexture = ImTextureID_Invalid;
         VkDeviceSize bytes = 0;
     };
 

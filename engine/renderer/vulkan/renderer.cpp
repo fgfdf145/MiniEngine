@@ -1,6 +1,8 @@
 ﻿#include "renderer.h"
 
-#include <third_party/imgui_backends/imgui_impl_vulkan.h>
+#include "imgui_nvrhi.h"
+
+#include <stb_image_write.h>
 #include "memory_pool.h"
 #include "viewport_capture.h"
 
@@ -590,12 +592,7 @@ VulkanRenderer::VulkanRenderer(
         m_device->GetGraphicsQueue(),
         m_instance->OptionalExtensionsEnabled() && m_device->OptionalExtensionsEnabled());
     m_imguiLayer = std::make_unique<VulkanImGuiLayer>(
-        GetWindow().GetSDLWindow(),
-        m_instance->GetHandle(),
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_device->GetQueueFamilies().graphicsFamily.value(),
-        m_device->GetGraphicsQueue());
+        GetWindow().GetSDLWindow(), m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     {
         VkPhysicalDeviceFeatures features{};
         vkGetPhysicalDeviceFeatures(m_device->GetPhysicalDevice(), &features);
@@ -805,13 +802,13 @@ void VulkanRenderer::ApplyImGuiTextureRequests(const ImDrawData& drawData)
     {
         return;
     }
-    m_renderThread->RunExclusive([&drawData]()
+    m_renderThread->RunExclusive([this, &drawData]()
                                  {
                                      for (ImTextureData* texture : *drawData.Textures)
                                      {
                                          if (texture->Status != ImTextureStatus_OK)
                                          {
-                                             ImGui_ImplVulkan_UpdateTexture(texture);
+                                             m_imguiLayer->GetRenderer().UpdateTexture(texture);
                                          }
                                      }
                                  });
@@ -1421,7 +1418,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     packet.ui.ReplaceTexture(kSelectionOutlineTextureId, m_view.targets->GetSelectionOutlineTextureId(imageIndex));
     packet.ui.ReplaceTexture(
         kMinimapTextureId,
-        m_minimapBinding != VK_NULL_HANDLE ? static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(m_minimapBinding)) : ImTextureID_Invalid);
+        m_minimapTextureId);
     for (size_t index = 0; index < kCaptureViewTextureIds.size(); ++index)
     {
         const bool quadView = index < m_captureViews.size() && index != m_photoViewIndex;
@@ -1564,7 +1561,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               imguiIo.reads = kImGuiReads;
                                               RecordTransitions(m_view, imguiIo, frame);
 
-                                              RecordEditorLayer(commandBuffer, imageIndex, packet.ui.GetDrawData());
+                                              RecordEditorLayer(frame.commandList, imageIndex, frame.frameSlot, packet.ui.GetDrawData());
                                               m_gpuTimer->Mark("ImGui");
 
                                               if (recordVideoFrame)
@@ -2161,7 +2158,7 @@ void VulkanRenderer::PublishFeedback(const RenderFramePacket& frame)
         m_feedback.outOfMemory = m_outOfMemoryChange;
         m_outOfMemoryChange.reset();
     }
-    m_feedback.minimapLoaded = m_minimapBinding != VK_NULL_HANDLE;
+    m_feedback.minimapLoaded = m_minimapTextureId != ImTextureID_Invalid;
     // A driver query a few times a second is plenty for streaming, which waits a second between steps.
     if (frame.serial >= m_gpuMemory.serial + 10)
     {
@@ -2249,19 +2246,27 @@ void VulkanRenderer::CreateSwapchainResources()
         supportDetails,
         State().renderDebug.hdrOutput);
     m_swapchainHdrRequested = State().renderDebug.hdrOutput;
-    m_renderPass = std::make_unique<VulkanRenderPass>(
-        m_device->GetHandle(),
-        m_swapchain->GetImageFormat(),
-        m_swapchain->GetExtent(),
-        m_swapchain->GetImageViews());
-    m_commandContext = std::make_unique<VulkanCommandContext>(
-        *m_nvrhi,
-        m_device->GetHandle(),
-        m_renderPass->GetFramebuffers().size());
-    m_imguiLayer->CreateOrUpdateVulkanResources(
-        m_renderPass->GetHandle(),
-        static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
-        m_swapchain->IsHdr());
+    // The swapchain's images as NVRHI textures, which ImGui draws into (RecordEditorLayer).
+    m_backBuffers.clear();
+    m_backBufferFramebuffers.clear();
+    for (const VkImage image : m_swapchain->GetImages())
+    {
+        nvrhi::TextureDesc desc;
+        desc.width = m_swapchain->GetExtent().width;
+        desc.height = m_swapchain->GetExtent().height;
+        desc.format = ToNvrhiFormat(m_swapchain->GetImageFormat());
+        desc.dimension = nvrhi::TextureDimension::Texture2D;
+        desc.isRenderTarget = true;
+        desc.debugName = "Swapchain image";
+        nvrhi::TextureHandle texture = m_nvrhi->Get()->createHandleForNativeTexture(nvrhi::ObjectTypes::VK_Image, nvrhi::Object(image), desc);
+        if (!texture)
+        {
+            throw std::runtime_error("Failed to wrap a swapchain image for NVRHI");
+        }
+        m_backBufferFramebuffers.push_back(CreateNvrhiFramebuffer(m_nvrhi->Get(), {texture}));
+        m_backBuffers.push_back(std::move(texture));
+    }
+    m_commandContext = std::make_unique<VulkanCommandContext>(*m_nvrhi, m_device->GetHandle(), m_backBuffers.size());
     if (!State().requestedViewportExtent.IsValid())
     {
         State().requestedViewportExtent = FromVkExtent(m_swapchain->GetExtent());
@@ -2337,12 +2342,10 @@ void VulkanRenderer::DestroySwapchainResources()
     {
         m_view.targets->ReleaseImages();
     }
-    if (m_imguiLayer)
-    {
-        m_imguiLayer->DestroyVulkanResources();
-    }
     m_commandContext.reset();
-    m_renderPass.reset();
+    m_windowCaptureStaging = nullptr;
+    m_backBufferFramebuffers.clear();
+    m_backBuffers.clear();
     m_swapchain.reset();
 }
 
@@ -2574,6 +2577,33 @@ void VulkanRenderer::CaptureViewportNow(const std::filesystem::path& path)
     request.format = m_view.targets->GetFormat(RenderTargetId::SceneLdr);
     request.extent = m_view.targets->GetOutputExtent();
     CaptureImageToPng(request, path);
+    if (const char* windowCapture = std::getenv("MINIENGINE_CAPTURE_WINDOW"); windowCapture != nullptr && windowCapture[0] != 0 && m_windowCaptureStaging)
+    {
+        const nvrhi::TextureDesc& desc = m_windowCaptureStaging->getDesc();
+        size_t rowPitch = 0;
+        const auto* mapped = static_cast<const uint8_t*>(
+            m_nvrhi->Get()->mapStagingTexture(m_windowCaptureStaging, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch));
+        if (mapped != nullptr)
+        {
+            std::vector<uint8_t> pixels(static_cast<size_t>(desc.width) * desc.height * 4);
+            const bool bgra = desc.format == nvrhi::Format::BGRA8_UNORM || desc.format == nvrhi::Format::SBGRA8_UNORM;
+            for (uint32_t row = 0; row < desc.height; ++row)
+            {
+                for (uint32_t x = 0; x < desc.width; ++x)
+                {
+                    const uint8_t* texel = mapped + row * rowPitch + x * 4;
+                    uint8_t* out = &pixels[(static_cast<size_t>(row) * desc.width + x) * 4];
+                    out[0] = bgra ? texel[2] : texel[0];
+                    out[1] = texel[1];
+                    out[2] = bgra ? texel[0] : texel[2];
+                    out[3] = 255;
+                }
+            }
+            m_nvrhi->Get()->unmapStagingTexture(m_windowCaptureStaging);
+            stbi_write_png(windowCapture, static_cast<int>(desc.width), static_cast<int>(desc.height), 4, pixels.data(), static_cast<int>(desc.width) * 4);
+            LOG_INFO("Captured the window to '{}'", windowCapture);
+        }
+    }
     // The EV the render thread drew the frame with; the main thread's camera trails it by a frame.
     LOG_INFO("Captured the viewport to '{}' at EV100 {:.2f}", path.string(), m_view.exposureEv100.value_or(State().camera.exposureEv100));
 }
@@ -2903,9 +2933,7 @@ void VulkanRenderer::UpdateMinimapTexture(const std::string& path)
                 uploadBatch.Flush();
                 // ImGui samples it with its own linear sampler, which clamps: past the picture's edges the
                 // minimap shows the edge's colour (the sea, on a game's radar map) rather than the far side.
-                m_minimapBinding = ImGui_ImplVulkan_AddTexture(
-                    m_minimapTexture->GetImageView(),
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                m_minimapTextureId = m_imguiLayer->GetRenderer().AddTexture(m_minimapTexture->GetNvrhiTexture());
                 LOG_INFO("Minimap: loaded '{}'", file.string());
             }
             catch (const std::exception& error)
@@ -2919,16 +2947,16 @@ void VulkanRenderer::UpdateMinimapTexture(const std::string& path)
 
 void VulkanRenderer::ReleaseMinimapTexture()
 {
-    if (m_minimapBinding == VK_NULL_HANDLE && m_minimapTexture == nullptr)
+    if (m_minimapTextureId == ImTextureID_Invalid && m_minimapTexture == nullptr)
     {
         return;
     }
     // Frames in flight may still sample it; a scene change is rare enough to wait for them.
     m_nvrhi->Get()->waitForIdle();
-    if (m_minimapBinding != VK_NULL_HANDLE)
+    if (m_minimapTextureId != ImTextureID_Invalid)
     {
-        ImGui_ImplVulkan_RemoveTexture(m_minimapBinding);
-        m_minimapBinding = VK_NULL_HANDLE;
+        m_imguiLayer->GetRenderer().RemoveTexture(m_minimapTextureId);
+        m_minimapTextureId = ImTextureID_Invalid;
     }
     m_minimapTexture.reset();
 }
@@ -4312,7 +4340,7 @@ void VulkanRenderer::ApplyRenderContent(
     // Up to the ray scene's content everything may throw and leaves the old content drawable;
     // afterwards nothing does. A change costs what it adds and drops: kept draws keep their slots,
     // textures, material sets and ray materials.
-    if (m_swapchain && m_renderPass && !m_view.passes.empty())
+    if (m_swapchain && !m_backBuffers.empty() && !m_view.passes.empty())
     {
         // Draws new to this content, and the old content's draws it drops (every kept one is in both).
         const uint64_t commit = ++m_commitSerial;
@@ -5114,26 +5142,41 @@ void VulkanRenderer::UpdateAutoExposure(VulkanSceneView& view, Camera& camera, c
     view.hasMeteredExposure = true;
 }
 
-void VulkanRenderer::RecordEditorLayer(VkCommandBuffer commandBuffer, uint32_t imageIndex, ImDrawData* drawData) const
+void VulkanRenderer::RecordEditorLayer(nvrhi::ICommandList* commandList, uint32_t imageIndex, uint32_t frameSlot, ImDrawData* drawData) const
 {
-    // Single color attachment: the ImGui pass has no depth buffer (see VulkanRenderPass).
-    VkClearValue clearValue{};
-    clearValue.color = {{0.04f, 0.05f, 0.08f, 1.0f}};
-
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_renderPass->GetHandle();
-    renderPassInfo.framebuffer = m_renderPass->GetFramebuffers()[imageIndex];
-    renderPassInfo.renderArea.offset = {0, 0};
-    renderPassInfo.renderArea.extent = m_swapchain->GetExtent();
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearValue;
-
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    if (drawData != nullptr)
+    // The swapchain image comes from the presentation engine in no state worth keeping (Vulkan:
+    // UNDEFINED; D3D12: PRESENT); it is cleared, drawn into, and handed back for presenting.
+    nvrhi::ITexture* backBuffer = m_backBuffers.at(imageIndex);
+    commandList->clearState();
+    commandList->beginTrackingTextureState(
+        backBuffer,
+        nvrhi::AllSubresources,
+        m_nvrhi->Get()->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN ? nvrhi::ResourceStates::Common : nvrhi::ResourceStates::Present);
+    ClearTextureFloat(commandList, backBuffer, nvrhi::Color(0.04f, 0.05f, 0.08f, 1.0f));
+    commandList->setTextureState(backBuffer, nvrhi::AllSubresources, nvrhi::ResourceStates::RenderTarget);
+    commandList->commitBarriers();
+    m_imguiLayer->GetRenderer().Render(commandList, m_backBufferFramebuffers.at(imageIndex), drawData, frameSlot, m_swapchain->IsHdr());
+    // MINIENGINE_CAPTURE_WINDOW: the whole window as presented, which CaptureViewportNow writes too.
+    static const char* const windowCapture = std::getenv("MINIENGINE_CAPTURE_WINDOW");
+    if (windowCapture != nullptr && windowCapture[0] != 0)
     {
-        ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer);
+        const nvrhi::TextureDesc& desc = backBuffer->getDesc();
+        if (!m_windowCaptureStaging || m_windowCaptureStaging->getDesc().width != desc.width ||
+            m_windowCaptureStaging->getDesc().height != desc.height || m_windowCaptureStaging->getDesc().format != desc.format)
+        {
+            nvrhi::TextureDesc stagingDesc;
+            stagingDesc.width = desc.width;
+            stagingDesc.height = desc.height;
+            stagingDesc.format = desc.format;
+            stagingDesc.debugName = "Window capture";
+            m_windowCaptureStaging = m_nvrhi->Get()->createStagingTexture(stagingDesc, nvrhi::CpuAccessMode::Read);
+        }
+        commandList->setTextureState(backBuffer, nvrhi::AllSubresources, nvrhi::ResourceStates::CopySource);
+        commandList->commitBarriers();
+        commandList->copyTexture(m_windowCaptureStaging, nvrhi::TextureSlice(), backBuffer, nvrhi::TextureSlice());
     }
-    vkCmdEndRenderPass(commandBuffer);
+    commandList->setTextureState(backBuffer, nvrhi::AllSubresources, nvrhi::ResourceStates::Present);
+    commandList->commitBarriers();
+    commandList->clearState();
 }
 }

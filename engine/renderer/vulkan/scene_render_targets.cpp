@@ -4,7 +4,7 @@
 #include "format_support.h"
 #include "nvrhi_resources.h"
 
-#include <third_party/imgui_backends/imgui_impl_vulkan.h>
+#include "imgui_nvrhi.h"
 
 #include <algorithm>
 #include <array>
@@ -37,19 +37,6 @@ VkFormat DisplayViewFormat(VkFormat format)
         return VK_FORMAT_R8G8B8A8_UNORM;
     default:
         return format;
-    }
-}
-
-template <typename Handle>
-ImTextureID ToImTextureId(Handle handle)
-{
-    if constexpr (std::is_pointer_v<Handle>)
-    {
-        return static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(handle));
-    }
-    else
-    {
-        return static_cast<ImTextureID>(handle);
     }
 }
 }
@@ -174,12 +161,12 @@ uint32_t SceneRenderTargets::ResolveIndex(RenderTargetId target, uint32_t imageI
 
 ImTextureID SceneRenderTargets::GetLdrTextureId(uint32_t imageIndex) const
 {
-    return ToImTextureId(Describe(RenderTargetId::SceneLdr).images.at(imageIndex).imguiBinding);
+    return Describe(RenderTargetId::SceneLdr).images.at(imageIndex).imguiTexture;
 }
 
 ImTextureID SceneRenderTargets::GetSelectionOutlineTextureId(uint32_t imageIndex) const
 {
-    return ToImTextureId(Describe(RenderTargetId::SelectionOutline).images.at(imageIndex).imguiBinding);
+    return Describe(RenderTargetId::SelectionOutline).images.at(imageIndex).imguiTexture;
 }
 
 void SceneRenderTargets::ReleaseImages()
@@ -460,13 +447,7 @@ void SceneRenderTargets::CreateImages(uint32_t swapchainImageCount)
             }
             if (description.bindToImGui)
             {
-                if (imguiFormat != description.format)
-                {
-                    image.imguiView = CreateImageView(image.image, imguiFormat, description.aspect);
-                }
-                image.imguiBinding = ImGui_ImplVulkan_AddTexture(
-                    image.imguiView != VK_NULL_HANDLE ? image.imguiView : image.view,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                image.imguiTexture = ImGuiNvrhiRenderer::Get()->AddTexture(image.texture, ToNvrhiFormat(imguiFormat));
             }
         }
     }
@@ -478,13 +459,9 @@ void SceneRenderTargets::DestroyImages(std::array<TargetDescription, kRenderTarg
     {
         for (TargetImage& image : description.images)
         {
-            if (image.imguiBinding != VK_NULL_HANDLE)
+            if (image.imguiTexture != ImTextureID_Invalid && ImGuiNvrhiRenderer::Get() != nullptr)
             {
-                ImGui_ImplVulkan_RemoveTexture(image.imguiBinding);
-            }
-            if (image.imguiView != VK_NULL_HANDLE)
-            {
-                vkDestroyImageView(m_device, image.imguiView, nullptr);
+                ImGuiNvrhiRenderer::Get()->RemoveTexture(image.imguiTexture);
             }
             if (image.sampledView != VK_NULL_HANDLE)
             {

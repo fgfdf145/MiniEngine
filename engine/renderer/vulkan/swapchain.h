@@ -26,6 +26,7 @@ class VulkanSwapchain
     bool IsHdr() const;
     VkExtent2D GetExtent() const;
     const std::vector<VkImageView>& GetImageViews() const;
+    const std::vector<VkImage>& GetImages() const;
 
     // The extent a swapchain created now would get: the surface's current extent, or the window's
     // pixel size clamped to the surface limits when the surface leaves it to the swapchain.

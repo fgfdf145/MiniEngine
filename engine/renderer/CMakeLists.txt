@@ -163,6 +163,8 @@ add_library(engine_renderer
     vulkan/gbuffer_inputs.h
     vulkan/imgui_layer.cpp
     vulkan/imgui_layer.h
+    vulkan/imgui_nvrhi.cpp
+    vulkan/imgui_nvrhi.h
     vulkan/instance.cpp
     vulkan/instance.h
     vulkan/lighting_pass.cpp
@@ -181,8 +183,6 @@ add_library(engine_renderer
     vulkan/ray_scene.cpp
     vulkan/ray_scene.h
     vulkan/retire_queue.h
-    vulkan/render_pass.cpp
-    vulkan/render_pass.h
     vulkan/render_target_layout.cpp
     vulkan/render_target_layout.h
     vulkan/renderer.cpp
@@ -236,8 +236,6 @@ miniengine_group_target_sources(engine_renderer)
 set(_imgui_backend_sources
     "${PROJECT_SOURCE_DIR}/third_party/imgui_backends/imgui_impl_sdl3.cpp"
     "${PROJECT_SOURCE_DIR}/third_party/imgui_backends/imgui_impl_sdl3.h"
-    "${PROJECT_SOURCE_DIR}/third_party/imgui_backends/imgui_impl_vulkan.cpp"
-    "${PROJECT_SOURCE_DIR}/third_party/imgui_backends/imgui_impl_vulkan.h"
 )
 target_sources(engine_renderer PRIVATE ${_imgui_backend_sources})
 source_group(TREE "${PROJECT_SOURCE_DIR}/third_party" PREFIX "third_party" FILES ${_imgui_backend_sources})

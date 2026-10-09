@@ -46,7 +46,9 @@ VulkanSwapchain::VulkanSwapchain(
     createInfo.imageColorSpace = surfaceFormat.colorSpace;
     createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    // Cleared as a copy destination (NVRHI clears Vulkan images with vkCmdClearColorImage), and read
+    // back for MINIENGINE_CAPTURE_WINDOW.
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     if (queueFamilies.graphicsFamily != queueFamilies.presentFamily)
     {
@@ -104,6 +106,11 @@ VkFormat VulkanSwapchain::GetImageFormat() const
 VkExtent2D VulkanSwapchain::GetExtent() const
 {
     return m_extent;
+}
+
+const std::vector<VkImage>& VulkanSwapchain::GetImages() const
+{
+    return m_images;
 }
 
 const std::vector<VkImageView>& VulkanSwapchain::GetImageViews() const

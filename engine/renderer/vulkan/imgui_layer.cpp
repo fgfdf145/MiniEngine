@@ -1,7 +1,8 @@
 #include "imgui_layer.h"
 
+#include "imgui_nvrhi.h"
+
 #include <third_party/imgui_backends/imgui_impl_sdl3.h>
-#include <third_party/imgui_backends/imgui_impl_vulkan.h>
 
 #include <engine/core/paths/engine_paths.h>
 #include <engine/editor/editor_icons.h>
@@ -17,14 +18,12 @@
 namespace me
 {
 
-// engine/renderer/imgui holds Dear ImGui's own Vulkan and SDL3 backends, unmodified, from the release
-// vcpkg installs (vcpkg.json pins it). A backend from another release may not match imgui.h.
+// third_party/imgui_backends holds Dear ImGui's own SDL3 backend, unmodified, from the release vcpkg
+// installs (vcpkg.json pins it). A backend from another release may not match imgui.h.
 static_assert(IMGUI_VERSION_NUM == 19291, "Update engine/renderer/imgui to the backends of this ImGui release");
 
 namespace
 {
-// Sampled images: the font atlas pages plus every ImGui_ImplVulkan_AddTexture (viewport, minimap).
-constexpr uint32_t kImGuiDescriptorCount = 128;
 // The Claude desktop app's body text, --cds-font-size-body (0.8125rem at its default density).
 constexpr float kDefaultUiFontSizePixels = 13.0f;
 
@@ -287,19 +286,8 @@ void ConfigureImGuiFonts(ImGuiIO& io)
 }
 }
 
-VulkanImGuiLayer::VulkanImGuiLayer(
-    SDL_Window* window,
-    VkInstance instance,
-    VkPhysicalDevice physicalDevice,
-    VkDevice device,
-    uint32_t graphicsQueueFamily,
-    VkQueue graphicsQueue)
+VulkanImGuiLayer::VulkanImGuiLayer(SDL_Window* window, nvrhi::IDevice* device, uint32_t frameSlots)
     : m_window(window),
-      m_instance(instance),
-      m_physicalDevice(physicalDevice),
-      m_device(device),
-      m_graphicsQueueFamily(graphicsQueueFamily),
-      m_graphicsQueue(graphicsQueue),
       m_iniFilePath(BuildImGuiIniPath())
 {
     IMGUI_CHECKVERSION();
@@ -314,25 +302,20 @@ VulkanImGuiLayer::VulkanImGuiLayer(
     ConfigureImGuiStyle();
     ConfigureImGuiFonts(io);
 
-    CreateDescriptorPool();
-
-    if (!ImGui_ImplSDL3_InitForVulkan(m_window))
+    // The platform side knows nothing of the graphics API: one SDL3 backend for Vulkan and D3D12.
+    if (!ImGui_ImplSDL3_InitForOther(m_window))
     {
         throw std::runtime_error("Failed to initialize ImGui SDL3 backend");
     }
+    m_renderer = std::make_unique<ImGuiNvrhiRenderer>(device, frameSlots);
 }
 
 VulkanImGuiLayer::~VulkanImGuiLayer()
 {
-    DestroyVulkanResources();
+    m_renderer.reset();
     ImGui_ImplSDL3_Shutdown();
     ImPlot::DestroyContext();
     ImGui::DestroyContext();
-
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-    }
 }
 
 void VulkanImGuiLayer::ProcessEvent(const SDL_Event& event)
@@ -342,9 +325,8 @@ void VulkanImGuiLayer::ProcessEvent(const SDL_Event& event)
 
 void VulkanImGuiLayer::BeginFrame()
 {
-    // On the main thread while the render thread draws: the Vulkan backend's NewFrame touches no
-    // device state, and the textures ImGui asks for are made by VulkanRenderer::ApplyImGuiTextureRequests.
-    ImGui_ImplVulkan_NewFrame();
+    // On the main thread while the render thread draws; the textures ImGui asks for are made by
+    // VulkanRenderer::ApplyImGuiTextureRequests.
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
 }
@@ -364,104 +346,8 @@ bool VulkanImGuiLayer::WantsMouseCapture() const
     return ImGui::GetIO().WantCaptureMouse;
 }
 
-void VulkanImGuiLayer::CreateOrUpdateVulkanResources(VkRenderPass renderPass, uint32_t imageCount, bool hdrOutput)
+ImGuiNvrhiRenderer& VulkanImGuiLayer::GetRenderer() const
 {
-    DestroyVulkanResources();
-
-    m_hdrFragmentShader.clear();
-    if (hdrOutput)
-    {
-        const std::filesystem::path path = EnginePaths::ShaderRoot() / "imgui_hdr10.frag.spv";
-        std::ifstream file(path, std::ios::binary | std::ios::ate);
-        if (!file)
-        {
-            throw std::runtime_error("Failed to open " + path.string());
-        }
-        const std::streamsize size = file.tellg();
-        m_hdrFragmentShader.resize(static_cast<size_t>(size) / sizeof(uint32_t));
-        file.seekg(0);
-        file.read(reinterpret_cast<char*>(m_hdrFragmentShader.data()), size);
-    }
-
-    ImGui_ImplVulkan_InitInfo initInfo{};
-    initInfo.ApiVersion = VK_API_VERSION_1_3;
-    initInfo.Instance = m_instance;
-    initInfo.PhysicalDevice = m_physicalDevice;
-    initInfo.Device = m_device;
-    initInfo.QueueFamily = m_graphicsQueueFamily;
-    initInfo.Queue = m_graphicsQueue;
-    initInfo.DescriptorPool = m_descriptorPool;
-    initInfo.PipelineInfoMain.RenderPass = renderPass;
-    initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    initInfo.MinImageCount = imageCount;
-    initInfo.ImageCount = imageCount;
-    initInfo.CheckVkResultFn = &VulkanImGuiLayer::CheckVkResult;
-    if (!m_hdrFragmentShader.empty())
-    {
-        initInfo.CustomShaderFragCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        initInfo.CustomShaderFragCreateInfo.codeSize = m_hdrFragmentShader.size() * sizeof(uint32_t);
-        initInfo.CustomShaderFragCreateInfo.pCode = m_hdrFragmentShader.data();
-    }
-
-    // The font atlas is uploaded by the backend itself (ImGuiBackendFlags_RendererHasTextures): glyphs
-    // are rasterised at the size they are drawn, so scaled text and icons stay sharp.
-    if (!ImGui_ImplVulkan_Init(&initInfo))
-    {
-        throw std::runtime_error("Failed to initialize ImGui Vulkan backend");
-    }
-
-    m_vulkanBackendInitialized = true;
-}
-
-void VulkanImGuiLayer::DestroyVulkanResources()
-{
-    if (m_vulkanBackendInitialized)
-    {
-        vkDeviceWaitIdle(m_device);
-        ImGui_ImplVulkan_Shutdown();
-        m_vulkanBackendInitialized = false;
-        RestorePlatformBackend();
-    }
-}
-
-void VulkanImGuiLayer::RestorePlatformBackend()
-{
-    // ImGui_ImplVulkan_Shutdown calls ImGui::DestroyPlatformWindows, which also takes the main
-    // viewport's SDL window ID away. ImGui_ImplSDL3_ProcessEvent then finds no viewport for the
-    // window and drops every mouse and keyboard event, so after a swapchain rebuild (maximize,
-    // fullscreen, resize, HDR) nothing could be clicked. Starting the SDL3 backend again gives the
-    // main viewport its window back.
-    if (ImGui::GetMainViewport()->PlatformHandle != nullptr)
-    {
-        return;
-    }
-    ImGui_ImplSDL3_Shutdown();
-    if (!ImGui_ImplSDL3_InitForVulkan(m_window))
-    {
-        throw std::runtime_error("Failed to initialize ImGui SDL3 backend");
-    }
-}
-
-void VulkanImGuiLayer::CreateDescriptorPool()
-{
-    // ImGui binds the image (set 0) and the sampler (set 1, its linear and nearest samplers) separately.
-    const std::array<VkDescriptorPoolSize, 2> poolSizes = {{
-        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kImGuiDescriptorCount},
-        {VK_DESCRIPTOR_TYPE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE},
-    }};
-
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    poolInfo.maxSets = kImGuiDescriptorCount + IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-    poolInfo.pPoolSizes = poolSizes.data();
-
-    CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create ImGui descriptor pool");
-}
-
-void VulkanImGuiLayer::CheckVkResult(VkResult result)
-{
-    CheckVulkan(result, "ImGui Vulkan backend call failed");
+    return *m_renderer;
 }
 }
