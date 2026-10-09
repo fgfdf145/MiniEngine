@@ -1,7 +1,7 @@
-# Overlay rationale: the engine uses NVRHI's Vulkan backend only
-# (docs/design/2026-10-08-nvrhi-backend-design.md). Upstream's port (same commit) builds the D3D11 and
-# D3D12 backends on Windows and depends on directx-headers, is missing from this project's
-# builtin-baseline, and does not support macOS or x86. With a dynamic triplet NVRHI is one shared
+# Overlay rationale: the engine uses NVRHI's Vulkan backend everywhere and its D3D12 backend on Windows
+# (docs/design/2026-10-08-nvrhi-backend-design.md, docs/design/2026-10-09-d3d12-backend-design.md).
+# Upstream's port (same commit) also builds D3D11, is missing from this project's builtin-baseline,
+# and does not support macOS or x86. With a dynamic triplet NVRHI is one shared
 # library that owns vulkan.hpp's dispatcher (initialised in nvrhi::vulkan::createDevice), so the
 # engine's own Vulkan headers never have to match NVRHI's.
 vcpkg_from_github(
@@ -31,7 +31,15 @@ vcpkg_from_github(
         # variable-count last array sized per table (resizeDescriptorTable), and
         # update-unused-while-pending, so a streamed map can write new slots while frames read others.
         bindless-table-set-and-variable-count.patch
+        # The D3D12 backend honours SamplerDesc's comparison and LOD clamps too (see the first patch).
+        d3d12-sampler-lod-and-comparison.patch
 )
+
+if(VCPKG_TARGET_IS_WINDOWS)
+    set(NVRHI_DX12 ON)
+else()
+    set(NVRHI_DX12 OFF)
+endif()
 
 if(VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")
     set(NVRHI_SHARED ON)
@@ -48,7 +56,7 @@ vcpkg_cmake_configure(
         -DNVRHI_WITH_VULKAN=ON
         -DNVRHI_WITH_VALIDATION=ON
         -DNVRHI_WITH_DX11=OFF
-        -DNVRHI_WITH_DX12=OFF
+        -DNVRHI_WITH_DX12=${NVRHI_DX12}
         -DNVRHI_WITH_NVAPI=OFF
         -DNVRHI_WITH_AFTERMATH=OFF
         -DNVRHI_WITH_RTXMU=OFF

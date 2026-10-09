@@ -1,7 +1,8 @@
 {
   "name": "nvrhi",
   "version-date": "2026-02-26",
-  "description": "NVIDIA Rendering Hardware Interface, Vulkan backend only",
+  "port-version": 1,
+  "description": "NVIDIA Rendering Hardware Interface, Vulkan and (on Windows) D3D12 backends",
   "homepage": "https://github.com/NVIDIA-RTX/NVRHI",
   "license": "MIT",
   "supports": "!uwp & !xbox",
@@ -13,6 +14,10 @@
     {
       "name": "vcpkg-cmake-config",
       "host": true
+    },
+    {
+      "name": "directx-headers",
+      "platform": "windows"
     },
     "vulkan-headers"
   ]

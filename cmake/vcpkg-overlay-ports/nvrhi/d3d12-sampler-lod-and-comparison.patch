@@ -1,0 +1,22 @@
+diff --git a/src/d3d12/d3d12-device.cpp b/src/d3d12/d3d12-device.cpp
+index ea6d14c..19acf99 100644
+--- a/src/d3d12/d3d12-device.cpp
++++ b/src/d3d12/d3d12-device.cpp
+@@ -375,14 +375,14 @@ namespace nvrhi::d3d12
+         m_d3d12desc.MipLODBias = m_Desc.mipBias;
+         m_d3d12desc.MaxAnisotropy = std::max((UINT)m_Desc.maxAnisotropy, 1U);
+         m_d3d12desc.ComparisonFunc = desc.reductionType == SamplerReductionType::Comparison
+-            ? D3D12_COMPARISON_FUNC_LESS
++            ? convertComparisonFunc(desc.comparisonFunc)
+             : D3D12_COMPARISON_FUNC_NEVER;
+         m_d3d12desc.BorderColor[0] = m_Desc.borderColor.r;
+         m_d3d12desc.BorderColor[1] = m_Desc.borderColor.g;
+         m_d3d12desc.BorderColor[2] = m_Desc.borderColor.b;
+         m_d3d12desc.BorderColor[3] = m_Desc.borderColor.a;
+-        m_d3d12desc.MinLOD = 0;
+-        m_d3d12desc.MaxLOD = D3D12_FLOAT32_MAX;
++        m_d3d12desc.MinLOD = desc.minLod;
++        m_d3d12desc.MaxLOD = desc.maxLod;
+     }
+     
+     void Sampler::createDescriptor(size_t descriptor) const
