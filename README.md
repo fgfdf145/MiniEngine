@@ -165,7 +165,9 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
 --photo <file.png>  场景就绪后用视口相机拍一张照片（Photo Mode），照片有自己的分辨率，视口分辨率不变；
                     预热帧数渲染完后保存，--frames 要比预热帧数多
 --photo-size <宽>x<高>  照片分辨率（默认取 Window > Photo Mode 保存的设置，最大 8192）
---photo-warmup <n>  照片视图保存前渲染的帧数（TAA 等历史收敛，默认取 Photo Mode 设置，初始 32）
+--photo-warmup <n>  照片视图保存前渲染的帧数（TAA 等历史收敛，默认取 Photo Mode 设置，初始 32）；分块时每块各渲染这么多帧
+--photo-at <n>      在 --frames 计数的第 n 帧按快门（默认 1）；照片沿用按快门时视口的曝光，自动曝光要先收敛
+--photo-max-view-pixels <n>  单个视图超过 n 像素就分块（默认按显存空闲自动决定，最多 3840x2160），用于对比分块和整张
 --no-audio          不打开音频设备（--frames 的脚本运行本来就不打开）
 --priority <级别>    本次运行的进程优先级：below-normal、normal、above-normal 或 high（默认取 Preferences > Process，初始为 high）
 --cpus <核心>        本次运行可用的逻辑处理器：all、performance（混合架构的 P 核）或列表如 0,2,4-7；任务系统的工作线程数随之取核心数减二

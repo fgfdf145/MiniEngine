@@ -1,5 +1,6 @@
-// The Photo Mode panel drawn headless: idle with room for the photo, idle with too little GPU memory
-// for it, while a photo renders (its preview stood in for by a test card) and after one was saved.
+// The Photo Mode panel drawn headless: idle with room for the photo, an 8K photo planned in tiles,
+// while a tiled photo renders (its preview stood in for by a test card), while it is written, and
+// after one was saved.
 // Drawing each checks the panel's disabled scopes stay balanced and that its button asks for a
 // photo; with MINIENGINE_UI_SNAPSHOT_DIR set each is written there as a PNG to look at.
 
@@ -146,16 +147,22 @@ void TestPanel()
 
     fixture.state.photoMode.width = 7680;
     fixture.state.photoMode.height = 4320;
-    fixture.Draw("photo_mode_too_large.png");
+    fixture.Draw("photo_mode_8k_tiles.png");
 
-    fixture.state.photoMode.width = 3840;
-    fixture.state.photoMode.height = 2160;
     fixture.state.photoStatus.rendering = true;
-    fixture.state.photoStatus.framesRendered = 12;
-    fixture.state.photoStatus.framesTotal = 32;
-    fixture.state.photoStatus.width = 3840;
-    fixture.state.photoStatus.height = 2160;
+    fixture.state.photoStatus.tile = 3;
+    fixture.state.photoStatus.tileCount = 12;
+    fixture.state.photoStatus.framesRendered = 2 * 32 + 10;
+    fixture.state.photoStatus.framesTotal = 12 * 32;
+    fixture.state.photoStatus.width = 7680;
+    fixture.state.photoStatus.height = 4320;
+    fixture.state.photoStatus.viewWidth = 2176;
+    fixture.state.photoStatus.viewHeight = 1696;
     Require(fixture.Draw("photo_mode_rendering.png") == 1, "the preview shows the photo's view while it renders");
+
+    fixture.state.photoStatus.rendering = false;
+    fixture.state.photoStatus.saving = true;
+    Require(fixture.Draw("photo_mode_saving.png") == 0, "no preview while the PNG is written");
 
     fixture.state.photoStatus = PhotoStatus{};
     fixture.state.photoStatus.message = "Saved 3840 x 2160 to C:/Project/MiniEngine/captures/photo_20261009_161000.png";

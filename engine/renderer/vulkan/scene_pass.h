@@ -117,6 +117,9 @@ struct ScenePassFrameContext
     TemporalHistoryFrame ssrHistory;
     // The aperture the glare is diffracted through, from this frame's EV (see GlareFNumberFromEv100).
     float glareFNumber = kGlareMinFNumber;
+    // The height in pixels of the image the sensor's height maps to, which sets the glare's pixel
+    // pitch: the output's, or the whole photo's for a view that renders one tile of it.
+    uint32_t glareImageHeight = 0;
     // Linear Rec.709 to linear Rec.709, applied before tone mapping (see WhiteBalanceMatrix).
     glm::mat3 whiteBalance{1.0f};
     // The swapchain is HDR10: the tone mapping pass uses GT7's HDR curve for hdrPeakNits and writes

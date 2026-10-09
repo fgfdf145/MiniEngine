@@ -19,5 +19,12 @@ struct SceneCaptureView
     RenderExtent extent{};
     // Photo Mode's view: not a quad camera, and the one a photo is read back from.
     bool photo = false;
+    // The whole image when this view renders one tile of it (a Photo Mode tile, its matrices an
+    // off-centre part of the whole's frustum): its shadow cascades are fitted to the whole's frustum
+    // and its glare spread at the whole's pixel pitch, so the tiles agree. Empty for a view that is
+    // its own image.
+    RenderExtent wholeExtent{};
+    // The view starts over this frame (a new tile): its temporal histories are dropped.
+    bool resetHistory = false;
 };
 }

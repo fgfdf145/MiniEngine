@@ -212,7 +212,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     bool WantsKeyboardCapture() const override;
     void FlushVideoFrames() override;
     void FlushQuadVideoFrames() override;
-    void CapturePhotoView(const std::filesystem::path& path) override;
+    PhotoViewPicture ReadPhotoView() override;
     void RunWithRenderIdle(const std::function<void()>& work) override;
 
   private:
@@ -277,7 +277,8 @@ class VulkanRenderer : public EditorRenderBackendBase
         const ViewportMatrices& viewportMatrices,
         bool viewport,
         const SharedFrameState& shared,
-        RenderFramePacket& packet);
+        RenderFramePacket& packet,
+        RenderExtent wholeExtent = {});
     // The camera block's environment for a camera at cameraPosition, its clouds' march jitter at
     // taaFrameIndex.
     EnvironmentUniformData BuildViewEnvironment(
@@ -289,7 +290,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The device-local memory now (docs/design/2026-10-07-vram-budget-design.md). Render thread.
     GpuMemoryReport MeasureGpuMemory(const RenderFramePacket& frame) const;
     void CaptureViewportNow(const std::filesystem::path& path);
-    void CapturePhotoViewNow(const std::filesystem::path& path);
+    PhotoViewPicture ReadPhotoViewNow();
     // In ddgi_reference_capture.cpp.
     void CaptureDdgiReferenceNow(const DdgiReferenceRequest& reference);
     void LogFrameTimingsNow() const;

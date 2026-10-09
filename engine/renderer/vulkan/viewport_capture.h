@@ -32,6 +32,9 @@ struct ImageCaptureRequest
 // std::runtime_error on failure.
 void CaptureImageToPng(const ImageCaptureRequest& request, const std::filesystem::path& path);
 
+// The same image as RGBA8 bytes, rows from the top, alpha opaque, as CaptureImageToPng writes them.
+std::vector<uint8_t> ReadImageRgba8(const ImageCaptureRequest& request);
+
 // Copies a half-float RGBA image's first array layer to host memory, row by row from the top. Same
 // requirements.
 std::vector<glm::vec4> ReadImageHalfFloats(const ImageCaptureRequest& request);
