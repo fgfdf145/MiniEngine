@@ -33,6 +33,9 @@ P = dict(
     HANGER_STEP=10.0,
     PIER_STEP=40.0,
     WATER_Z=-3.0,
+    FOOT_Z=-40.0,     # bottom of the ramp piers and anchorages: they stand in water or ground as deep as
+                      # this under the road ends, so a bridge placed with its ends well above the sea (or
+                      # two joined end to end out at sea) still stands on something; on land it is buried
     PREVIEW_ENV=True, # simple land + water for preview (separate collection)
 )
 EXPORT_DIR = ""       # set, or pass after "--" on the command line, to export glTF
@@ -426,7 +429,7 @@ def build():
     for xa, d in ((XR1, -1), (XS2, 1)):
         zd = deck_z(xa)
         x0, x1 = (xa - 10, xa) if d < 0 else (xa, xa + 10)
-        mb.box(x0, x1, -E - 3, E + 3, -2, zd - DD, M['concrete'])                    # base under deck
+        mb.box(x0, x1, -E - 3, E + 3, P['FOOT_Z'], zd - DD, M['concrete'])            # base under deck
         for sg in (-1, 1):
             y0, y1 = sorted((sg * E, sg * (E + 3)))
             mb.box(x0, x1, y0, y1, zd - DD, zd + 3.5, M['concrete'])                 # cable housing
@@ -436,11 +439,12 @@ def build():
     while x < XR1 - 12: piers.append(x); x += P['PIER_STEP']
     piers += [L - p for p in piers]
     for xp in piers:
+        # Every pier, the low ones near the ends too: on land they are buried, out at sea they carry
+        # the deck where two bridges meet.
         zb = deck_z(xp) - DD
-        if zb < 1.5: continue
         mb.box(xp - 1.0, xp + 1.0, -E + 0.5, E - 0.5, zb - 1.2, zb, M['concrete'])
         for yc in (-5.0, 5.0):
-            mb.box(xp - 0.7, xp + 0.7, yc - 0.7, yc + 0.7, -1.0, zb - 1.2, M['concrete'])
+            mb.box(xp - 0.7, xp + 0.7, yc - 0.7, yc + 0.7, P['FOOT_Z'], zb - 1.2, M['concrete'])
     mb.build("Bridge_Supports", coll, root)
 
     # --- main cables
