@@ -1,295 +1,224 @@
 #include "upload_batch.h"
 
-#include <algorithm>
-#include <cstring>
 #include <stdexcept>
+#include <utility>
 
 namespace me
 {
 
-VulkanUploadBatch::VulkanUploadBatch(VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue)
+VulkanImmediateCommands::VulkanImmediateCommands(VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue)
     : m_device(device), m_graphicsQueue(graphicsQueue)
 {
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
     poolInfo.queueFamilyIndex = graphicsQueueFamily;
-    CheckVulkan(vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool), "Failed to create upload batch command pool");
+    CheckVulkan(vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool), "Failed to create an immediate command pool");
 
     VkCommandBufferAllocateInfo allocateInfo{};
     allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocateInfo.commandPool = m_commandPool;
     allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocateInfo.commandBufferCount = 1;
-    CheckVulkan(vkAllocateCommandBuffers(m_device, &allocateInfo, &m_commandBuffer), "Failed to allocate upload batch command buffer");
-
+    CheckVulkan(vkAllocateCommandBuffers(m_device, &allocateInfo, &m_commandBuffer), "Failed to allocate an immediate command buffer");
     BeginRecording();
 }
 
-VulkanUploadBatch::VulkanUploadBatch(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue)
-    : VulkanUploadBatch(device, graphicsQueueFamily, graphicsQueue)
+VulkanImmediateCommands::~VulkanImmediateCommands()
 {
-    m_physicalDevice = physicalDevice;
-}
-
-bool VulkanUploadBatch::CanStage() const
-{
-    return m_physicalDevice != VK_NULL_HANDLE;
-}
-
-VkDeviceSize VulkanUploadBatch::StagedBytes() const
-{
-    return m_stagedBytes;
-}
-
-VulkanUploadBatch::StagingSlice VulkanUploadBatch::Stage(const void* data, VkDeviceSize size, VkDeviceSize alignment)
-{
-    if (!CanStage())
-    {
-        throw std::logic_error("VulkanUploadBatch::Stage needs the batch made with a physical device");
-    }
-    const VkDeviceSize mask = std::max<VkDeviceSize>(alignment, 1) - 1;
-    StagingChunk* chunk = m_stagingChunks.empty() ? nullptr : &m_stagingChunks.back();
-    VkDeviceSize offset = chunk != nullptr ? (chunk->used + mask) & ~mask : 0;
-    if ((chunk == nullptr || offset + size > chunk->size) && size <= kStagingChunkBytes && m_chunkPool != nullptr)
-    {
-        StagingChunk pooled;
-        if (m_chunkPool->Take(pooled))
-        {
-            m_stagingChunks.push_back(pooled);
-            chunk = &m_stagingChunks.back();
-            offset = 0;
-        }
-    }
-    if (chunk == nullptr || offset + size > chunk->size)
-    {
-        StagingChunk created;
-        created.size = std::max(kStagingChunkBytes, size);
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = created.size;
-        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &created.buffer), "Failed to create a staging chunk");
-        // Tracked before anything else can throw, as TrackStagingResource asks.
-        m_stagingChunks.push_back(created);
-        StagingChunk& added = m_stagingChunks.back();
-        VkMemoryRequirements requirements{};
-        vkGetBufferMemoryRequirements(m_device, added.buffer, &requirements);
-        VkPhysicalDeviceMemoryProperties properties{};
-        vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &properties);
-        constexpr VkMemoryPropertyFlags kWanted = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-        uint32_t typeIndex = UINT32_MAX;
-        for (uint32_t index = 0; index < properties.memoryTypeCount; ++index)
-        {
-            if ((requirements.memoryTypeBits & (1u << index)) != 0 && (properties.memoryTypes[index].propertyFlags & kWanted) == kWanted)
-            {
-                typeIndex = index;
-                break;
-            }
-        }
-        if (typeIndex == UINT32_MAX)
-        {
-            throw std::runtime_error("No host-visible memory for staging");
-        }
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = typeIndex;
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &added.memory), "Failed to allocate a staging chunk");
-        CheckVulkan(vkBindBufferMemory(m_device, added.buffer, added.memory, 0), "Failed to bind a staging chunk");
-        void* mapped = nullptr;
-        CheckVulkan(vkMapMemory(m_device, added.memory, 0, added.size, 0, &mapped), "Failed to map a staging chunk");
-        added.mapped = static_cast<unsigned char*>(mapped);
-        chunk = &added;
-        offset = 0;
-    }
-    std::memcpy(chunk->mapped + offset, data, static_cast<size_t>(size));
-    chunk->used = offset + size;
-    m_stagedBytes += size;
-    return StagingSlice{chunk->buffer, offset};
-}
-
-void VulkanUploadBatch::ReleaseStagingChunks()
-{
-    for (const StagingChunk& chunk : m_stagingChunks)
-    {
-        if (m_chunkPool != nullptr && chunk.size == kStagingChunkBytes && chunk.mapped != nullptr && m_chunkPool->Give(chunk))
-        {
-            continue;
-        }
-        if (chunk.mapped != nullptr)
-        {
-            vkUnmapMemory(m_device, chunk.memory);
-        }
-        vkDestroyBuffer(m_device, chunk.buffer, nullptr);
-        vkFreeMemory(m_device, chunk.memory, nullptr);
-    }
-    m_stagingChunks.clear();
-    m_stagedBytes = 0;
-}
-
-VulkanUploadBatch::~VulkanUploadBatch()
-{
-    if (m_fence != VK_NULL_HANDLE)
-    {
-        // Submitted without a wait: its staging is read until the fence signals.
-        vkWaitForFences(m_device, 1, &m_fence, VK_TRUE, UINT64_MAX);
-        vkDestroyFence(m_device, m_fence, nullptr);
-    }
-    ReleaseStagingChunks();
-    // Only reached with resources still tracked when an upload was abandoned without a final
-    // Flush(). Their copies were recorded but never submitted, so nothing on the GPU reads them.
-    for (const auto& [stagingBuffer, stagingMemory] : m_stagingResources)
-    {
-        vkDestroyBuffer(m_device, stagingBuffer, nullptr);
-        vkFreeMemory(m_device, stagingMemory, nullptr);
-    }
-
+    // Whatever was recorded since the last Flush never reached the GPU.
     if (m_commandPool != VK_NULL_HANDLE)
     {
         vkDestroyCommandPool(m_device, m_commandPool, nullptr);
     }
 }
 
-VkCommandBuffer VulkanUploadBatch::GetCommandBuffer()
+VkCommandBuffer VulkanImmediateCommands::GetCommandBuffer()
 {
     m_hasCommands = true;
     return m_commandBuffer;
 }
 
-void VulkanUploadBatch::TrackStagingResource(VkBuffer buffer, VkDeviceMemory memory)
-{
-    m_stagingResources.emplace_back(buffer, memory);
-}
-
-void VulkanUploadBatch::BeginRecording()
+void VulkanImmediateCommands::BeginRecording()
 {
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    CheckVulkan(vkBeginCommandBuffer(m_commandBuffer, &beginInfo), "Failed to begin upload batch command buffer");
+    CheckVulkan(vkBeginCommandBuffer(m_commandBuffer, &beginInfo), "Failed to begin an immediate command buffer");
+}
+
+void VulkanImmediateCommands::Flush()
+{
+    if (!m_hasCommands)
+    {
+        return;
+    }
+    CheckVulkan(vkEndCommandBuffer(m_commandBuffer), "Failed to end an immediate command buffer");
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &m_commandBuffer;
+    CheckVulkan(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE), "Failed to submit immediate commands");
+    CheckVulkan(vkQueueWaitIdle(m_graphicsQueue), "Failed to wait for immediate commands");
+    m_hasCommands = false;
+    CheckVulkan(vkResetCommandPool(m_device, m_commandPool, 0), "Failed to reset an immediate command pool");
+    BeginRecording();
+}
+
+GpuUploadPool::GpuUploadPool(nvrhi::IDevice* device)
+    : m_device(device)
+{
+}
+
+nvrhi::CommandListHandle GpuUploadPool::Take()
+{
+    {
+        const std::lock_guard lock(m_mutex);
+        if (!m_lists.empty())
+        {
+            nvrhi::CommandListHandle list = std::move(m_lists.back());
+            m_lists.pop_back();
+            return list;
+        }
+    }
+    nvrhi::CommandListParameters parameters;
+    parameters.setUploadChunkSize(kChunkBytes);
+    nvrhi::CommandListHandle list = m_device->createCommandList(parameters);
+    if (!list)
+    {
+        throw std::runtime_error("Failed to create an upload command list");
+    }
+    return list;
+}
+
+void GpuUploadPool::Give(nvrhi::CommandListHandle list)
+{
+    const std::lock_guard lock(m_mutex);
+    if (m_lists.size() < kMaxLists)
+    {
+        m_lists.push_back(std::move(list));
+    }
+}
+
+VulkanUploadBatch::VulkanUploadBatch(nvrhi::IDevice* device, GpuUploadPool* pool)
+    : m_device(device), m_pool(pool)
+{
+}
+
+VulkanUploadBatch::~VulkanUploadBatch()
+{
+    if (m_submitted)
+    {
+        // Submitted without a wait: its staging is read until the query signals.
+        m_device->waitEventQuery(m_query);
+        if (m_pool != nullptr)
+        {
+            m_pool->Give(std::move(m_commandList));
+        }
+        return;
+    }
+    if (m_open)
+    {
+        // Abandoned: the list is closed and dropped, never executed (and never lent out again).
+        m_commandList->close();
+    }
+    else if (m_commandList && m_pool != nullptr)
+    {
+        m_pool->Give(std::move(m_commandList));
+    }
+}
+
+nvrhi::ICommandList* VulkanUploadBatch::GetCommandList()
+{
+    if (m_submitted)
+    {
+        throw std::logic_error("An upload batch submitted without a wait takes no more commands");
+    }
+    if (!m_open)
+    {
+        if (!m_commandList)
+        {
+            if (m_pool != nullptr)
+            {
+                m_commandList = m_pool->Take();
+            }
+            else
+            {
+                nvrhi::CommandListParameters parameters;
+                parameters.setUploadChunkSize(GpuUploadPool::kChunkBytes);
+                m_commandList = m_device->createCommandList(parameters);
+                if (!m_commandList)
+                {
+                    throw std::runtime_error("Failed to create an upload command list");
+                }
+            }
+        }
+        m_commandList->open();
+        m_open = true;
+    }
+    m_hasCommands = true;
+    return m_commandList;
+}
+
+void VulkanUploadBatch::WriteBuffer(nvrhi::IBuffer* buffer, const void* data, uint64_t byteSize, uint64_t offset)
+{
+    GetCommandList()->writeBuffer(buffer, data, static_cast<size_t>(byteSize), offset);
+    m_stagedBytes += byteSize;
+}
+
+void VulkanUploadBatch::WriteTexture(nvrhi::ITexture* texture, uint32_t mipLevel, const void* data, uint64_t rowPitch, uint64_t byteSize)
+{
+    GetCommandList()->writeTexture(texture, 0, mipLevel, data, static_cast<size_t>(rowPitch), static_cast<size_t>(byteSize));
+    m_stagedBytes += byteSize;
+}
+
+uint64_t VulkanUploadBatch::StagedBytes() const
+{
+    return m_stagedBytes;
 }
 
 void VulkanUploadBatch::Flush()
 {
-    if (!m_hasCommands && m_stagingResources.empty() && m_stagingChunks.empty())
+    if (!m_open)
     {
         return;
     }
-
-    // One submit + one wait for everything recorded since the last Flush(), instead of a
-    // submit-and-stall per resource. This is what makes loading models with hundreds of
-    // submeshes/textures (e.g. Sponza) fast: per-resource vkQueueWaitIdle serializes the
-    // whole upload into one GPU round-trip after another.
-    CheckVulkan(vkEndCommandBuffer(m_commandBuffer), "Failed to end upload batch command buffer");
-
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &m_commandBuffer;
-    CheckVulkan(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE), "Failed to submit upload batch");
-    CheckVulkan(vkQueueWaitIdle(m_graphicsQueue), "Failed to wait for upload batch");
-
-    for (const auto& [stagingBuffer, stagingMemory] : m_stagingResources)
-    {
-        vkDestroyBuffer(m_device, stagingBuffer, nullptr);
-        vkFreeMemory(m_device, stagingMemory, nullptr);
-    }
-    m_stagingResources.clear();
-    ReleaseStagingChunks();
+    // One submit and one wait for everything recorded since the last Flush, instead of a
+    // submit-and-stall per resource.
+    m_commandList->close();
+    m_open = false;
+    m_device->executeCommandList(m_commandList);
+    m_device->waitForIdle();
     m_hasCommands = false;
-
-    CheckVulkan(vkResetCommandPool(m_device, m_commandPool, 0), "Failed to reset upload batch command pool");
-    BeginRecording();
+    m_stagedBytes = 0;
 }
 
 void VulkanUploadBatch::SubmitWithoutWait()
 {
-    if (m_fence != VK_NULL_HANDLE)
+    if (m_submitted)
     {
-        throw std::logic_error("A VulkanUploadBatch is submitted without a wait only once");
+        throw std::logic_error("An upload batch is submitted without a wait only once");
     }
-    // The uploads' own barriers name the stages they expect (a texture's, the fragment shader), and
-    // Flush's wait covered the rest; here every later command, of any stage, waits for the copies and
-    // layout changes and sees what they wrote.
-    VkMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-    vkCmdPipelineBarrier(
-        m_commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-    CheckVulkan(vkEndCommandBuffer(m_commandBuffer), "Failed to end upload batch command buffer");
-
-    VkFenceCreateInfo fenceInfo{};
-    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    CheckVulkan(vkCreateFence(m_device, &fenceInfo, nullptr, &m_fence), "Failed to create an upload batch fence");
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &m_commandBuffer;
-    const VkResult submitted = vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_fence);
-    if (submitted != VK_SUCCESS)
+    if (!m_open)
     {
-        // Nothing reached the GPU: the destructor must not wait for it.
-        vkDestroyFence(m_device, m_fence, nullptr);
-        m_fence = VK_NULL_HANDLE;
-        CheckVulkan(submitted, "Failed to submit upload batch");
+        return;
     }
+    m_commandList->close();
+    m_open = false;
+    m_device->executeCommandList(m_commandList);
+    m_query = m_device->createEventQuery();
+    m_device->setEventQuery(m_query, nvrhi::CommandQueue::Graphics);
+    m_submitted = true;
     m_hasCommands = false;
 }
 
 bool VulkanUploadBatch::IsComplete() const
 {
-    return m_fence == VK_NULL_HANDLE || vkGetFenceStatus(m_device, m_fence) == VK_SUCCESS;
+    return !m_submitted || m_device->pollEventQuery(m_query);
 }
 
 bool VulkanUploadBatch::IsEmpty() const
 {
-    return !m_hasCommands && m_stagingResources.empty() && m_stagingChunks.empty();
-}
-
-void VulkanUploadBatch::SetChunkPool(VulkanStagingChunkPool* pool)
-{
-    m_chunkPool = pool;
-}
-
-VulkanStagingChunkPool::VulkanStagingChunkPool(VkDevice device)
-    : m_device(device)
-{
-}
-
-VulkanStagingChunkPool::~VulkanStagingChunkPool()
-{
-    for (const VulkanStagingChunk& chunk : m_chunks)
-    {
-        vkUnmapMemory(m_device, chunk.memory);
-        vkDestroyBuffer(m_device, chunk.buffer, nullptr);
-        vkFreeMemory(m_device, chunk.memory, nullptr);
-    }
-}
-
-bool VulkanStagingChunkPool::Take(VulkanStagingChunk& chunk)
-{
-    const std::lock_guard lock(m_mutex);
-    if (m_chunks.empty())
-    {
-        return false;
-    }
-    chunk = m_chunks.back();
-    chunk.used = 0;
-    m_chunks.pop_back();
-    return true;
-}
-
-bool VulkanStagingChunkPool::Give(const VulkanStagingChunk& chunk)
-{
-    const std::lock_guard lock(m_mutex);
-    if (m_chunks.size() >= kMaxChunks)
-    {
-        return false;
-    }
-    m_chunks.push_back(chunk);
-    return true;
+    return !m_hasCommands;
 }
 }

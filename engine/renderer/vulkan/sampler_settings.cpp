@@ -55,6 +55,16 @@ nvrhi::SamplerDesc BuildClampSamplerDesc(bool linear)
 }
 
 // Mixed radix over the fields, mipFilter fastest, so the default TextureSampler (every field 0) is 0.
+uint32_t VulkanSamplerCache::IndexOf(const TextureSampler& sampler)
+{
+    uint32_t index = static_cast<uint32_t>(sampler.wrapS);
+    index = index * 3u + static_cast<uint32_t>(sampler.wrapT);
+    index = index * 2u + static_cast<uint32_t>(sampler.magFilter);
+    index = index * 2u + static_cast<uint32_t>(sampler.minFilter);
+    index = index * 3u + static_cast<uint32_t>(sampler.mipFilter);
+    return index;
+}
+
 TextureSampler VulkanSamplerCache::SamplerAt(uint32_t index)
 {
     if (index >= kSamplerCount)

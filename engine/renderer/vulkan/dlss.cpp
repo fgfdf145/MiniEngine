@@ -462,7 +462,7 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
         create.InTargetHeight = output.height;
         create.InPerfQualityValue = ToPerfQuality(mode);
         create.InFeatureCreateFlags = createFlags;
-        VulkanUploadBatch batch(m_ngx->device, m_ngx->queueFamily, m_ngx->queue);
+        VulkanImmediateCommands batch(m_ngx->device, m_ngx->queueFamily, m_ngx->queue);
         const NVSDK_NGX_Result result =
             NGX_VULKAN_CREATE_DLSSD_EXT1(m_ngx->device, batch.GetCommandBuffer(), 1, 1, &f.feature, m_ngx->parameters, &create);
         batch.Flush();
@@ -501,7 +501,7 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
     create.InFeatureCreateFlags = createFlags;
     SetRenderPresetHints(m_ngx->parameters, preset);
 
-    VulkanUploadBatch batch(m_ngx->device, m_ngx->queueFamily, m_ngx->queue);
+    VulkanImmediateCommands batch(m_ngx->device, m_ngx->queueFamily, m_ngx->queue);
     const NVSDK_NGX_Result result =
         NGX_VULKAN_CREATE_DLSS_EXT1(m_ngx->device, batch.GetCommandBuffer(), 1, 1, &f.feature, m_ngx->parameters, &create);
     batch.Flush();

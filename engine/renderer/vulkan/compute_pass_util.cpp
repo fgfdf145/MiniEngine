@@ -6,6 +6,7 @@
 
 #include <engine/core/paths/engine_paths.h>
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace me
@@ -326,32 +327,81 @@ nvrhi::ITexture* HistoryImagePair::GetTexture(uint32_t index) const
     return m_images.at(index).texture;
 }
 
-void HistoryImagePair::RecordBarrier(VkCommandBuffer commandBuffer, bool historyValid) const
+namespace
 {
-    std::array<VkImageMemoryBarrier, 2> barriers{};
-    for (size_t index = 0; index < barriers.size(); ++index)
+struct MipDownsampleConstants
+{
+    uint32_t targetWidth = 0;
+    uint32_t targetHeight = 0;
+    uint32_t padding[2] = {};
+};
+}
+
+MipDownsample::MipDownsample(nvrhi::IDevice* device)
+    : m_device(device)
+{
+    nvrhi::BindingLayoutDesc desc;
+    desc.visibility = nvrhi::ShaderType::Compute;
+    desc.registerSpace = 0;
+    desc.registerSpaceIsDescriptorSet = true;
+    desc.bindingOffsets = ShaderBindingOffsets();
+    desc.bindings = {
+        nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::Texture_UAV(1),
+        nvrhi::BindingLayoutItem::Sampler(kSplitSamplerBindingOffset),
+        nvrhi::BindingLayoutItem::PushConstants(0, sizeof(MipDownsampleConstants))};
+    m_layout = CreateNvrhiBindingLayout(m_device, desc, "Failed to create the mip downsample binding layout");
+    m_arrayPipeline = CreateNvrhiComputePipeline(m_device, "mip_downsample.comp.spv", {m_layout});
+    m_pipeline2d = CreateNvrhiComputePipeline(m_device, "mip_downsample_2d.comp.spv", {m_layout});
+    m_sampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
+}
+
+std::vector<nvrhi::BindingSetHandle> MipDownsample::CreateBindingSets(nvrhi::ITexture* texture, uint32_t firstLevel) const
+{
+    const nvrhi::TextureDesc& textureDesc = texture->getDesc();
+    const nvrhi::TextureDimension dimension =
+        textureDesc.dimension == nvrhi::TextureDimension::Texture2D ? nvrhi::TextureDimension::Texture2D : nvrhi::TextureDimension::Texture2DArray;
+    std::vector<nvrhi::BindingSetHandle> sets;
+    for (uint32_t level = firstLevel; level < textureDesc.mipLevels; ++level)
     {
-        VkImageMemoryBarrier& barrier = barriers[index];
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.oldLayout = historyValid ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = m_images[index].image;
-        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        // Views of one level each, a cube's faces as six layers of an array.
+        nvrhi::BindingSetDesc desc;
+        desc.bindings = {
+            nvrhi::BindingSetItem::Texture_SRV(
+                0, texture, nvrhi::Format::UNKNOWN, nvrhi::TextureSubresourceSet(level - 1, 1, 0, textureDesc.arraySize), dimension),
+            nvrhi::BindingSetItem::Texture_UAV(
+                1, texture, nvrhi::Format::UNKNOWN, nvrhi::TextureSubresourceSet(level, 1, 0, textureDesc.arraySize), dimension),
+            nvrhi::BindingSetItem::Sampler(kSplitSamplerBindingOffset, m_sampler),
+            nvrhi::BindingSetItem::PushConstants(0, sizeof(MipDownsampleConstants))};
+        sets.push_back(CreateNvrhiBindingSet(m_device, desc, m_layout, "Failed to create a mip downsample binding set"));
     }
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0,
-        0,
-        nullptr,
-        0,
-        nullptr,
-        static_cast<uint32_t>(barriers.size()),
-        barriers.data());
+    return sets;
+}
+
+void MipDownsample::Record(
+    nvrhi::ICommandList* commandList,
+    nvrhi::ITexture* texture,
+    uint32_t firstLevel,
+    std::span<const nvrhi::BindingSetHandle> sets) const
+{
+    const nvrhi::TextureDesc& textureDesc = texture->getDesc();
+    nvrhi::ComputeState state;
+    state.pipeline = textureDesc.dimension == nvrhi::TextureDimension::Texture2D ? m_pipeline2d : m_arrayPipeline;
+    for (uint32_t level = firstLevel; level < textureDesc.mipLevels; ++level)
+    {
+        commandList->setTextureState(texture, nvrhi::TextureSubresourceSet(level - 1, 1, 0, textureDesc.arraySize), nvrhi::ResourceStates::ShaderResource);
+        commandList->setTextureState(texture, nvrhi::TextureSubresourceSet(level, 1, 0, textureDesc.arraySize), nvrhi::ResourceStates::UnorderedAccess);
+        commandList->commitBarriers();
+        state.bindings = {sets[level - firstLevel]};
+        commandList->setComputeState(state);
+        MipDownsampleConstants constants{};
+        constants.targetWidth = std::max(textureDesc.width >> level, 1u);
+        constants.targetHeight = std::max(textureDesc.height >> level, 1u);
+        commandList->setPushConstants(&constants, sizeof(constants));
+        commandList->dispatch(
+            (constants.targetWidth + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
+            (constants.targetHeight + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
+            textureDesc.arraySize);
+    }
 }
 }

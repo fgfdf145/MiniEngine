@@ -96,7 +96,7 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     std::shared_ptr<VulkanBuffer> buffer;
     // Set 1, from VulkanMaterialSetCache, and the textures it names by cache key (built-in defaults
     // left out): an upload that keeps this submesh keeps those textures.
-    VkDescriptorSet materialSet = VK_NULL_HANDLE;
+    nvrhi::IBindingSet* materialSet = nullptr;
     std::vector<std::string> textureKeys;
     // The base colour and emission the ray scene averages for this submesh's ray material, and the
     // metallic and roughness maps its hit shading samples with them.
@@ -431,11 +431,7 @@ class VulkanRenderer : public EditorRenderBackendBase
         std::span<const glm::mat4> models,
         const glm::mat4& viewProjection,
         const glm::vec3& cameraPosition) const;
-    void RecordTransitions(
-        VkCommandBuffer commandBuffer,
-        VulkanSceneView& view,
-        const RenderPassIo& io,
-        const ScenePassFrameContext& frame);
+    void RecordTransitions(VulkanSceneView& view, const RenderPassIo& io, const ScenePassFrameContext& frame);
     // timer, when given, marks each pass.
     void RecordScenePasses(
         VkCommandBuffer commandBuffer,
@@ -543,7 +539,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // upload into is destroyed unused.
     std::vector<std::unique_ptr<VulkanUploadBatch>> m_uploadBatches;
     // Their staging memory, kept between batches; made with the device, gone before it.
-    std::unique_ptr<VulkanStagingChunkPool> m_stagingChunkPool;
+    std::unique_ptr<GpuUploadPool> m_uploadPool;
     // Keys the workers could not decode; their slots use the default texture.
     std::unordered_set<std::string> m_failedTextureKeys;
     bool m_sceneUploadPending = false;
@@ -723,6 +719,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanPipelineSet> m_forwardPipelines;
     // triangle.frag under kScatterPrepass, against the scatter pass's render pass.
     std::unique_ptr<VulkanPipelineSet> m_scatterPipelines;
+    // The material draws' push constant layout and set, which every material pipeline set shares.
+    std::unique_ptr<MaterialDrawConstants> m_materialDrawConstants;
     std::unique_ptr<VulkanPipelineSet> m_geometryPipelines;
     // gbuffer.frag as a deferred decal, against the geometry pass.
     std::unique_ptr<VulkanPipelineSet> m_decalPipelines;

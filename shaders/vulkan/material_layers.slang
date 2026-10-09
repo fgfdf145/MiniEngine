@@ -8,33 +8,33 @@
 // normal_map.slang, material_uv.slang and anisotropy_common.slang.
 
 [[vk::binding(13, 1)]] Texture2D clearcoatTexture : register(t13, space1);                // R
-[[vk::binding(MATERIAL_SAMPLER(13), 1)]] SamplerState clearcoatTextureSampler : register(s77, space1);
+#define clearcoatTextureSampler MaterialSampler(13)
 [[vk::binding(14, 1)]] Texture2D clearcoatRoughnessTexture : register(t14, space1);       // G
-[[vk::binding(MATERIAL_SAMPLER(14), 1)]] SamplerState clearcoatRoughnessTextureSampler : register(s78, space1);
+#define clearcoatRoughnessTextureSampler MaterialSampler(14)
 [[vk::binding(15, 1)]] Texture2D sheenColorTexture : register(t15, space1);               // RGB, sRGB
-[[vk::binding(MATERIAL_SAMPLER(15), 1)]] SamplerState sheenColorTextureSampler : register(s79, space1);
+#define sheenColorTextureSampler MaterialSampler(15)
 [[vk::binding(16, 1)]] Texture2D sheenRoughnessTexture : register(t16, space1);           // A
-[[vk::binding(MATERIAL_SAMPLER(16), 1)]] SamplerState sheenRoughnessTextureSampler : register(s80, space1);
+#define sheenRoughnessTextureSampler MaterialSampler(16)
 [[vk::binding(17, 1)]] Texture2D anisotropyTexture : register(t17, space1);               // RG direction, B strength
-[[vk::binding(MATERIAL_SAMPLER(17), 1)]] SamplerState anisotropyTextureSampler : register(s81, space1);
+#define anisotropyTextureSampler MaterialSampler(17)
 [[vk::binding(18, 1)]] Texture2D specularTexture : register(t18, space1);                 // A
-[[vk::binding(MATERIAL_SAMPLER(18), 1)]] SamplerState specularTextureSampler : register(s82, space1);
+#define specularTextureSampler MaterialSampler(18)
 [[vk::binding(19, 1)]] Texture2D specularColorTexture : register(t19, space1);            // RGB, sRGB
-[[vk::binding(MATERIAL_SAMPLER(19), 1)]] SamplerState specularColorTextureSampler : register(s83, space1);
+#define specularColorTextureSampler MaterialSampler(19)
 [[vk::binding(20, 1)]] Texture2D clearcoatNormalTexture : register(t20, space1);          // tangent-space normal
-[[vk::binding(MATERIAL_SAMPLER(20), 1)]] SamplerState clearcoatNormalTextureSampler : register(s84, space1);
+#define clearcoatNormalTextureSampler MaterialSampler(20)
 [[vk::binding(21, 1)]] Texture2D iridescenceTexture : register(t21, space1);              // R
-[[vk::binding(MATERIAL_SAMPLER(21), 1)]] SamplerState iridescenceTextureSampler : register(s85, space1);
+#define iridescenceTextureSampler MaterialSampler(21)
 [[vk::binding(22, 1)]] Texture2D iridescenceThicknessTexture : register(t22, space1);     // G
-[[vk::binding(MATERIAL_SAMPLER(22), 1)]] SamplerState iridescenceThicknessTextureSampler : register(s86, space1);
+#define iridescenceThicknessTextureSampler MaterialSampler(22)
 [[vk::binding(23, 1)]] Texture2D transmissionTexture : register(t23, space1);             // R
-[[vk::binding(MATERIAL_SAMPLER(23), 1)]] SamplerState transmissionTextureSampler : register(s87, space1);
+#define transmissionTextureSampler MaterialSampler(23)
 [[vk::binding(24, 1)]] Texture2D thicknessTexture : register(t24, space1);                // G
-[[vk::binding(MATERIAL_SAMPLER(24), 1)]] SamplerState thicknessTextureSampler : register(s88, space1);
+#define thicknessTextureSampler MaterialSampler(24)
 [[vk::binding(25, 1)]] Texture2D diffuseTransmissionTexture : register(t25, space1);      // A
-[[vk::binding(MATERIAL_SAMPLER(25), 1)]] SamplerState diffuseTransmissionTextureSampler : register(s89, space1);
+#define diffuseTransmissionTextureSampler MaterialSampler(25)
 [[vk::binding(26, 1)]] Texture2D diffuseTransmissionColorTexture : register(t26, space1); // RGB, sRGB
-[[vk::binding(MATERIAL_SAMPLER(26), 1)]] SamplerState diffuseTransmissionColorTextureSampler : register(s90, space1);
+#define diffuseTransmissionColorTextureSampler MaterialSampler(26)
 
 struct MaterialLayers
 {

@@ -1,0 +1,50 @@
+diff --git a/include/nvrhi/nvrhi.h b/include/nvrhi/nvrhi.h
+index dc8aeb4..6ae112f 100644
+--- a/include/nvrhi/nvrhi.h
++++ b/include/nvrhi/nvrhi.h
+@@ -703,6 +703,11 @@ namespace nvrhi
+ 
+         CpuAccessMode cpuAccess = CpuAccessMode::None;
+ 
++        // CpuAccessMode::Write only: put the buffer in video memory the CPU can write (resizable BAR):
++        // Vulkan's device-local host-visible memory, D3D12's GPU upload heap. Creation fails where the
++        // device has none or no room in it.
++        bool cpuWriteNearGpu = false;
++
+         SharedResourceFlags sharedResourceFlags = SharedResourceFlags::None;
+ 
+         constexpr BufferDesc& setByteSize(uint64_t value) { byteSize = value; return *this; }
+@@ -725,6 +730,7 @@ namespace nvrhi
+         constexpr BufferDesc& setInitialState(ResourceStates value) { initialState = value; return *this; }
+         constexpr BufferDesc& setKeepInitialState(bool value) { keepInitialState = value; return *this; }
+         constexpr BufferDesc& setCpuAccess(CpuAccessMode value) { cpuAccess = value; return *this; }
++        constexpr BufferDesc& setCpuWriteNearGpu(bool value) { cpuWriteNearGpu = value; return *this; }
+ 
+         // Equivalent to .setInitialState(_initialState).setKeepInitialState(true)
+         constexpr BufferDesc& enableAutomaticStateTracking(ResourceStates _initialState)
+diff --git a/src/d3d12/d3d12-buffer.cpp b/src/d3d12/d3d12-buffer.cpp
+index d656e94..84855de 100644
+--- a/src/d3d12/d3d12-buffer.cpp
++++ b/src/d3d12/d3d12-buffer.cpp
+@@ -124,7 +124,7 @@ namespace nvrhi::d3d12
+                 break;
+ 
+             case CpuAccessMode::Write:
+-                heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
++                heapProps.Type = d.cpuWriteNearGpu ? D3D12_HEAP_TYPE_GPU_UPLOAD : D3D12_HEAP_TYPE_UPLOAD;
+                 initialState = D3D12_RESOURCE_STATE_GENERIC_READ;
+                 break;
+         }
+diff --git a/src/vulkan/vulkan-allocator.cpp b/src/vulkan/vulkan-allocator.cpp
+index 7bc888b..f424919 100644
+--- a/src/vulkan/vulkan-allocator.cpp
++++ b/src/vulkan/vulkan-allocator.cpp
+@@ -39,6 +39,8 @@ namespace nvrhi::vulkan
+             break;
+         case CpuAccessMode::Write:
+             flags = vk::MemoryPropertyFlagBits::eHostVisible;
++            if (d.cpuWriteNearGpu)
++                flags |= vk::MemoryPropertyFlagBits::eDeviceLocal;
+             break;
+         }
+ 

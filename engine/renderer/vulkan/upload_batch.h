@@ -2,106 +2,29 @@
 
 #include "common.h"
 
+#include <nvrhi/nvrhi.h>
+
+#include <cstdint>
 #include <mutex>
-#include <utility>
 #include <vector>
 
 namespace me
 {
 
-// One of an upload batch's staging buffers, mapped for as long as it lives.
-struct VulkanStagingChunk
-{
-    VkBuffer buffer = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    unsigned char* mapped = nullptr;
-    VkDeviceSize size = 0;
-    VkDeviceSize used = 0;
-};
-
-// Staging chunks of VulkanUploadBatch::kStagingChunkBytes kept between batches. Making one, a 32 MB
-// mapped allocation, cost about a millisecond of every batch, and a streamed map stages textures in
-// nearly every frame while it loads. Holds at most kMaxChunks; the device must outlive it.
-class VulkanStagingChunkPool
+// Commands recorded straight into a native Vulkan command buffer and run at once: what the NGX
+// Vulkan entry points that take a command buffer of their own need. Flush submits and waits.
+class VulkanImmediateCommands
 {
   public:
-    static constexpr size_t kMaxChunks = 3;
+    VulkanImmediateCommands(VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue);
+    ~VulkanImmediateCommands();
 
-    explicit VulkanStagingChunkPool(VkDevice device);
-    ~VulkanStagingChunkPool();
+    VulkanImmediateCommands(const VulkanImmediateCommands&) = delete;
+    VulkanImmediateCommands& operator=(const VulkanImmediateCommands&) = delete;
 
-    VulkanStagingChunkPool(const VulkanStagingChunkPool&) = delete;
-    VulkanStagingChunkPool& operator=(const VulkanStagingChunkPool&) = delete;
-
-    // A kept chunk, emptied; false when there is none.
-    bool Take(VulkanStagingChunk& chunk);
-    // Keeps a chunk the GPU no longer reads; false (the caller frees it) when the pool is full.
-    bool Give(const VulkanStagingChunk& chunk);
-
-  private:
-    VkDevice m_device = VK_NULL_HANDLE;
-    std::mutex m_mutex;
-    std::vector<VulkanStagingChunk> m_chunks;
-};
-
-// Accumulates GPU upload commands (buffer-to-buffer and buffer-to-image copies, image layout
-// transitions) from many resource uploads into a single command buffer, so the caller submits
-// and waits once instead of once per resource. Used by VulkanBuffer and VulkanTexture so that
-// loading a model with hundreds of submeshes/textures (e.g. Sponza) doesn't serialize hundreds
-// of individual GPU round-trips. Flush() resets the batch so it can keep being reused.
-//
-// Destroying a batch without a final Flush() discards whatever was recorded since the last one:
-// the commands are never submitted, and the staging buffers tracked for them are freed. That is
-// the unwind path of an upload that failed part way, and it is safe precisely because nothing
-// recorded since the last Flush() ever reached the GPU.
-class VulkanUploadBatch
-{
-  public:
-    VulkanUploadBatch(VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue);
-    // With the physical device the batch can also stage (Stage), out of a few large mapped chunks
-    // instead of one allocation per resource.
-    VulkanUploadBatch(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t graphicsQueueFamily, VkQueue graphicsQueue);
-    ~VulkanUploadBatch();
-
-    VulkanUploadBatch(const VulkanUploadBatch&) = delete;
-    VulkanUploadBatch& operator=(const VulkanUploadBatch&) = delete;
-
-    // Anything recorded into it is submitted by the next Flush(), whether or not it tracked a
-    // staging buffer: a readback records commands with nothing to stage.
     VkCommandBuffer GetCommandBuffer();
-    // Takes ownership. Track a staging buffer as soon as it exists, before anything else that can
-    // throw, so a later failure in the same upload cannot leak it. Either handle may be null.
-    void TrackStagingResource(VkBuffer buffer, VkDeviceMemory memory);
-
-    // Where Stage put the bytes: copy from (buffer, offset) in a command recorded into this batch.
-    struct StagingSlice
-    {
-        VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceSize offset = 0;
-    };
-    bool CanStage() const;
-    // Copies size bytes into the batch's staging memory, which lives until the next Flush(). Chunks of
-    // kStagingChunkBytes (or one as large as a bigger request) are made as needed and mapped once.
-    StagingSlice Stage(const void* data, VkDeviceSize size, VkDeviceSize alignment = 16);
-    // Bytes staged since the last Flush(): callers flush on this rather than on a count of resources.
-    VkDeviceSize StagedBytes() const;
-    static constexpr VkDeviceSize kStagingChunkBytes = VkDeviceSize{32} << 20;
-
-    // Submits everything recorded so far, waits for the GPU to finish, frees the staging
-    // buffers tracked since the last Flush(), and re-arms the batch for more recording.
-    // No-op if nobody asked for the command buffer since the last Flush().
+    // Submits what was recorded and waits for the queue. Recording can go on afterwards.
     void Flush();
-    // Submits everything recorded so far without waiting: a closing barrier orders the copies (and
-    // the layout changes) before every later submission to the queue, and the batch keeps its
-    // staging memory and command buffer until IsComplete. Nothing more can be recorded into it. Flush
-    // waits for the whole queue, frames in flight included: a frame that staged streamed textures
-    // spent ~10 ms of the frame's thread in it. The destructor waits for a batch still running.
-    void SubmitWithoutWait();
-    bool IsComplete() const;
-    // Nothing recorded or staged since the last Flush.
-    bool IsEmpty() const;
-    // Stage takes its chunks from this pool, and they go back to it once the GPU has read them.
-    void SetChunkPool(VulkanStagingChunkPool* pool);
 
   private:
     void BeginRecording();
@@ -110,15 +33,83 @@ class VulkanUploadBatch
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkCommandPool m_commandPool = VK_NULL_HANDLE;
     VkCommandBuffer m_commandBuffer = VK_NULL_HANDLE;
-    std::vector<std::pair<VkBuffer, VkDeviceMemory>> m_stagingResources;
-    using StagingChunk = VulkanStagingChunk;
-    void ReleaseStagingChunks();
-    VulkanStagingChunkPool* m_chunkPool = nullptr;
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-    std::vector<StagingChunk> m_stagingChunks;
-    VkDeviceSize m_stagedBytes = 0;
     bool m_hasCommands = false;
-    // Set by SubmitWithoutWait.
-    VkFence m_fence = VK_NULL_HANDLE;
+};
+
+// Upload command lists kept between batches. A command list keeps NVRHI's staging chunks with it and
+// reuses them once the GPU has read them, so a list taken from here stages without allocating: making
+// a 32 MB mapped staging chunk cost about a millisecond of every batch, and a streamed map stages
+// textures in nearly every frame while it loads. Holds at most kMaxLists.
+class GpuUploadPool
+{
+  public:
+    static constexpr size_t kMaxLists = 3;
+    // NVRHI's staging chunk size for the pool's lists; a larger write gets a chunk of its own.
+    static constexpr uint64_t kChunkBytes = uint64_t{32} << 20;
+
+    explicit GpuUploadPool(nvrhi::IDevice* device);
+
+    GpuUploadPool(const GpuUploadPool&) = delete;
+    GpuUploadPool& operator=(const GpuUploadPool&) = delete;
+
+    // A kept list, or a new one.
+    nvrhi::CommandListHandle Take();
+    // Keeps a list the GPU has finished with; dropped when the pool is full.
+    void Give(nvrhi::CommandListHandle list);
+
+  private:
+    nvrhi::IDevice* m_device = nullptr;
+    std::mutex m_mutex;
+    std::vector<nvrhi::CommandListHandle> m_lists;
+};
+
+// Accumulates uploads (buffer and texture writes, which NVRHI stages) from many resources into one
+// command list, so the caller submits once instead of once per resource: loading a model with
+// hundreds of submeshes and textures (Sponza) one round trip at a time took seconds. The list runs
+// with NVRHI's automatic barriers: each write moves its resource to a copy destination, and closing
+// the list moves every one back to its resting state (keepInitialState), ordering the copies before
+// everything submitted after.
+//
+// Destroying a batch without a Flush or SubmitWithoutWait discards whatever was recorded since: the
+// commands never reach the GPU. That is the unwind path of an upload that failed part way.
+class VulkanUploadBatch
+{
+  public:
+    // pool, when given, lends the batch its command list (GpuUploadPool).
+    explicit VulkanUploadBatch(nvrhi::IDevice* device, GpuUploadPool* pool = nullptr);
+    ~VulkanUploadBatch();
+
+    VulkanUploadBatch(const VulkanUploadBatch&) = delete;
+    VulkanUploadBatch& operator=(const VulkanUploadBatch&) = delete;
+
+    // The open command list: anything recorded into it is submitted by the next Flush.
+    nvrhi::ICommandList* GetCommandList();
+    void WriteBuffer(nvrhi::IBuffer* buffer, const void* data, uint64_t byteSize, uint64_t offset = 0);
+    // One level of the first array slice: rowPitch bytes a row of texels (of blocks, for a block
+    // format), byteSize in all.
+    void WriteTexture(nvrhi::ITexture* texture, uint32_t mipLevel, const void* data, uint64_t rowPitch, uint64_t byteSize);
+    // Bytes written since the last Flush: callers flush on this rather than on a count of resources.
+    uint64_t StagedBytes() const;
+
+    // Submits everything recorded so far, waits for the GPU to finish, and re-arms the batch. No-op
+    // when nothing was recorded since the last Flush.
+    void Flush();
+    // Submits everything recorded so far without waiting; nothing more can be recorded. The batch
+    // keeps its command list (and NVRHI its staging) until IsComplete; the destructor waits for a
+    // batch still running.
+    void SubmitWithoutWait();
+    bool IsComplete() const;
+    // Nothing recorded since the last Flush.
+    bool IsEmpty() const;
+
+  private:
+    nvrhi::IDevice* m_device = nullptr;
+    GpuUploadPool* m_pool = nullptr;
+    nvrhi::CommandListHandle m_commandList;
+    nvrhi::EventQueryHandle m_query;
+    bool m_open = false;
+    bool m_hasCommands = false;
+    bool m_submitted = false;
+    uint64_t m_stagedBytes = 0;
 };
 }

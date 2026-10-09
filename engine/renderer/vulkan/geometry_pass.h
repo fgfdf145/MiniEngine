@@ -34,11 +34,7 @@ class VulkanGeometryPass : public IScenePass
     // The most MoltenVK offers on Apple GPUs; VulkanDevice refuses a device with fewer.
     static constexpr uint32_t kColorAttachmentCount = 8;
 
-    VulkanGeometryPass(
-        VkDevice device,
-        VkPipelineCache pipelineCache,
-        const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout);
+    VulkanGeometryPass(nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout);
     ~VulkanGeometryPass() override;
 
     VulkanGeometryPass(const VulkanGeometryPass&) = delete;
@@ -54,20 +50,15 @@ class VulkanGeometryPass : public IScenePass
 
     // The G-buffer material pipelines are built against this. It depends only on the attachment
     // formats, which a resize never changes.
-    VkRenderPass GetRenderPass() const;
+    const nvrhi::FramebufferInfo& GetFramebufferInfo() const;
 
   private:
-    void CreateRenderPass(const SceneRenderTargets& targets);
     void CreateFramebuffers(const SceneRenderTargets& targets);
-    void DestroyFramebuffers();
-    // Shared by the destructor and the constructor's unwind path, as in every other pass.
-    void DestroyHandles();
 
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    std::vector<VkFramebuffer> m_framebuffers;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    // One per transient copy of the targets.
+    std::vector<nvrhi::FramebufferHandle> m_framebuffers;
     // ground.frag: set 0 only.
-    VkPipelineLayout m_groundPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_groundPipeline = VK_NULL_HANDLE;
+    nvrhi::GraphicsPipelineHandle m_groundPipeline;
 };
 }

@@ -79,20 +79,17 @@ void VulkanExposureHistogramPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    // The resolved HDR and depth copies and the histogram buffer are all per frame slot, so one index
-    // picks all three. The two images are read where the native passes leave them, in
-    // SHADER_READ_ONLY_OPTIMAL (the reads above), so NVRHI need not know them.
+    // The resolved HDR and depth copies and the histogram buffers are all per frame slot, so one
+    // index picks all three. The two images are read where the passes before leave them, as shader
+    // resources (the reads above).
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot);
     const HistogramBuffer& histogram = m_histograms.at(slot);
     nvrhi::ICommandList* commandList = frame.commandList;
     {
         const NvrhiPassScope scope(commandList, {});
-        // The CPU read this buffer before the frame was submitted, which vkQueueSubmit orders ahead
-        // of the clear, so only the clear-to-atomics and atomics-to-host hazards need barriers. Each
-        // frame leaves it as the atomics did.
-        commandList->beginTrackingBufferState(histogram.handle, nvrhi::ResourceStates::UnorderedAccess);
-        commandList->setBufferState(histogram.handle, nvrhi::ResourceStates::CopyDest);
-        commandList->clearBufferUInt(histogram.handle, 0);
+        // The CPU read the readback copy before the frame was submitted, which the submission orders
+        // ahead of the copy below.
+        ClearBufferUInt(commandList, histogram.handle, 0);
         commandList->setBufferState(histogram.handle, nvrhi::ResourceStates::UnorderedAccess);
         commandList->commitBarriers();
 
@@ -106,29 +103,14 @@ void VulkanExposureHistogramPass::Record(
         commandList->dispatch(
             (frame.outputExtent.width + kWorkgroupSize - 1) / kWorkgroupSize,
             (frame.outputExtent.height + kWorkgroupSize - 1) / kWorkgroupSize);
+        // Into the CPU's copy, which it reads once the frame has completed.
+        commandList->setBufferState(histogram.handle, nvrhi::ResourceStates::CopySource);
+        commandList->commitBarriers();
+        commandList->copyBuffer(histogram.readback, 0, histogram.handle, 0, kHistogramBytes);
+        commandList->setBufferState(histogram.handle, nvrhi::ResourceStates::ShaderResource);
+        commandList->commitBarriers();
     }
-
-    // NVRHI has no state for the host's reads: this barrier stays native.
-    VkBufferMemoryBarrier computeToHost{};
-    computeToHost.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    computeToHost.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    computeToHost.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-    computeToHost.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    computeToHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    computeToHost.buffer = histogram.buffer;
-    computeToHost.offset = 0;
-    computeToHost.size = kHistogramBytes;
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_HOST_BIT,
-        0,
-        0,
-        nullptr,
-        1,
-        &computeToHost,
-        0,
-        nullptr);
+    (void)commandBuffer;
 }
 
 void VulkanExposureHistogramPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
@@ -160,22 +142,9 @@ void VulkanExposureHistogramPass::CreateHistogramBuffers(uint32_t count)
     for (uint32_t slot = 0; slot < count; ++slot)
     {
         HistogramBuffer& histogram = m_histograms.emplace_back();
-
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = kHistogramBytes;
-        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        // Coherent, so the CPU sees the GPU's writes once the fence and the host barrier in Record
-        // have run, with no invalidate.
+        histogram.handle = CreateDeviceBuffer(m_nvrhiDevice, kHistogramBytes, 0, true, "Exposure histogram");
         void* mapped = nullptr;
-        histogram.handle = CreateNvrhiBuffer(
-            m_nvrhiDevice,
-            bufferInfo,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            histogram.buffer,
-            "Failed to create exposure histogram buffer",
-            &mapped);
+        histogram.readback = CreateReadbackBuffer(m_nvrhiDevice, kHistogramBytes, "Exposure histogram readback", &mapped);
         // Zeroed so a slot that has never been recorded reads as an empty histogram.
         std::memset(mapped, 0, static_cast<size_t>(kHistogramBytes));
         histogram.mapped = static_cast<const uint32_t*>(mapped);

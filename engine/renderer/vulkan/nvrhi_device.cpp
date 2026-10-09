@@ -109,7 +109,7 @@ NvrhiDevice::~NvrhiDevice()
         m_device->waitForIdle();
         m_device->runGarbageCollection();
         // The memory pool's blocks are this device's heaps; every range in them is free by now.
-        VulkanMemoryPool::UnregisterNvrhiDevice(m_nativeDevice);
+        VulkanMemoryPool::UnregisterNvrhiDevice(m_device.Get());
     }
 }
 }

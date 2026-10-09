@@ -75,6 +75,8 @@ struct ScenePassFrameContext
     // The same set as NVRHI's binding set, and the frame's NVRHI command list, whose native command
     // buffer the passes' Record gets: the passes that record through NVRHI (NvrhiPassScope) use both.
     nvrhi::IBindingSet* frameBindingSet = nullptr;
+    // The material draws' push constant set (MaterialDrawConstants, register space 2).
+    nvrhi::IBindingSet* drawConstantsSet = nullptr;
     nvrhi::ICommandList* commandList = nullptr;
     // Records large draw lists in parallel (RecordMaterialPass); null records everything inline.
     VulkanParallelRecorder* recorder = nullptr;

@@ -137,14 +137,6 @@ class HistoryImagePair
     VkImage GetImage(uint32_t index) const;
     VkImageView GetView(uint32_t index) const;
     nvrhi::ITexture* GetTexture(uint32_t index) const;
-
-    // Both images, compute to compute. Invalid history is discarded with an UNDEFINED to GENERAL
-    // transition, which is also the one a freshly created image needs; valid history keeps its
-    // contents behind a GENERAL to GENERAL barrier that makes last frame's store visible and orders
-    // this frame's store after last frame's sample. A barrier's first scope covers every command
-    // submitted earlier on the queue, so this reaches across command buffers. Record it even when
-    // the effect is off: the bound descriptors name both images in GENERAL.
-    void RecordBarrier(VkCommandBuffer commandBuffer, bool historyValid) const;
     // The same for an NVRHI pass: image index as an NvrhiPassScope shares it. It rests in GENERAL
     // (UnorderedAccess); invalid history starts from nothing (Common), discarding its contents.
     NvrhiSharedTexture Shared(uint32_t index, bool historyValid) const
@@ -165,5 +157,35 @@ class HistoryImagePair
 
     VkDevice m_device = VK_NULL_HANDLE;
     std::array<Image, 2> m_images{};
+};
+
+// Fills a texture's mip levels from the one above each (mip_downsample.comp, a bilinear sample at
+// each target texel's centre, what a linear blit gave), every array layer (a cube's six faces) at
+// once: NVRHI and D3D12 have no blit. The owner keeps the binding sets for its texture
+// (CreateBindingSets) and remakes them with it.
+class MipDownsample
+{
+  public:
+    explicit MipDownsample(nvrhi::IDevice* device);
+
+    // One set per level from firstLevel to the last: the level above as the source, the level as
+    // the target.
+    std::vector<nvrhi::BindingSetHandle> CreateBindingSets(nvrhi::ITexture* texture, uint32_t firstLevel) const;
+    // Writes levels firstLevel and on, in order, with the sets CreateBindingSets made for them. Each
+    // source level is a shader resource while it is read; each written level is left in
+    // UnorderedAccess, which the caller moves on from.
+    void Record(
+        nvrhi::ICommandList* commandList,
+        nvrhi::ITexture* texture,
+        uint32_t firstLevel,
+        std::span<const nvrhi::BindingSetHandle> sets) const;
+
+  private:
+    nvrhi::IDevice* m_device = nullptr;
+    nvrhi::BindingLayoutHandle m_layout;
+    // Array views (a cube's faces), and plain 2D ones for a 2D texture.
+    nvrhi::ComputePipelineHandle m_arrayPipeline;
+    nvrhi::ComputePipelineHandle m_pipeline2d;
+    nvrhi::SamplerHandle m_sampler;
 };
 }

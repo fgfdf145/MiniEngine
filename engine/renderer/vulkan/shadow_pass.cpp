@@ -1,16 +1,12 @@
 #include "shadow_pass.h"
 
-#include "buffer.h"
-#include "format_support.h"
-#include "nvrhi_resources.h"
 #include "parallel_recorder.h"
-#include "pipeline.h"
 #include "sampler_settings.h"
 
+#include <engine/asset/mesh.h>
 #include <engine/core/log/log.h>
-#include <engine/core/paths/engine_paths.h>
+#include <engine/renderer/material.h>
 
-#include <cstring>
 #include <stdexcept>
 
 namespace me
@@ -20,50 +16,176 @@ namespace
 {
 // Slope-scaled rasterization bias, applied when the map is rendered. It covers the depth error that
 // grows with the surface's slope to the light; the shader's normal offset covers the rest.
-constexpr float kDepthBiasConstant = 1.0f;
+constexpr int kDepthBiasConstant = 1;
 constexpr float kDepthBiasSlope = 2.0f;
 
-VkFormatFeatureFlags QueryOptimalFeatures(VkPhysicalDevice physicalDevice, VkFormat format)
+// The depth formats a shadow map may take, best first: the target, sampled, linear comparison filtering
+// preferred.
+nvrhi::Format ChooseShadowFormat(nvrhi::IDevice* device, bool& linear)
 {
-    VkFormatProperties properties{};
-    vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
-    return properties.optimalTilingFeatures;
+    const nvrhi::FormatSupport needed = nvrhi::FormatSupport::DepthStencil | nvrhi::FormatSupport::ShaderSample;
+    for (const nvrhi::Format format : {nvrhi::Format::D32, nvrhi::Format::D16})
+    {
+        const nvrhi::FormatSupport support = device->queryFormatSupport(format);
+        if ((support & needed) == needed)
+        {
+            // With linear filtering a comparison sampler returns the bilinear blend of four
+            // comparisons, which is what turns the shader's 3x3 taps into a smooth 4x4 texel filter.
+            linear = (support & nvrhi::FormatSupport::ShaderSample) == nvrhi::FormatSupport::ShaderSample;
+            return format;
+        }
+    }
+    throw std::runtime_error("The device has no depth format for shadow maps");
 }
 }
 
+// ---------------------------------------------------------------------------------------------
+// ShadowCasterRenderer
+
+ShadowCasterRenderer::ShadowCasterRenderer(
+    nvrhi::IDevice* device,
+    const nvrhi::FramebufferInfo& framebuffer,
+    nvrhi::IBindingLayout* frameSetLayout,
+    nvrhi::IBindingLayout* materialSetLayout,
+    const ShadowCasterPipelineDesc& pipelineDesc)
+{
+    m_constants = CreatePushConstantLayout(device, 2, sizeof(ShadowPushConstants), nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel);
+    const nvrhi::ShaderHandle vertexShader = CreateNvrhiShader(device, nvrhi::ShaderType::Vertex, "shadow.vert.spv");
+    const nvrhi::ShaderHandle fragmentShader = CreateNvrhiShader(device, nvrhi::ShaderType::Pixel, "shadow.frag.spv");
+    const nvrhi::ShaderHandle depthVertexShader = CreateNvrhiShader(device, nvrhi::ShaderType::Vertex, "shadow_depth.vert.spv");
+
+    // Position and both UV sets from the vertex: the alpha test may sample the base colour through
+    // either. Opaque casters read positions alone, from their own tightly packed stream.
+    const std::array<nvrhi::VertexAttributeDesc, 3> maskAttributes = {
+        nvrhi::VertexAttributeDesc().setName("POSITION").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(static_cast<uint32_t>(offsetof(Vertex, position))).setElementStride(sizeof(Vertex)),
+        nvrhi::VertexAttributeDesc().setName("TEXCOORD").setFormat(nvrhi::Format::RG32_FLOAT).setOffset(static_cast<uint32_t>(offsetof(Vertex, texCoord))).setElementStride(sizeof(Vertex)),
+        nvrhi::VertexAttributeDesc().setName("SECOND_TEXCOORD").setFormat(nvrhi::Format::RG32_FLOAT).setOffset(static_cast<uint32_t>(offsetof(Vertex, texCoord1))).setElementStride(sizeof(Vertex))};
+    const nvrhi::VertexAttributeDesc positionAttribute =
+        nvrhi::VertexAttributeDesc().setName("POSITION").setFormat(nvrhi::Format::RGB32_FLOAT).setElementStride(sizeof(float) * 3);
+    const nvrhi::InputLayoutHandle maskLayout = device->createInputLayout(maskAttributes.data(), static_cast<uint32_t>(maskAttributes.size()), vertexShader);
+    const nvrhi::InputLayoutHandle depthLayout = device->createInputLayout(&positionAttribute, 1, depthVertexShader);
+    if (!maskLayout || !depthLayout)
+    {
+        throw std::runtime_error("Failed to create the shadow caster input layouts");
+    }
+
+    nvrhi::GraphicsPipelineDesc desc;
+    desc.primType = nvrhi::PrimitiveType::TriangleList;
+    // No culling: single-sided geometry such as a wall with one face still has to block the light
+    // from behind, and the depth bias rather than front-face culling keeps acne off lit surfaces.
+    desc.renderState.rasterState.setFillSolid().setCullNone().setFrontCounterClockwise(true);
+    desc.renderState.rasterState.setDepthBias(pipelineDesc.depthBias).setSlopeScaleDepthBias(pipelineDesc.slopeScaledDepthBias);
+    desc.renderState.depthStencilState.setDepthTestEnable(true).setDepthWriteEnable(true).setDepthFunc(pipelineDesc.depthFunc).setStencilEnable(false);
+
+    // Opaque casters need no fragment shader: depth is all they write.
+    desc.VS = depthVertexShader;
+    desc.inputLayout = depthLayout;
+    desc.bindingLayouts = {m_constants.layout};
+    m_opaquePipeline = device->createGraphicsPipeline(desc, framebuffer);
+    desc.VS = vertexShader;
+    desc.PS = fragmentShader;
+    desc.inputLayout = maskLayout;
+    desc.bindingLayouts = {frameSetLayout, materialSetLayout, m_constants.layout};
+    m_maskPipeline = device->createGraphicsPipeline(desc, framebuffer);
+    if (!m_opaquePipeline || !m_maskPipeline)
+    {
+        throw std::runtime_error("Failed to create the shadow caster pipelines");
+    }
+}
+
+void ShadowCasterRenderer::RecordDraw(
+    nvrhi::ICommandList* commandList,
+    nvrhi::IFramebuffer* framebuffer,
+    const nvrhi::ViewportState& viewport,
+    nvrhi::IBindingSet* frameSet,
+    const glm::mat4& viewProjection,
+    const ShadowDrawItem& item) const
+{
+    nvrhi::GraphicsState state;
+    state.framebuffer = framebuffer;
+    state.viewport = viewport;
+    if (item.alphaMask)
+    {
+        state.pipeline = m_maskPipeline;
+        state.bindings = {frameSet, item.materialSet, m_constants.set};
+        state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(item.vertexBuffer).setSlot(0).setOffset(0)};
+    }
+    else
+    {
+        state.pipeline = m_opaquePipeline;
+        state.bindings = {m_constants.set};
+        state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(item.positionBuffer).setSlot(0).setOffset(0)};
+    }
+    state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(item.indexBuffer).setFormat(nvrhi::Format::R32_UINT).setOffset(0);
+    commandList->setGraphicsState(state);
+    ShadowPushConstants constants{};
+    constants.lightModelViewProjection = viewProjection * item.model;
+    constants.drawSlot = item.drawSlot;
+    commandList->setPushConstants(&constants, sizeof(constants));
+    commandList->drawIndexed(nvrhi::DrawArguments().setVertexCount(item.indexCount));
+}
+
+// ---------------------------------------------------------------------------------------------
+// VulkanShadowPass
+
 VulkanShadowPass::VulkanShadowPass(
-    VkPhysicalDevice physicalDevice,
-    VkDevice device,
     nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
-    VkDescriptorSetLayout materialSetLayout,
+    nvrhi::IBindingLayout* frameSetLayout,
+    nvrhi::IBindingLayout* materialSetLayout,
     uint32_t resolution)
-    : m_device(device),
-      m_nvrhiDevice(nvrhiDevice),
+    : m_nvrhiDevice(nvrhiDevice),
       m_resolution(resolution)
 {
-    // A throw out of a constructor skips the destructor; DestroyHandles skips null handles, so the
-    // unwind path and the destructor share it.
-    try
+    bool linear = false;
+    nvrhi::TextureDesc desc;
+    desc.dimension = nvrhi::TextureDimension::Texture2DArray;
+    desc.width = m_resolution;
+    desc.height = m_resolution;
+    desc.arraySize = kShadowCascadeCount;
+    desc.format = ChooseShadowFormat(m_nvrhiDevice, linear);
+    desc.isRenderTarget = true;
+    desc.isShaderResource = true;
+    desc.debugName = "Shadow map";
+    // Where the material pass samples it between frames.
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    m_texture = m_nvrhiDevice->createTexture(desc);
+    if (!m_texture)
     {
-        CreateImage(physicalDevice);
-        CreateSampler(physicalDevice, nvrhiDevice);
-        CreateRenderPass();
-        CreateFramebuffers();
-        CreatePipelines(pipelineCache, materialSetLayout);
+        throw std::runtime_error("Failed to create the shadow map");
     }
-    catch (...)
+    // One single-layer framebuffer per cascade.
+    for (uint32_t layer = 0; layer < kShadowCascadeCount; ++layer)
     {
-        DestroyHandles();
-        throw;
+        nvrhi::FramebufferDesc framebuffer;
+        framebuffer.setDepthAttachment(nvrhi::FramebufferAttachment().setTexture(m_texture).setArraySlice(layer));
+        m_framebuffers[layer] = m_nvrhiDevice->createFramebuffer(framebuffer);
+        if (!m_framebuffers[layer])
+        {
+            throw std::runtime_error("Failed to create a shadow cascade framebuffer");
+        }
     }
+
+    nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(linear);
+    // Outside the map counts as lit: the border is the far plane, and every receiver passes a
+    // LESS_OR_EQUAL comparison against it.
+    samplerDesc.addressU = nvrhi::SamplerAddressMode::Border;
+    samplerDesc.addressV = nvrhi::SamplerAddressMode::Border;
+    samplerDesc.borderColor = nvrhi::Color(1.0f, 1.0f, 1.0f, 1.0f);
+    samplerDesc.reductionType = nvrhi::SamplerReductionType::Comparison;
+    samplerDesc.comparisonFunc = nvrhi::ComparisonFunc::LessOrEqual;
+    m_sampler = CreateNvrhiSampler(m_nvrhiDevice, samplerDesc, "Failed to create shadow map sampler");
+
+    ShadowCasterPipelineDesc casters;
+    casters.depthFunc = nvrhi::ComparisonFunc::Less;
+    casters.depthBias = kDepthBiasConstant;
+    casters.slopeScaledDepthBias = kDepthBiasSlope;
+    m_casters = std::make_unique<ShadowCasterRenderer>(
+        m_nvrhiDevice, m_framebuffers[0]->getFramebufferInfo(), frameSetLayout, materialSetLayout, casters);
     LOG_INFO("Created a {}x{} shadow map with {} cascades", m_resolution, m_resolution, kShadowCascadeCount);
 }
 
-VulkanShadowPass::~VulkanShadowPass()
-{
-    DestroyHandles();
-}
+VulkanShadowPass::~VulkanShadowPass() = default;
 
 uint32_t VulkanShadowPass::GetResolution() const
 {
@@ -72,7 +194,7 @@ uint32_t VulkanShadowPass::GetResolution() const
 
 TextureDescriptorBinding VulkanShadowPass::GetSampledBinding() const
 {
-    return BindTexture(m_arrayView, m_texture, m_sampler);
+    return BindTexture(VK_NULL_HANDLE, m_texture, m_sampler);
 }
 
 std::optional<ShadowCascadePlan> VulkanShadowPass::Plan(const ShadowCascades* cascades, uint64_t casterKey)
@@ -90,455 +212,63 @@ std::optional<ShadowCascadePlan> VulkanShadowPass::Plan(const ShadowCascades* ca
     return plan;
 }
 
-namespace
-{
-// Below this many casters the layers record inline; casters per secondary command buffer above it.
-constexpr size_t kParallelShadowDraws = 1024;
-constexpr uint32_t kShadowDrawsPerSecondary = 1024;
-}
-
 void VulkanShadowPass::Record(
-    VkCommandBuffer commandBuffer,
+    nvrhi::ICommandList* commandList,
+    nvrhi::IBindingSet* frameSet,
     std::span<const ShadowDrawItem> drawItems,
     const ShadowCascadePlan* plan,
     VulkanGpuTimer* timer,
     VulkanParallelRecorder* recorder) const
 {
+    (void)recorder;
     static constexpr std::array<const char*, kShadowCascadeCount> kCascadeNames = {
         "Shadows/C0", "Shadows/C1", "Shadows/C2", "Shadows/C3"};
-    VkClearValue clearValue{};
-    clearValue.depthStencil = {1.0f, 0};
-
-    // Every redrawn layer's draws at once, each layer culling the casters for its cascade.
-    std::array<int, kShadowCascadeCount> batchOfCascade{-1, -1, -1, -1};
-    std::vector<VulkanParallelRecorder::Batch> batches;
-    if (recorder != nullptr && plan != nullptr && drawItems.size() >= kParallelShadowDraws)
+    commandList->clearState();
+    if (!m_initialized)
     {
-        for (uint32_t cascadeIndex = 0; cascadeIndex < kShadowCascadeCount; ++cascadeIndex)
-        {
-            if (!m_frameRedraw[cascadeIndex])
-            {
-                continue;
-            }
-            batchOfCascade[cascadeIndex] = static_cast<int>(batches.size());
-            VulkanParallelRecorder::Batch& batch = batches.emplace_back();
-            batch.renderPass = m_renderPass;
-            batch.framebuffer = m_framebuffers[cascadeIndex];
-            batch.itemCount = static_cast<uint32_t>(drawItems.size());
-            const glm::mat4 lightViewProjection = plan->held[cascadeIndex].viewProjection;
-            batch.record = [this, drawItems, lightViewProjection](VkCommandBuffer secondary, uint32_t begin, uint32_t end)
-            {
-                RecordCascadeDraws(secondary, lightViewProjection, drawItems.subspan(begin, end - begin));
-            };
-        }
-        recorder->Record(batches, kShadowDrawsPerSecondary);
+        // Out of nothing, once: the material pass samples every layer from the first frame on.
+        commandList->setTextureState(m_texture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+        commandList->commitBarriers();
+        m_initialized = true;
     }
-
+    const nvrhi::ViewportState viewport = NativeViewportState(VkExtent2D{m_resolution, m_resolution});
     for (uint32_t cascadeIndex = 0; cascadeIndex < kShadowCascadeCount; ++cascadeIndex)
     {
-        if (!m_frameRedraw[cascadeIndex])
+        if (m_frameRedraw[cascadeIndex])
         {
-            if (timer != nullptr)
-            {
-                timer->Mark(commandBuffer, kCascadeNames[cascadeIndex]);
-            }
-            continue;
-        }
-
-        VkRenderPassBeginInfo renderPassInfo{};
-        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderPassInfo.renderPass = m_renderPass;
-        renderPassInfo.framebuffer = m_framebuffers[cascadeIndex];
-        renderPassInfo.renderArea.extent = {m_resolution, m_resolution};
-        renderPassInfo.clearValueCount = 1;
-        renderPassInfo.pClearValues = &clearValue;
-        if (batchOfCascade[cascadeIndex] >= 0)
-        {
-            const std::vector<VkCommandBuffer>& secondaries = batches[static_cast<size_t>(batchOfCascade[cascadeIndex])].buffers;
-            vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
-            vkCmdExecuteCommands(commandBuffer, static_cast<uint32_t>(secondaries.size()), secondaries.data());
-        }
-        else
-        {
-            vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+            // Every frame that redraws a layer rewrites the whole of it.
+            const nvrhi::TextureSubresourceSet layer(0, 1, cascadeIndex, 1);
+            commandList->setTextureState(m_texture, layer, nvrhi::ResourceStates::DepthWrite);
+            commandList->commitBarriers();
+            commandList->setEnableAutomaticBarriers(true);
+            commandList->clearDepthStencilTexture(m_texture, layer, true, 1.0f, false, 0);
+            commandList->setEnableAutomaticBarriers(false);
+            commandList->setTextureState(m_texture, layer, nvrhi::ResourceStates::DepthWrite);
+            commandList->commitBarriers();
             if (plan != nullptr)
             {
-                RecordCascadeDraws(commandBuffer, plan->held[cascadeIndex].viewProjection, drawItems);
+                const glm::mat4& lightViewProjection = plan->held[cascadeIndex].viewProjection;
+                m_casters->Record(
+                    commandList,
+                    m_framebuffers[cascadeIndex],
+                    viewport,
+                    frameSet,
+                    lightViewProjection,
+                    drawItems,
+                    [&lightViewProjection](const ShadowDrawItem& item)
+                    {
+                        return ShadowCascadeIntersectsSphere(lightViewProjection, item.worldBoundsCenter, item.worldBoundsRadius);
+                    });
             }
+            // This frame's material pass reads what was written here.
+            commandList->setTextureState(m_texture, layer, nvrhi::ResourceStates::ShaderResource);
+            commandList->commitBarriers();
+            commandList->clearState();
         }
-
-        vkCmdEndRenderPass(commandBuffer);
         if (timer != nullptr)
         {
-            timer->Mark(commandBuffer, kCascadeNames[cascadeIndex]);
+            timer->Mark(kCascadeNames[cascadeIndex]);
         }
     }
-}
-
-void VulkanShadowPass::RecordCascadeDraws(
-    VkCommandBuffer commandBuffer,
-    const glm::mat4& lightViewProjection,
-    std::span<const ShadowDrawItem> drawItems) const
-{
-    VkPipeline boundPipeline = VK_NULL_HANDLE;
-    for (const ShadowDrawItem& item : drawItems)
-    {
-        if (!ShadowCascadeIntersectsSphere(lightViewProjection, item.worldBoundsCenter, item.worldBoundsRadius))
-        {
-            continue;
-        }
-
-        const VkPipeline requiredPipeline = item.alphaMask ? m_maskPipeline : m_opaquePipeline;
-        if (requiredPipeline != boundPipeline)
-        {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline);
-            boundPipeline = requiredPipeline;
-        }
-        if (item.alphaMask)
-        {
-            vkCmdBindDescriptorSets(
-                commandBuffer,
-                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                m_pipelineLayout,
-                0,
-                1,
-                &item.materialDescriptorSet,
-                0,
-                nullptr);
-        }
-
-        ShadowPushConstants constants{};
-        constants.lightModelViewProjection = lightViewProjection * item.model;
-        std::memcpy(constants.baseColorFactor, item.material.baseColorFactor, sizeof(constants.baseColorFactor));
-        std::memcpy(constants.nodeGraphFactors, item.material.nodeGraphFactors, sizeof(constants.nodeGraphFactors));
-        constants.alphaCutoffAndPadding[0] = item.material.alphaCutoff;
-        std::memcpy(constants.baseColorTransform, item.baseColorTransform, sizeof(constants.baseColorTransform));
-        vkCmdPushConstants(
-            commandBuffer,
-            m_pipelineLayout,
-            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-            0,
-            sizeof(ShadowPushConstants),
-            &constants);
-
-        const VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, item.alphaMask ? &item.vertexBuffer : &item.positionBuffer, &offset);
-        vkCmdBindIndexBuffer(commandBuffer, item.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(commandBuffer, item.indexCount, 1, 0, 0, 0);
-    }
-}
-
-void VulkanShadowPass::CreateImage(VkPhysicalDevice physicalDevice)
-{
-    static constexpr std::array<VkFormat, 2> kCandidates = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM};
-    m_format = ChooseFormat(
-        "shadow map",
-        kCandidates,
-        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
-        [physicalDevice](VkFormat format)
-        {
-            return QueryOptimalFeatures(physicalDevice, format);
-        });
-
-    VkImageCreateInfo imageInfo{};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.format = m_format;
-    imageInfo.extent = {m_resolution, m_resolution, 1};
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = kShadowCascadeCount;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    m_texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, m_image, "Failed to create shadow map image");
-
-    VkImageViewCreateInfo viewInfo{};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = m_image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-    viewInfo.format = m_format;
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.layerCount = kShadowCascadeCount;
-    CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_arrayView), "Failed to create shadow map view");
-
-    // One single-layer view per cascade, for that cascade's framebuffer.
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.subresourceRange.layerCount = 1;
-    for (uint32_t layer = 0; layer < kShadowCascadeCount; ++layer)
-    {
-        viewInfo.subresourceRange.baseArrayLayer = layer;
-        CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_layerViews[layer]), "Failed to create shadow cascade view");
-    }
-}
-
-void VulkanShadowPass::CreateSampler(VkPhysicalDevice physicalDevice, nvrhi::IDevice* nvrhiDevice)
-{
-    // With linear filtering a comparison sampler returns the bilinear blend of four comparisons,
-    // which is what turns the shader's 3x3 taps into a smooth 4x4 texel filter. Not every depth
-    // format supports it, so fall back to nearest where it does not.
-    const bool linear =
-        (QueryOptimalFeatures(physicalDevice, m_format) & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
-
-    nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(linear);
-    // Outside the map counts as lit: the border is the far plane, and every receiver passes a
-    // LESS_OR_EQUAL comparison against it.
-    samplerDesc.addressU = nvrhi::SamplerAddressMode::Border;
-    samplerDesc.addressV = nvrhi::SamplerAddressMode::Border;
-    samplerDesc.borderColor = nvrhi::Color(1.0f, 1.0f, 1.0f, 1.0f);
-    samplerDesc.reductionType = nvrhi::SamplerReductionType::Comparison;
-    samplerDesc.comparisonFunc = nvrhi::ComparisonFunc::LessOrEqual;
-    m_sampler = CreateNvrhiSampler(nvrhiDevice, samplerDesc, "Failed to create shadow map sampler");
-}
-
-void VulkanShadowPass::CreateRenderPass()
-{
-    VkAttachmentDescription depthAttachment{};
-    depthAttachment.format = m_format;
-    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    // Every frame rewrites the whole layer, so its previous contents are discarded.
-    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-    VkAttachmentReference depthReference{};
-    depthReference.attachment = 0;
-    depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.pDepthStencilAttachment = &depthReference;
-
-    std::array<VkSubpassDependency, 2> dependencies{};
-    // The previous frame's material pass may still be sampling this layer: one image serves every
-    // frame in flight. A barrier's first scope covers everything submitted to the queue before it,
-    // so this execution dependency orders the clear after those reads. It is a write after read,
-    // so no memory dependency is needed.
-    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependencies[0].dstSubpass = 0;
-    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    dependencies[0].srcAccessMask = 0;
-    dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    // And this frame's material pass reads what was written here.
-    dependencies[1].srcSubpass = 0;
-    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    VkRenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &depthAttachment;
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
-    renderPassInfo.pDependencies = dependencies.data();
-    CheckVulkan(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_renderPass), "Failed to create shadow render pass");
-}
-
-void VulkanShadowPass::CreateFramebuffers()
-{
-    for (uint32_t layer = 0; layer < kShadowCascadeCount; ++layer)
-    {
-        VkFramebufferCreateInfo framebufferInfo{};
-        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = m_renderPass;
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = &m_layerViews[layer];
-        framebufferInfo.width = m_resolution;
-        framebufferInfo.height = m_resolution;
-        framebufferInfo.layers = 1;
-        CheckVulkan(vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &m_framebuffers[layer]), "Failed to create shadow framebuffer");
-    }
-}
-
-void VulkanShadowPass::CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout materialSetLayout)
-{
-    const std::filesystem::path shaderDir = EnginePaths::ShaderRoot();
-    const VulkanShaderModule vertexShader(m_device, shaderDir / "shadow.vert.spv");
-    const VulkanShaderModule fragmentShader(m_device, shaderDir / "shadow.frag.spv");
-    const VulkanShaderModule depthVertexShader(m_device, shaderDir / "shadow_depth.vert.spv");
-
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushConstantRange.size = sizeof(ShadowPushConstants);
-
-    // The material set sits at set 0 here: the pass binds no camera set.
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &materialSetLayout;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushConstantRange;
-    CheckVulkan(vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_pipelineLayout), "Failed to create shadow pipeline layout");
-
-    // Only position and texture coordinate are read, so only those two attributes are declared.
-    const VkVertexInputBindingDescription bindingDescription = GetVertexBindingDescription();
-    const auto allAttributes = GetVertexAttributeDescriptions();
-    // Position and both UV sets: the alpha test may sample the base colour through either.
-    const std::array<VkVertexInputAttributeDescription, 3> attributes = {allAttributes[0], allAttributes[2], allAttributes[5]};
-
-    VkPipelineVertexInputStateCreateInfo vertexInput{};
-    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = 1;
-    vertexInput.pVertexBindingDescriptions = &bindingDescription;
-    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size());
-    vertexInput.pVertexAttributeDescriptions = attributes.data();
-
-    // Opaque casters read positions alone, from their own tightly packed stream.
-    const VkVertexInputBindingDescription positionBinding = GetPositionBindingDescription();
-    const VkVertexInputAttributeDescription positionAttribute = GetPositionAttributeDescription();
-    VkPipelineVertexInputStateCreateInfo depthVertexInput{};
-    depthVertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    depthVertexInput.vertexBindingDescriptionCount = 1;
-    depthVertexInput.pVertexBindingDescriptions = &positionBinding;
-    depthVertexInput.vertexAttributeDescriptionCount = 1;
-    depthVertexInput.pVertexAttributeDescriptions = &positionAttribute;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    // The resolution never changes, so viewport and scissor are baked in.
-    VkViewport viewport{};
-    viewport.width = static_cast<float>(m_resolution);
-    viewport.height = static_cast<float>(m_resolution);
-    viewport.maxDepth = 1.0f;
-    VkRect2D scissor{};
-    scissor.extent = {m_resolution, m_resolution};
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.pViewports = &viewport;
-    viewportState.scissorCount = 1;
-    viewportState.pScissors = &scissor;
-
-    // No culling: single-sided geometry such as a wall with one face still has to block the light
-    // from behind, and the depth bias rather than front-face culling keeps acne off lit surfaces.
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.depthBiasEnable = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = kDepthBiasConstant;
-    rasterizer.depthBiasSlopeFactor = kDepthBiasSlope;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-
-    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vertexShader.GetHandle();
-    stages[0].pName = "main";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = fragmentShader.GetHandle();
-    stages[1].pName = "main";
-
-    // Opaque casters need no fragment shader: depth is all the pass writes.
-    std::array<VkGraphicsPipelineCreateInfo, 2> pipelineInfos{};
-    for (VkGraphicsPipelineCreateInfo& pipelineInfo : pipelineInfos)
-    {
-        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipelineInfo.pStages = stages.data();
-        pipelineInfo.pVertexInputState = &vertexInput;
-        pipelineInfo.pInputAssemblyState = &inputAssembly;
-        pipelineInfo.pViewportState = &viewportState;
-        pipelineInfo.pRasterizationState = &rasterizer;
-        pipelineInfo.pMultisampleState = &multisampling;
-        pipelineInfo.pDepthStencilState = &depthStencil;
-        pipelineInfo.pColorBlendState = &colorBlending;
-        pipelineInfo.layout = m_pipelineLayout;
-        pipelineInfo.renderPass = m_renderPass;
-        pipelineInfo.subpass = 0;
-    }
-    VkPipelineShaderStageCreateInfo depthStage = stages[0];
-    depthStage.module = depthVertexShader.GetHandle();
-    pipelineInfos[0].stageCount = 1;
-    pipelineInfos[0].pStages = &depthStage;
-    pipelineInfos[0].pVertexInputState = &depthVertexInput;
-    pipelineInfos[1].stageCount = 2;
-
-    std::array<VkPipeline, 2> pipelines{};
-    const VkResult result = vkCreateGraphicsPipelines(
-        m_device,
-        pipelineCache,
-        static_cast<uint32_t>(pipelineInfos.size()),
-        pipelineInfos.data(),
-        nullptr,
-        pipelines.data());
-    // Assigned before the check so a partial failure still leaves every created handle reachable
-    // by DestroyHandles.
-    m_opaquePipeline = pipelines[0];
-    m_maskPipeline = pipelines[1];
-    CheckVulkan(result, "Failed to create shadow pipelines");
-}
-
-void VulkanShadowPass::DestroyHandles()
-{
-    for (VkPipeline* pipeline : {&m_opaquePipeline, &m_maskPipeline})
-    {
-        if (*pipeline != VK_NULL_HANDLE)
-        {
-            vkDestroyPipeline(m_device, *pipeline, nullptr);
-            *pipeline = VK_NULL_HANDLE;
-        }
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    for (VkFramebuffer& framebuffer : m_framebuffers)
-    {
-        if (framebuffer != VK_NULL_HANDLE)
-        {
-            vkDestroyFramebuffer(m_device, framebuffer, nullptr);
-            framebuffer = VK_NULL_HANDLE;
-        }
-    }
-    if (m_renderPass != VK_NULL_HANDLE)
-    {
-        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
-        m_renderPass = VK_NULL_HANDLE;
-    }
-    m_sampler = nullptr;
-    for (VkImageView& view : m_layerViews)
-    {
-        if (view != VK_NULL_HANDLE)
-        {
-            vkDestroyImageView(m_device, view, nullptr);
-            view = VK_NULL_HANDLE;
-        }
-    }
-    if (m_arrayView != VK_NULL_HANDLE)
-    {
-        vkDestroyImageView(m_device, m_arrayView, nullptr);
-        m_arrayView = VK_NULL_HANDLE;
-    }
-    // The image and its memory go with the texture.
-    m_texture = nullptr;
-    m_image = VK_NULL_HANDLE;
 }
 }

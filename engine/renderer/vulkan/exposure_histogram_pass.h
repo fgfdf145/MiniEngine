@@ -43,10 +43,12 @@ class VulkanExposureHistogramPass : public IScenePass
     std::optional<glm::vec3> GetFrameColor(uint32_t frameSlot) const;
 
   private:
+    // The atomics' target, and the CPU's copy of it: a host-visible buffer can take no unordered
+    // access on D3D12, so the frame copies the results into a readback buffer.
     struct HistogramBuffer
     {
-        VkBuffer buffer = VK_NULL_HANDLE;
         nvrhi::BufferHandle handle;
+        nvrhi::BufferHandle readback;
         const uint32_t* mapped = nullptr;
     };
 

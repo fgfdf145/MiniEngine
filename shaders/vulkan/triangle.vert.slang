@@ -8,7 +8,9 @@ struct DrawConstants
 {
     float4x4 model;
 };
-[[vk::push_constant]] ConstantBuffer<DrawConstants> drawData D3D_PUSH_CONSTANTS(1);
+// In register space 2, a layout of its own: the material set (space 1) is one layout every material
+// pass shares, the toon and shadow passes with push constants of their own.
+[[vk::push_constant]] ConstantBuffer<DrawConstants> drawData D3D_PUSH_CONSTANTS(2);
 
 // Each draw's model matrix from last frame, indexed by the draw's firstInstance (see
 // VulkanDrawItem::motionSlot). Push constants are full, so it cannot ride with the current one.

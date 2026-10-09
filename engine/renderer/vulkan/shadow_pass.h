@@ -3,12 +3,14 @@
 #include "common.h"
 #include "gpu_timer.h"
 #include "nvrhi_native.h"
+#include "nvrhi_pass.h"
 #include "uniform_buffer.h"
 
 #include <engine/renderer/material.h>
 #include <engine/renderer/shadow_cascades.h>
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <span>
 
@@ -29,10 +31,10 @@ struct ShadowAlphaTestMaterial
 
 struct ShadowDrawItem
 {
-    VkBuffer vertexBuffer = VK_NULL_HANDLE;
+    nvrhi::IBuffer* vertexBuffer = nullptr;
     // The position-only stream, which opaque casters draw from.
-    VkBuffer positionBuffer = VK_NULL_HANDLE;
-    VkBuffer indexBuffer = VK_NULL_HANDLE;
+    nvrhi::IBuffer* positionBuffer = nullptr;
+    nvrhi::IBuffer* indexBuffer = nullptr;
     uint32_t indexCount = 0;
     glm::mat4 model{1.0f};
     // A world space sphere around the caster; each cascade skips casters that miss its volume.
@@ -40,45 +42,97 @@ struct ShadowDrawItem
     float worldBoundsRadius = 0.0f;
     // Mask materials run the alpha test and need their material set; opaque ones need neither.
     bool alphaMask = false;
-    VkDescriptorSet materialDescriptorSet = VK_NULL_HANDLE;
+    nvrhi::IBindingSet* materialSet = nullptr;
+    // The draw slot whose material the alpha test reads from the frame set (materials, texture
+    // transforms); the two below are what of it reaches the map, for the caster key.
+    uint32_t drawSlot = 0;
     ShadowAlphaTestMaterial material;
-    // The base colour's texture transform rows (GpuTextureTransforms slot 0), for the alpha test.
+    // The base colour's texture transform rows (GpuTextureTransforms slot 0).
     float baseColorTransform[8] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
 };
 
-// Push constants for shaders/vulkan/shadow.vert and shadow.frag.
+// Push constants for shaders/vulkan/shadow.vert, shadow_depth.vert and shadow.frag (register space 2).
 struct ShadowPushConstants
 {
     glm::mat4 lightModelViewProjection{1.0f};
-    float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-    float nodeGraphFactors[4] = {0.0f, 0.0f, 1.0f, 0.0f};
-    float alphaCutoffAndPadding[4] = {0.5f, 0.0f, 0.0f, 0.0f};
-    float baseColorTransform[8] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    uint32_t drawSlot = 0;
+    uint32_t padding[3] = {};
 };
 
-// Past the 128 bytes Vulkan guarantees; VulkanDevice requires 144.
-static_assert(sizeof(ShadowPushConstants) == 144, "ShadowPushConstants must match the shadow shaders' block");
+static_assert(sizeof(ShadowPushConstants) == 80, "ShadowPushConstants must match the shadow shaders' block");
+
+// Draws shadow casters (ShadowDrawItem) into a depth target: opaque ones from their position stream
+// with no fragment shader, Mask ones with the alpha test (shadow.frag), which reads the caster's
+// material from a frame set (set 0) and its textures from its material set (set 1). The cascades,
+// the local shadow atlas and the selection's own depth all draw them so.
+struct ShadowCasterPipelineDesc
+{
+    nvrhi::ComparisonFunc depthFunc = nvrhi::ComparisonFunc::Less;
+    int depthBias = 0;
+    float slopeScaledDepthBias = 0.0f;
+};
+
+class ShadowCasterRenderer
+{
+  public:
+    ShadowCasterRenderer(
+        nvrhi::IDevice* device,
+        const nvrhi::FramebufferInfo& framebuffer,
+        nvrhi::IBindingLayout* frameSetLayout,
+        nvrhi::IBindingLayout* materialSetLayout,
+        const ShadowCasterPipelineDesc& desc);
+
+    // Draws every caster whose bounds `visible` accepts with viewProjection, into framebuffer through
+    // viewport. The caller has put the target in its depth write state.
+    template <typename Visible>
+    void Record(
+        nvrhi::ICommandList* commandList,
+        nvrhi::IFramebuffer* framebuffer,
+        const nvrhi::ViewportState& viewport,
+        nvrhi::IBindingSet* frameSet,
+        const glm::mat4& viewProjection,
+        std::span<const ShadowDrawItem> drawItems,
+        Visible&& visible) const
+    {
+        for (const ShadowDrawItem& item : drawItems)
+        {
+            if (visible(item))
+            {
+                RecordDraw(commandList, framebuffer, viewport, frameSet, viewProjection, item);
+            }
+        }
+    }
+
+  private:
+    void RecordDraw(
+        nvrhi::ICommandList* commandList,
+        nvrhi::IFramebuffer* framebuffer,
+        const nvrhi::ViewportState& viewport,
+        nvrhi::IBindingSet* frameSet,
+        const glm::mat4& viewProjection,
+        const ShadowDrawItem& item) const;
+
+    PushConstantLayout m_constants;
+    nvrhi::GraphicsPipelineHandle m_opaquePipeline;
+    nvrhi::GraphicsPipelineHandle m_maskPipeline;
+};
 
 // Renders the cascaded shadow map of the directional light that casts shadows: a 2D array depth
 // image with one layer per cascade, which the material pass samples through set 0, binding 1.
 //
 // This pass is not an IScenePass, and its image is not a SceneRenderTargets target. It has a fixed
 // resolution rather than the viewport's, it has one layer per cascade, and it is one image shared
-// by every frame in flight rather than a copy per frame. So it manages its own layouts: each
-// cascade's render pass clears the layer from UNDEFINED and leaves it SHADER_READ_ONLY_OPTIMAL,
-// and the render pass's external dependencies order it against the previous frame's reads and
-// this frame's material pass. RenderTargetLayoutTracker never sees this image.
+// by every frame in flight rather than a copy per frame. So it keeps its own states: the image rests
+// as a shader resource, and each redrawn layer is a depth target for its clear and draws.
 //
 // The pass lives as long as the device: nothing in it depends on the swapchain or the viewport.
 class VulkanShadowPass
 {
   public:
     VulkanShadowPass(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
-        VkDescriptorSetLayout materialSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
+        nvrhi::IBindingLayout* materialSetLayout,
         uint32_t resolution);
     ~VulkanShadowPass();
 
@@ -86,57 +140,37 @@ class VulkanShadowPass
     VulkanShadowPass& operator=(const VulkanShadowPass&) = delete;
 
     uint32_t GetResolution() const;
-
-    // The array view and comparison sampler the material pass binds.
+    // The array texture and comparison sampler the material pass binds.
     TextureDescriptorBinding GetSampledBinding() const;
-
     // Decides, before Record, which cascades this frame redraws (ShadowCascadeCache) and returns
     // what the map holds afterwards, which the shader must sample with. With no cascades (no light
     // casts shadows) it returns nothing and Record clears the layers once, the first such frame:
-    // the material pass binds the map whether or not a light casts shadows, and the clear is what
-    // puts each layer in the layout that binding declares. Layers keep that layout, and their
-    // depth, across the frames that skip them.
+    // the material pass binds the map whether or not a light casts shadows. Layers keep their depth
+    // across the frames that skip them.
     std::optional<ShadowCascadePlan> Plan(const ShadowCascades* cascades, uint64_t casterKey);
-
     // Renders the casters into the cascades Plan chose, with the plan it returned (null with no
-    // cascades).
-    // With a recorder and enough casters, every redrawn layer's draws are recorded on the task
-    // system into secondary command buffers, all layers at once.
+    // cascades). frameSet: a frame set, for the alpha test's materials.
     void Record(
-        VkCommandBuffer commandBuffer,
+        nvrhi::ICommandList* commandList,
+        nvrhi::IBindingSet* frameSet,
         std::span<const ShadowDrawItem> drawItems,
         const ShadowCascadePlan* plan,
         VulkanGpuTimer* timer = nullptr,
         VulkanParallelRecorder* recorder = nullptr) const;
 
   private:
-    // One layer's draws: the casters its cascade sees, opaque ones from the position stream.
-    void RecordCascadeDraws(VkCommandBuffer commandBuffer, const glm::mat4& lightViewProjection, std::span<const ShadowDrawItem> drawItems) const;
-    void CreateImage(VkPhysicalDevice physicalDevice);
-    void CreateSampler(VkPhysicalDevice physicalDevice, nvrhi::IDevice* nvrhiDevice);
-    void CreateRenderPass();
-    void CreateFramebuffers();
-    void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout materialSetLayout);
-    void DestroyHandles();
-
-    VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     uint32_t m_resolution = 0;
-    VkFormat m_format = VK_FORMAT_UNDEFINED;
-    VkImage m_image = VK_NULL_HANDLE;
     nvrhi::TextureHandle m_texture;
-    VkImageView m_arrayView = VK_NULL_HANDLE;
-    std::array<VkImageView, kShadowCascadeCount> m_layerViews{};
-    std::array<VkFramebuffer, kShadowCascadeCount> m_framebuffers{};
+    std::array<nvrhi::FramebufferHandle, kShadowCascadeCount> m_framebuffers{};
     nvrhi::SamplerHandle m_sampler;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_opaquePipeline = VK_NULL_HANDLE;
-    VkPipeline m_maskPipeline = VK_NULL_HANDLE;
+    std::unique_ptr<ShadowCasterRenderer> m_casters;
     ShadowCascadeCache m_cache;
     // Which layers this frame's Record renders or clears, and whether they were last cleared for a
     // frame without a shadow light.
     std::array<bool, kShadowCascadeCount> m_frameRedraw{};
     bool m_cleared = false;
+    // The image was moved out of its initial state once.
+    mutable bool m_initialized = false;
 };
 }

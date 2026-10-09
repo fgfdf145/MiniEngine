@@ -61,44 +61,6 @@ struct DlssMotionPushConstants
 };
 static_assert(sizeof(DlssMotionPushConstants) == 32, "DlssMotionPushConstants must match dlss_motion_vectors.comp");
 
-VkImageMemoryBarrier ImageBarrier(
-    VkImage image,
-    VkImageLayout oldLayout,
-    VkImageLayout newLayout,
-    VkAccessFlags srcAccess,
-    VkAccessFlags dstAccess)
-{
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = oldLayout;
-    barrier.newLayout = newLayout;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = image;
-    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    barrier.srcAccessMask = srcAccess;
-    barrier.dstAccessMask = dstAccess;
-    return barrier;
-}
-
-void RecordBarriers(
-    VkCommandBuffer commandBuffer,
-    VkPipelineStageFlags srcStages,
-    VkPipelineStageFlags dstStages,
-    std::span<const VkImageMemoryBarrier> barriers)
-{
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        srcStages,
-        dstStages,
-        0,
-        0,
-        nullptr,
-        0,
-        nullptr,
-        static_cast<uint32_t>(barriers.size()),
-        barriers.data());
-}
 }
 
 VulkanTaaPass::VulkanTaaPass(nvrhi::IDevice* nvrhiDevice, VkDevice device, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout)
@@ -196,7 +158,6 @@ void VulkanTaaPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    m_history.RecordBarrier(commandBuffer, frame.taaHistory.valid);
     if (frame.dlss != nullptr)
     {
         RecordDlss(commandBuffer, targets, frame);
@@ -317,35 +278,28 @@ void VulkanTaaPass::RecordDlss(
         inputs.worldToView = frame.view;
         inputs.viewToClip = frame.projection;
     }
+    // NGX reads its inputs as shader resources and writes the output for unordered access: the
+    // transitions before this pass and the guides' states above put them there. It records into the
+    // command list's native command buffer and binds what it likes, which NVRHI then forgets.
+    nvrhi::ICommandList* commandList = frame.commandList;
+    commandList->setTextureState(targets.GetTexture(RenderTargetId::SceneTaa, outputSlot), nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+    commandList->commitBarriers();
     frame.dlss->Evaluate(commandBuffer, inputs, frame.dlssSlot);
+    commandList->clearState();
 
     // The result becomes the history the SSR trace takes its colour from next frame, as the TAA
-    // resolve's does. NGX's own work may be in any stage, hence the wide first scope.
-    const VkImage output = inputs.output.image;
-    const VkImage history = m_history.GetImage(1u - frame.taaHistory.readIndex);
-    {
-        const std::array<VkImageMemoryBarrier, 2> barriers = {
-            ImageBarrier(output, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT),
-            ImageBarrier(history, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT)};
-        RecordBarriers(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, barriers);
-    }
-    VkImageCopy copy{};
-    copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.extent = {frame.outputExtent.width, frame.outputExtent.height, 1};
-    vkCmdCopyImage(commandBuffer, output, VK_IMAGE_LAYOUT_GENERAL, history, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
-    // Before the passes that read SceneTaa (and the layout tracker's transition of it, which waits on
-    // the compute stage), and next frame's reads of the history.
-    {
-        const std::array<VkImageMemoryBarrier, 2> barriers = {
-            ImageBarrier(output, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT),
-            ImageBarrier(history, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT)};
-        RecordBarriers(
-            commandBuffer,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            barriers);
-    }
+    // resolve's does.
+    nvrhi::ITexture* output = targets.GetTexture(RenderTargetId::SceneTaa, outputSlot);
+    nvrhi::ITexture* history = m_history.GetTexture(1u - frame.taaHistory.readIndex);
+    commandList->setTextureState(output, nvrhi::AllSubresources, nvrhi::ResourceStates::CopySource);
+    commandList->setTextureState(history, nvrhi::AllSubresources, nvrhi::ResourceStates::CopyDest);
+    commandList->commitBarriers();
+    const nvrhi::TextureSlice slice = nvrhi::TextureSlice().setWidth(frame.outputExtent.width).setHeight(frame.outputExtent.height);
+    commandList->copyTexture(history, slice, output, slice);
+    // Where the TAA resolve leaves the two: SceneTaa written, the history for next frame's reads.
+    commandList->setTextureState(output, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+    commandList->setTextureState(history, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+    commandList->commitBarriers();
 }
 
 VkImageView VulkanTaaPass::GetHistoryView(uint32_t index) const

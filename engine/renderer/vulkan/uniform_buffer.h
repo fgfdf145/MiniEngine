@@ -85,6 +85,10 @@ struct EnvironmentDescriptorBindings
     TextureDescriptorBinding pathTraceLayerDepth;
     TextureDescriptorBinding pathTraceLayerDiffuse;
     TextureDescriptorBinding pathTraceLayerSpecular;
+    // Binding 128: every material sampler (VulkanSamplerCache::SamplerAt order,
+    // kMaterialSamplerCount of them), which the material shaders index by
+    // GpuMaterialData::samplerIndices (scene_common.slang's MaterialSampler).
+    std::vector<nvrhi::ISampler*> materialSamplers;
 };
 
 struct MaterialTextureBinding
@@ -124,9 +128,11 @@ struct MaterialTextureBinding
 // fourteen layer maps (material_layers.slang), then the detail mask and the four detail layers
 // (detail_layers.slang).
 inline constexpr uint32_t kMaterialTextureBindingCount = 32;
-// Each one's sampler is a binding of its own, this far on (MATERIAL_SAMPLER in
-// shaders/vulkan/scene_common.slang): NVRHI's binding sets have no combined image sampler.
-inline constexpr uint32_t kMaterialSamplerBindingOffset = 64;
+// Their samplers are no bindings of set 1: set 0 holds every sampler a material may ask for at this
+// binding, and each material names its own by index (GpuMaterialData::samplerIndices). D3D12's
+// shader-visible sampler heap holds 2048 samplers, so a set of samplers per material could not be.
+inline constexpr uint32_t kMaterialSamplerTableBinding = 128;
+inline constexpr uint32_t kMaterialSamplerCount = 108;
 
 // Per-light GPU data, 5 x vec4 = 80 bytes, matching SceneLightData in shaders/vulkan/scene_common.slang.
 // positionAndRange : xyz = world position, w = effective range (metres)
@@ -327,13 +333,13 @@ class VulkanFrameDescriptorSetLayout
     nvrhi::BindingLayoutHandle m_layout;
 };
 
-// The material descriptor set layout is fixed by the shader (kMaterialTextureBindingCount textures
-// and their samplers) and never varies with scene content or swapchain size. It is owned separately from
+// The material descriptor set layout is fixed by the shader (kMaterialTextureBindingCount textures)
+// and never varies with scene content or swapchain size. It is owned separately from
 // VulkanUniformBuffer so that rebuilding descriptor sets for a new texture set — which happens on
 // every model import — does not invalidate the pipelines built against this layout.
 //
-// An NVRHI binding layout at set 1 (the geometry, forward, toon and path traced layer passes; the
-// shadow passes' native pipelines put the same VkDescriptorSetLayout at set 0). Its binding sets come
+// An NVRHI binding layout at set 1 (the geometry, forward, toon, shadow and path traced layer passes).
+// Its binding sets come
 // from descriptor pools the layout shares, kMaterialSetsPerPool sets a pool (the overlay port's
 // shared-descriptor-pools patch): a streamed map keeps tens of thousands of material sets, where
 // NVRHI's default pool per binding set would be a pool each.

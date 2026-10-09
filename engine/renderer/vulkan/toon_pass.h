@@ -35,7 +35,7 @@ class VulkanToonMaterials
     // At most this many toon draws a frame; the rest are left undrawn (with a warning).
     static constexpr uint32_t kMaxDraws = 512;
 
-    VulkanToonMaterials(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, uint32_t frameSlotCount);
+    VulkanToonMaterials(nvrhi::IDevice* nvrhiDevice, uint32_t frameSlotCount);
     ~VulkanToonMaterials();
 
     VulkanToonMaterials(const VulkanToonMaterials&) = delete;
@@ -45,19 +45,16 @@ class VulkanToonMaterials
     // head pose (parallel to the draws: the joint's palette matrix, the identity for a rigid face);
     // returns how many fit.
     uint32_t Write(uint32_t frameSlot, std::span<const VulkanDrawItem> toonDrawItems, std::span<const glm::mat4> headPoses);
-    VkDescriptorSetLayout GetSetLayout() const;
-    VkDescriptorSet GetSet(uint32_t frameSlot) const;
+
+    // Set 2 of the toon pipelines: the materials and the push constants (register space 2).
+    nvrhi::IBindingLayout* GetSetLayout() const;
+    nvrhi::IBindingSet* GetSet(uint32_t frameSlot) const;
 
   private:
-    void DestroyHandles();
-
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_pool = VK_NULL_HANDLE;
-    std::vector<VkBuffer> m_buffers;
-    std::vector<nvrhi::BufferHandle> m_handles;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    std::vector<nvrhi::BufferHandle> m_buffers;
     std::vector<void*> m_mapped;
-    std::vector<VkDescriptorSet> m_sets;
+    std::vector<nvrhi::BindingSetHandle> m_sets;
 };
 
 // The push constants of every toon pipeline (DrawConstants in toon_common.slang): the model matrix,
@@ -75,11 +72,10 @@ class VulkanToonPrepass : public IScenePass
 {
   public:
     VulkanToonPrepass(
-        VkDevice device,
-        VkPipelineCache pipelineCache,
+        nvrhi::IDevice* nvrhiDevice,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
-        VkDescriptorSetLayout materialSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
+        nvrhi::IBindingLayout* materialSetLayout,
         const VulkanToonMaterials& materials);
     ~VulkanToonPrepass() override;
 
@@ -95,31 +91,24 @@ class VulkanToonPrepass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateRenderPass(const SceneRenderTargets& targets);
-    void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout, VkDescriptorSetLayout materialSetLayout);
     void CreateFramebuffers(const SceneRenderTargets& targets);
-    void DestroyFramebuffers();
-    void DestroyHandles();
 
-    VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     const VulkanToonMaterials& m_materials;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     // Indexed by ToonPipelineIndex: opaque (writes the mask) or transparent (does not), each culling
     // back faces or none.
-    std::array<VkPipeline, 4> m_pipelines{};
-    std::vector<VkFramebuffer> m_framebuffers;
+    std::array<nvrhi::GraphicsPipelineHandle, 4> m_pipelines{};
+    std::vector<nvrhi::FramebufferHandle> m_framebuffers;
 };
 
 class VulkanToonPass : public IScenePass
 {
   public:
     VulkanToonPass(
-        VkDevice device,
-        VkPipelineCache pipelineCache,
+        nvrhi::IDevice* nvrhiDevice,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
-        VkDescriptorSetLayout materialSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
+        nvrhi::IBindingLayout* materialSetLayout,
         const VulkanToonMaterials& materials);
     ~VulkanToonPass() override;
 
@@ -135,25 +124,17 @@ class VulkanToonPass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateRenderPass(const SceneRenderTargets& targets);
-    void CreateTargetSetLayout();
-    void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout, VkDescriptorSetLayout materialSetLayout);
     void CreateTargetSets(const SceneRenderTargets& targets);
     void CreateFramebuffers(const SceneRenderTargets& targets);
-    void DestroyFramebuffers();
-    void DestroyHandles();
 
-    VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     const VulkanToonMaterials& m_materials;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
     // Set 3: the prepass's linear depth and eye mask, per frame slot.
-    VkDescriptorSetLayout m_targetSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_targetPool = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_targetSets;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_targetSetLayout;
+    std::vector<nvrhi::BindingSetHandle> m_targetSets;
     // Indexed by ToonPipelineIndex for the surfaces (opaque or transparent, culling back faces or
     // none), then the outline.
-    std::array<VkPipeline, 5> m_pipelines{};
-    std::vector<VkFramebuffer> m_framebuffers;
+    std::array<nvrhi::GraphicsPipelineHandle, 5> m_pipelines{};
+    std::vector<nvrhi::FramebufferHandle> m_framebuffers;
 };
 }

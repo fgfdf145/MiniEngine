@@ -9,11 +9,6 @@
 #include "d3d_register.slang"
 #include "shader_helpers.slang"
 
-[[vk::binding(0, 0)]] Texture2D baseColorTexture : register(t0, space0);
-[[vk::binding(64, 0)]] SamplerState baseColorTextureSampler : register(s64, space0);
-[[vk::binding(1, 0)]] Texture2D emissiveTexture : register(t1, space0);
-[[vk::binding(65, 0)]] SamplerState emissiveTextureSampler : register(s65, space0);
-
 struct RayMaterial
 {
     float4 albedoCoverage;
@@ -21,16 +16,24 @@ struct RayMaterial
     uint4 samplers;
 };
 
-// Every slot's set names its textures; the materials buffer is one set for all of them.
-[[vk::binding(0, 1)]] RWStructuredBuffer<RayMaterial> rayMaterials : register(u0, space1);
+// The materials buffer, and every material sampler (the ray set's binding 8 table, VulkanSamplerCache's
+// order), in set 0; the slot's textures from the ray texture table (set 3), which holds them at
+// slot * RAY_TEXTURES_PER_SLOT + RAY_TEXTURE_* (ray_hit_common.slang).
+[[vk::binding(0, 0)]] RWStructuredBuffer<RayMaterial> rayMaterials : register(u0, space0);
+#define RAY_SAMPLER_COUNT 108
+[[vk::binding(1, 0)]] SamplerState materialSamplers[RAY_SAMPLER_COUNT] : register(s1, space0);
+[[vk::binding(0, 3)]] Texture2D rayTextures[] : register(t0, space3);
+static const uint RAY_TEXTURES_PER_SLOT = 5u;
+static const uint RAY_TEXTURE_BASE_COLOR = 0u;
+static const uint RAY_TEXTURE_EMISSIVE = 3u;
 
 // Must match RayMaterialConstants in engine/renderer/vulkan/ray_scene.cpp.
 struct RayMaterialConstants
 {
     float4 baseColorFactor;
     float4 emissiveAndCutoff; // rgb emissive factor, a alpha cutoff
-    uint4 params;           // x output index, y alpha mode, z flags, w transmission as float bits
-    uint4 samplers;         // RayMaterial's samplers, passed through
+    uint4 params;           // x output index (the slot), y alpha mode, z flags, w transmission as float bits
+    uint4 samplers;         // RayMaterial's samplers, passed through: x bytes base colour, metallic, roughness, emissive
 };
 [[vk::push_constant]] ConstantBuffer<RayMaterialConstants> constants D3D_PUSH_CONSTANTS(0);
 
@@ -53,8 +56,13 @@ void main(uint3 groupThreadId : SV_GroupThreadID, uint groupIndex : SV_GroupInde
 {
     uint index = groupIndex;
     float2 uv = (float2(groupThreadId.xy) + 0.5) / 16.0;
-    float4 base = baseColorTexture.SampleLevel(baseColorTextureSampler, uv, LodForSize(baseColorTexture, 16.0)) * constants.baseColorFactor;
-    float3 emission = emissiveTexture.SampleLevel(emissiveTextureSampler, uv, LodForSize(emissiveTexture, 16.0)).rgb * constants.emissiveAndCutoff.rgb;
+    // One slot a dispatch: the indices are uniform.
+    Texture2D baseColorTexture = rayTextures[constants.params.x * RAY_TEXTURES_PER_SLOT + RAY_TEXTURE_BASE_COLOR];
+    Texture2D emissiveTexture = rayTextures[constants.params.x * RAY_TEXTURES_PER_SLOT + RAY_TEXTURE_EMISSIVE];
+    SamplerState baseColorSampler = materialSamplers[constants.samplers.x & 0xffu];
+    SamplerState emissiveSampler = materialSamplers[(constants.samplers.x >> 24u) & 0xffu];
+    float4 base = baseColorTexture.SampleLevel(baseColorSampler, uv, LodForSize(baseColorTexture, 16.0)) * constants.baseColorFactor;
+    float3 emission = emissiveTexture.SampleLevel(emissiveSampler, uv, LodForSize(emissiveTexture, 16.0)).rgb * constants.emissiveAndCutoff.rgb;
 
     float coverage = 1.0;
     if (constants.params.y == ALPHA_MASK)

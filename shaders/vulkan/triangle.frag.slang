@@ -18,31 +18,31 @@ SPECIALIZATION_BOOL(1, kScatterPrepass);
 #include "pre_exposure.slang"
 
 [[vk::binding(0, 1)]] Texture2D baseColorTexture : register(t0, space1);
-[[vk::binding(MATERIAL_SAMPLER(0), 1)]] SamplerState baseColorTextureSampler : register(s64, space1);
+#define baseColorTextureSampler MaterialSampler(0)
 [[vk::binding(1, 1)]] Texture2D normalTexture : register(t1, space1);
-[[vk::binding(MATERIAL_SAMPLER(1), 1)]] SamplerState normalTextureSampler : register(s65, space1);
+#define normalTextureSampler MaterialSampler(1)
 [[vk::binding(2, 1)]] Texture2D metallicTexture : register(t2, space1);
-[[vk::binding(MATERIAL_SAMPLER(2), 1)]] SamplerState metallicTextureSampler : register(s66, space1);
+#define metallicTextureSampler MaterialSampler(2)
 [[vk::binding(3, 1)]] Texture2D roughnessTexture : register(t3, space1);
-[[vk::binding(MATERIAL_SAMPLER(3), 1)]] SamplerState roughnessTextureSampler : register(s67, space1);
+#define roughnessTextureSampler MaterialSampler(3)
 [[vk::binding(4, 1)]] Texture2D occlusionTexture : register(t4, space1);
-[[vk::binding(MATERIAL_SAMPLER(4), 1)]] SamplerState occlusionTextureSampler : register(s68, space1);
+#define occlusionTextureSampler MaterialSampler(4)
 [[vk::binding(5, 1)]] Texture2D emissiveTexture : register(t5, space1);
-[[vk::binding(MATERIAL_SAMPLER(5), 1)]] SamplerState emissiveTextureSampler : register(s69, space1);
+#define emissiveTextureSampler MaterialSampler(5)
 [[vk::binding(6, 1)]] Texture2D secondaryBaseColorTexture : register(t6, space1);
-[[vk::binding(MATERIAL_SAMPLER(6), 1)]] SamplerState secondaryBaseColorTextureSampler : register(s70, space1);
+#define secondaryBaseColorTextureSampler MaterialSampler(6)
 [[vk::binding(7, 1)]] Texture2D secondaryNormalTexture : register(t7, space1);
-[[vk::binding(MATERIAL_SAMPLER(7), 1)]] SamplerState secondaryNormalTextureSampler : register(s71, space1);
+#define secondaryNormalTextureSampler MaterialSampler(7)
 [[vk::binding(8, 1)]] Texture2D secondaryMetallicTexture : register(t8, space1);
-[[vk::binding(MATERIAL_SAMPLER(8), 1)]] SamplerState secondaryMetallicTextureSampler : register(s72, space1);
+#define secondaryMetallicTextureSampler MaterialSampler(8)
 [[vk::binding(9, 1)]] Texture2D secondaryRoughnessTexture : register(t9, space1);
-[[vk::binding(MATERIAL_SAMPLER(9), 1)]] SamplerState secondaryRoughnessTextureSampler : register(s73, space1);
+#define secondaryRoughnessTextureSampler MaterialSampler(9)
 [[vk::binding(10, 1)]] Texture2D secondaryOcclusionTexture : register(t10, space1);
-[[vk::binding(MATERIAL_SAMPLER(10), 1)]] SamplerState secondaryOcclusionTextureSampler : register(s74, space1);
+#define secondaryOcclusionTextureSampler MaterialSampler(10)
 [[vk::binding(11, 1)]] Texture2D secondaryEmissiveTexture : register(t11, space1);
-[[vk::binding(MATERIAL_SAMPLER(11), 1)]] SamplerState secondaryEmissiveTextureSampler : register(s75, space1);
+#define secondaryEmissiveTextureSampler MaterialSampler(11)
 [[vk::binding(12, 1)]] Texture2D blendMaskTexture : register(t12, space1);
-[[vk::binding(MATERIAL_SAMPLER(12), 1)]] SamplerState blendMaskTextureSampler : register(s76, space1);
+#define blendMaskTextureSampler MaterialSampler(12)
 #include "material_layers.slang"
 #include "detail_layers.slang"
 #include "transmission_common.slang"
@@ -162,6 +162,7 @@ FragmentOutput main(FragmentInput input)
 {
     FragmentOutput output;
     MaterialData material = materials[input.fragDrawSlot];
+    LoadMaterialSamplers(material.samplerIndices);
 
     // ---- Blend mask & blend weight ----------------------------------------
     float blendMask = MaterialTexture(blendMaskTexture, input.fragTexCoord).r;

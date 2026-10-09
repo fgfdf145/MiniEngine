@@ -6,15 +6,15 @@
 // material_layers.slang. All five are bound as linear data: AC combines the sRGB-encoded values, and
 // the sum is decoded once here. Include after material_common.slang.
 [[vk::binding(27, 1)]] Texture2D detailMaskTexture : register(t27, space1);
-[[vk::binding(MATERIAL_SAMPLER(27), 1)]] SamplerState detailMaskTextureSampler : register(s91, space1);
+#define detailMaskTextureSampler MaterialSampler(27)
 [[vk::binding(28, 1)]] Texture2D detailLayerRTexture : register(t28, space1);
-[[vk::binding(MATERIAL_SAMPLER(28), 1)]] SamplerState detailLayerRTextureSampler : register(s92, space1);
+#define detailLayerRTextureSampler MaterialSampler(28)
 [[vk::binding(29, 1)]] Texture2D detailLayerGTexture : register(t29, space1);
-[[vk::binding(MATERIAL_SAMPLER(29), 1)]] SamplerState detailLayerGTextureSampler : register(s93, space1);
+#define detailLayerGTextureSampler MaterialSampler(29)
 [[vk::binding(30, 1)]] Texture2D detailLayerBTexture : register(t30, space1);
-[[vk::binding(MATERIAL_SAMPLER(30), 1)]] SamplerState detailLayerBTextureSampler : register(s94, space1);
+#define detailLayerBTextureSampler MaterialSampler(30)
 [[vk::binding(31, 1)]] Texture2D detailLayerATexture : register(t31, space1);
-[[vk::binding(MATERIAL_SAMPLER(31), 1)]] SamplerState detailLayerATextureSampler : register(s95, space1);
+#define detailLayerATextureSampler MaterialSampler(31)
 
 float3 DetailLayersSrgbToLinear(float3 encoded)
 {

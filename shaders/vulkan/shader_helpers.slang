@@ -4,6 +4,19 @@
 #ifndef SHADER_HELPERS_SLANG
 #define SHADER_HELPERS_SLANG
 
+// A vertex shader's clip space position as the API's rasterizer reads it. The shaders are written for
+// Vulkan's, y down; Direct3D's is y up, so the DXIL build (MINIENGINE_DXIL) mirrors y, and the same
+// triangles land on the same pixels with the same winding (both APIs judge it in framebuffer space).
+// Every vertex shader writes SV_Position through this.
+float4 ClipPosition(float4 position)
+{
+#ifdef MINIENGINE_DXIL
+    return float4(position.x, -position.y, position.z, position.w);
+#else
+    return position;
+#endif
+}
+
 // GLSL's mod: x - y * floor(x / y), which keeps the sign of y. fmod truncates instead, so it
 // differs for negative x.
 float GlslMod(float x, float y)

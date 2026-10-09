@@ -1,6 +1,5 @@
 #include "viewport_capture.h"
 
-#include "upload_batch.h"
 
 #include <stb_image_write.h>
 
@@ -9,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <stdexcept>
 #include <vector>
 
@@ -17,21 +17,6 @@ namespace me
 
 namespace
 {
-uint32_t FindHostVisibleMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter)
-{
-    const VkMemoryPropertyFlags wanted = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    VkPhysicalDeviceMemoryProperties properties{};
-    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &properties);
-    for (uint32_t index = 0; index < properties.memoryTypeCount; ++index)
-    {
-        if ((typeFilter & (1u << index)) != 0 && (properties.memoryTypes[index].propertyFlags & wanted) == wanted)
-        {
-            return index;
-        }
-    }
-    throw std::runtime_error("No host-visible memory for the viewport capture");
-}
-
 bool IsBgra(VkFormat format)
 {
     return format == VK_FORMAT_B8G8R8A8_SRGB || format == VK_FORMAT_B8G8R8A8_UNORM;
@@ -61,29 +46,19 @@ bool IsRgba(VkFormat format)
     return format == VK_FORMAT_R8G8B8A8_SRGB || format == VK_FORMAT_R8G8B8A8_UNORM;
 }
 
-void TransitionForCopy(VkCommandBuffer commandBuffer, VkImage image, uint32_t layer, VkImageLayout from, VkImageLayout to)
+// Runs commands on the request's device at once and waits for them.
+void RunNow(nvrhi::IDevice* device, const std::function<void(nvrhi::ICommandList*)>& record)
 {
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = from;
-    barrier.newLayout = to;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = image;
-    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, layer, 1};
-    barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-        0,
-        0,
-        nullptr,
-        0,
-        nullptr,
-        1,
-        &barrier);
+    nvrhi::CommandListHandle commandList = device->createCommandList();
+    if (!commandList)
+    {
+        throw std::runtime_error("Failed to create the capture command list");
+    }
+    commandList->open();
+    record(commandList);
+    commandList->close();
+    device->executeCommandList(commandList);
+    device->waitForIdle();
 }
 
 std::vector<uint8_t> ReadImageBytes(const ImageCaptureRequest& request)
@@ -92,104 +67,82 @@ std::vector<uint8_t> ReadImageBytes(const ImageCaptureRequest& request)
     {
         throw std::runtime_error("Viewport capture supports only 8-bit RGBA and BGRA and half-float RGBA and RG images");
     }
+    const size_t texelBytes = IsHalfFloat(request.format) ? 2 * HalfFloatChannels(request.format) : 4;
+    nvrhi::IDevice* device = request.device;
 
-    const VkDeviceSize texelBytes = IsHalfFloat(request.format) ? 2 * HalfFloatChannels(request.format) : 4;
-    const VkDeviceSize byteCount = static_cast<VkDeviceSize>(request.extent.width) * request.extent.height * texelBytes;
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = byteCount;
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VkBuffer buffer = VK_NULL_HANDLE;
-    CheckVulkan(vkCreateBuffer(request.device, &bufferInfo, nullptr, &buffer), "Failed to create the capture buffer");
-
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    try
+    // A staging copy of the region, the texture moved to a copy source and back (NVRHI's automatic
+    // barriers, from the state it tracks).
+    nvrhi::TextureDesc desc = request.texture->getDesc();
+    desc.width = request.extent.width;
+    desc.height = request.extent.height;
+    desc.depth = 1;
+    desc.arraySize = 1;
+    desc.mipLevels = 1;
+    desc.dimension = nvrhi::TextureDimension::Texture2D;
+    desc.isRenderTarget = false;
+    desc.isUAV = false;
+    desc.isTypeless = false;
+    desc.keepInitialState = false;
+    desc.initialState = nvrhi::ResourceStates::Unknown;
+    desc.debugName = "Capture staging";
+    nvrhi::StagingTextureHandle staging = device->createStagingTexture(desc, nvrhi::CpuAccessMode::Read);
+    if (!staging)
     {
-        VkMemoryRequirements requirements{};
-        vkGetBufferMemoryRequirements(request.device, buffer, &requirements);
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = FindHostVisibleMemoryType(request.physicalDevice, requirements.memoryTypeBits);
-        CheckVulkan(vkAllocateMemory(request.device, &allocateInfo, nullptr, &memory), "Failed to allocate the capture buffer");
-        CheckVulkan(vkBindBufferMemory(request.device, buffer, memory, 0), "Failed to bind the capture buffer");
-
-        VulkanUploadBatch batch(request.device, request.queueFamily, request.queue);
-        const VkCommandBuffer commandBuffer = batch.GetCommandBuffer();
-        TransitionForCopy(commandBuffer, request.image, request.layer, request.layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, request.layer, 1};
-        region.imageExtent = {request.extent.width, request.extent.height, 1};
-        vkCmdCopyImageToBuffer(commandBuffer, request.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
-        TransitionForCopy(commandBuffer, request.image, request.layer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, request.layout);
-        batch.Flush();
-
-        std::vector<uint8_t> bytes(static_cast<size_t>(byteCount));
-        void* mapped = nullptr;
-        CheckVulkan(vkMapMemory(request.device, memory, 0, byteCount, 0, &mapped), "Failed to map the capture buffer");
-        std::memcpy(bytes.data(), mapped, bytes.size());
-        vkUnmapMemory(request.device, memory);
-        vkDestroyBuffer(request.device, buffer, nullptr);
-        vkFreeMemory(request.device, memory, nullptr);
-        return bytes;
+        throw std::runtime_error("Failed to create the capture staging texture");
     }
-    catch (...)
+    RunNow(device, [&](nvrhi::ICommandList* commandList)
+           {
+               commandList->copyTexture(
+                   staging,
+                   nvrhi::TextureSlice().setWidth(request.extent.width).setHeight(request.extent.height),
+                   request.texture,
+                   nvrhi::TextureSlice().setArraySlice(request.layer).setWidth(request.extent.width).setHeight(request.extent.height));
+           });
+
+    size_t rowPitch = 0;
+    const auto* mapped = static_cast<const uint8_t*>(device->mapStagingTexture(staging, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &rowPitch));
+    if (mapped == nullptr)
     {
-        vkDestroyBuffer(request.device, buffer, nullptr);
-        if (memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(request.device, memory, nullptr);
-        }
-        throw;
+        throw std::runtime_error("Failed to map the capture staging texture");
     }
+    const size_t rowBytes = request.extent.width * texelBytes;
+    std::vector<uint8_t> bytes(rowBytes * request.extent.height);
+    for (uint32_t row = 0; row < request.extent.height; ++row)
+    {
+        std::memcpy(bytes.data() + row * rowBytes, mapped + row * rowPitch, rowBytes);
+    }
+    device->unmapStagingTexture(staging);
+    return bytes;
 }
 }
 
-std::vector<uint8_t> ReadBufferBytes(const ImageCaptureRequest& request, VkBuffer source, VkDeviceSize byteCount)
+std::vector<uint8_t> ReadBufferBytes(const ImageCaptureRequest& request, nvrhi::IBuffer* source, uint64_t byteCount)
 {
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = byteCount;
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VkBuffer buffer = VK_NULL_HANDLE;
-    CheckVulkan(vkCreateBuffer(request.device, &bufferInfo, nullptr, &buffer), "Failed to create the readback buffer");
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    try
+    nvrhi::IDevice* device = request.device;
+    nvrhi::BufferDesc desc;
+    desc.byteSize = byteCount;
+    desc.cpuAccess = nvrhi::CpuAccessMode::Read;
+    desc.initialState = nvrhi::ResourceStates::CopyDest;
+    desc.keepInitialState = true;
+    desc.debugName = "Capture readback";
+    nvrhi::BufferHandle readback = device->createBuffer(desc);
+    if (!readback)
     {
-        VkMemoryRequirements requirements{};
-        vkGetBufferMemoryRequirements(request.device, buffer, &requirements);
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = FindHostVisibleMemoryType(request.physicalDevice, requirements.memoryTypeBits);
-        CheckVulkan(vkAllocateMemory(request.device, &allocateInfo, nullptr, &memory), "Failed to allocate the readback buffer");
-        CheckVulkan(vkBindBufferMemory(request.device, buffer, memory, 0), "Failed to bind the readback buffer");
-
-        VulkanUploadBatch batch(request.device, request.queueFamily, request.queue);
-        const VkBufferCopy region{0, 0, byteCount};
-        vkCmdCopyBuffer(batch.GetCommandBuffer(), source, buffer, 1, &region);
-        batch.Flush();
-
-        std::vector<uint8_t> bytes(static_cast<size_t>(byteCount));
-        void* mapped = nullptr;
-        CheckVulkan(vkMapMemory(request.device, memory, 0, byteCount, 0, &mapped), "Failed to map the readback buffer");
-        std::memcpy(bytes.data(), mapped, bytes.size());
-        vkUnmapMemory(request.device, memory);
-        vkDestroyBuffer(request.device, buffer, nullptr);
-        vkFreeMemory(request.device, memory, nullptr);
-        return bytes;
+        throw std::runtime_error("Failed to create the readback buffer");
     }
-    catch (...)
+    RunNow(device, [&](nvrhi::ICommandList* commandList)
+           {
+               commandList->copyBuffer(readback, 0, source, 0, byteCount);
+           });
+    const void* mapped = device->mapBuffer(readback, nvrhi::CpuAccessMode::Read);
+    if (mapped == nullptr)
     {
-        vkDestroyBuffer(request.device, buffer, nullptr);
-        if (memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(request.device, memory, nullptr);
-        }
-        throw;
+        throw std::runtime_error("Failed to map the readback buffer");
     }
+    std::vector<uint8_t> bytes(static_cast<size_t>(byteCount));
+    std::memcpy(bytes.data(), mapped, bytes.size());
+    device->unmapBuffer(readback);
+    return bytes;
 }
 
 std::vector<glm::vec4> ReadImageHalfFloats(const ImageCaptureRequest& request)

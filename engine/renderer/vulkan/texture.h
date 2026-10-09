@@ -17,18 +17,15 @@ enum class VulkanTextureFormat
     LinearData
 };
 
-// An image and its view, without a sampler: callers pair the view with one from VulkanSamplerCache,
-// so a scene with thousands of textures stays far below the device's sampler limit. The image is
-// NVRHI's, bound to a range of VulkanMemoryPool's heaps; the upload and the view are still recorded
-// and made natively, and leave it in SHADER_READ_ONLY_OPTIMAL (NVRHI's ShaderResource, which it
-// keeps as the texture's state between command lists).
+// An image (and on Vulkan its native view), without a sampler: callers pair it with one from
+// VulkanSamplerCache, so a scene with thousands of textures stays far below the device's sampler
+// limit. The image is NVRHI's, bound to a range of VulkanMemoryPool's heaps, uploaded through the
+// batch's NVRHI writes, and rests as a shader resource (keepInitialState).
 class VulkanTexture
 {
   public:
-    // Records this texture's upload (staging copy + layout transitions) into a caller-supplied
-    // batch instead of submitting and waiting on its own. The caller must call
-    // uploadBatch.Flush() (or otherwise ensure it gets flushed) before the texture is sampled,
-    // and keep the batch alive until then.
+    // Records this texture's upload into a caller-supplied batch instead of submitting and waiting
+    // on its own. The caller submits the batch before the texture is sampled.
     VulkanTexture(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
@@ -43,7 +40,7 @@ class VulkanTexture
         const TextureData& textureData,
         VulkanUploadBatch& uploadBatch,
         VulkanTextureFormat textureFormat = VulkanTextureFormat::SrgbColor);
-    // Uploads a linear RGBA16F image as R16G16B16A16_SFLOAT with GPU-built mips. The format has no
+    // Uploads a linear RGBA16F image as R16G16B16A16_SFLOAT with its mips. The format has no
     // sRGB variant and needs none: float images are scene-linear whatever slot samples them.
     VulkanTexture(
         VkPhysicalDevice physicalDevice,
@@ -83,22 +80,16 @@ class VulkanTexture
     void DestroyHandles();
     // Uploads an RGBA8 image in this texture's sRGB or linear format.
     void UploadTexture(const TextureData& textureData, VulkanUploadBatch& uploadBatch);
-    // Uploads level 0 from tightly packed texels and builds the mip chain with linear blits when the
-    // format supports them, else keeps a single level. Shared by the RGBA8 and half-float paths.
-    void UploadTexels(const void* texels, VkDeviceSize byteCount, uint32_t width, uint32_t height, VkFormat vkFormat, VulkanUploadBatch& uploadBatch, bool generateMips = true);
+    // Uploads level 0 from tightly packed texels (RGBA8, RGBA16F or RGBA32F) and, with generateMips,
+    // the mip chain built from it on the CPU (not for RGBA32F).
+    void UploadTexels(const void* texels, uint32_t width, uint32_t height, VkFormat vkFormat, VulkanUploadBatch& uploadBatch, bool generateMips = true);
     void UploadCompressedTexture(const CompressedTexture& texture, VulkanUploadBatch& uploadBatch);
-    // Shared by both upload paths once the image holds every level in shader read layout.
+    // The native view, on Vulkan, once the image holds every level.
     void CreateView(VkFormat vkFormat);
     static VkFormat ToVkFormat(CompressedTextureFormat format);
     VkFormat GetVkFormat() const;
-    void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory) const;
     // A sampled 2D image of format with mipLevels levels into m_texture, m_image and m_memory.
     void CreateImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkFormat format);
-    void TransitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t baseMipLevel, uint32_t levelCount) const;
-    void CopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height, VkDeviceSize bufferOffset = 0) const;
-    void GenerateMipmaps(VkCommandBuffer commandBuffer, VkImage image, int32_t texWidth, int32_t texHeight, uint32_t mipLevels) const;
-    bool FormatSupportsLinearBlit(VkFormat format) const;
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;

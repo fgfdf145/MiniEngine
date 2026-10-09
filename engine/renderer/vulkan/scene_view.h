@@ -61,8 +61,6 @@ struct VulkanSceneView
     std::unique_ptr<VulkanAtmosphere::View> atmosphere;
     // The toon passes' per-frame materials, written from this view's draws.
     std::unique_ptr<VulkanToonMaterials> toonMaterials;
-    // Scoped to one command buffer: reset where each frame records this view (see RenderFrame).
-    RenderTargetLayoutTracker layoutTracker;
     // Last frame's matrices for motion vectors, and which history image each temporal pass reads
     // and writes. Reset wherever the targets are rebuilt (ResetHistories).
     MotionHistory motionHistory;
@@ -119,7 +117,6 @@ struct VulkanSceneView
     // Every history starts over: the images behind them are new, or show something else.
     void ResetHistories()
     {
-        layoutTracker.Reset();
         motionHistory.Reset();
         aoHistory.Reset();
         rtShadowHistory.Reset();

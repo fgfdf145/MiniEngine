@@ -285,10 +285,12 @@ set(MINIENGINE_SHADER_SOURCES
     selection_outline.frag
     skin.comp
     tyre_deform.comp
+    mip_downsample.comp
     toon.vert
     toon.frag
     toon_prepass.frag
-    imgui_hdr10.frag
+    imgui.vert
+    imgui.frag
     ssr_trace.comp
     ssr_resolve.comp
     rt_shadow_temporal.comp
@@ -410,6 +412,10 @@ set(MINIENGINE_SHADER_DEFINE_VARIANTS
     # The path tracer's offline mode accumulates in full float (path_trace_common.slang).
     "path_trace_temporal.comp|path_trace_temporal_float32.comp|PT_HISTORY_FLOAT32=1"
     "path_trace_filter.comp|path_trace_filter_float32.comp|PT_HISTORY_FLOAT32=1"
+    # ImGui's fragments for an HDR10 swapchain (ImGuiNvrhiRenderer).
+    "imgui.frag|imgui_hdr10.frag|IMGUI_HDR10=1"
+    # The mip chain of a plain 2D texture (MipDownsample), whose views cannot be arrays.
+    "mip_downsample.comp|mip_downsample_2d.comp|MIP_DOWNSAMPLE_2D=1"
 )
 
 # The path tracer's trace without what a frame does not need (VulkanPathTracePass picks one).

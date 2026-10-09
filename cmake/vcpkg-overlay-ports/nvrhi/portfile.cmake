@@ -33,6 +33,12 @@ vcpkg_from_github(
         bindless-table-set-and-variable-count.patch
         # The D3D12 backend honours SamplerDesc's comparison and LOD clamps too (see the first patch).
         d3d12-sampler-lod-and-comparison.patch
+        # BufferDesc::cpuWriteNearGpu: a CPU-written buffer in video memory the CPU can write (resizable
+        # BAR; D3D12's GPU upload heap), for the ray scene's small buffers every hit reads.
+        cpu-write-near-gpu.patch
+        # Upload chunks ask for the shader binding table usage only with ray tracing pipelines: with
+        # acceleration structures alone (ray queries) the usage is invalid on Vulkan.
+        upload-chunk-sbt-usage.patch
 )
 
 if(VCPKG_TARGET_IS_WINDOWS)

@@ -2,12 +2,138 @@
 
 #include "nvrhi_native.h"
 
+#include <glm/gtc/packing.hpp>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
+#include <stdexcept>
 
 namespace me
 {
+
+namespace
+{
+// The texel formats whose mips are built here, and how a texel turns into linear floats and back.
+enum class TexelFormat
+{
+    Rgba8Srgb,
+    Rgba8Unorm,
+    Rgba16Float
+};
+
+float SrgbToLinear(float encoded)
+{
+    return encoded <= 0.04045f ? encoded / 12.92f : std::pow((encoded + 0.055f) / 1.055f, 2.4f);
+}
+
+float LinearToSrgb(float linear)
+{
+    return linear <= 0.0031308f ? linear * 12.92f : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
+}
+
+uint8_t ToUnorm8(float value)
+{
+    return static_cast<uint8_t>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+}
+
+size_t TexelBytes(TexelFormat format)
+{
+    return format == TexelFormat::Rgba16Float ? 8 : 4;
+}
+
+// The image as linear floats, four a texel.
+std::vector<float> Decode(const void* texels, uint32_t width, uint32_t height, TexelFormat format)
+{
+    const size_t count = static_cast<size_t>(width) * height * 4;
+    std::vector<float> decoded(count);
+    if (format == TexelFormat::Rgba16Float)
+    {
+        const auto* halves = static_cast<const uint16_t*>(texels);
+        for (size_t index = 0; index < count; ++index)
+        {
+            decoded[index] = glm::unpackHalf1x16(halves[index]);
+        }
+        return decoded;
+    }
+    static const std::array<float, 256> kSrgb = []()
+    {
+        std::array<float, 256> table{};
+        for (size_t value = 0; value < table.size(); ++value)
+        {
+            table[value] = SrgbToLinear(static_cast<float>(value) / 255.0f);
+        }
+        return table;
+    }();
+    const auto* bytes = static_cast<const uint8_t*>(texels);
+    for (size_t index = 0; index < count; ++index)
+    {
+        // Alpha is linear in every format.
+        const bool colour = format == TexelFormat::Rgba8Srgb && index % 4 != 3;
+        decoded[index] = colour ? kSrgb[bytes[index]] : static_cast<float>(bytes[index]) / 255.0f;
+    }
+    return decoded;
+}
+
+std::vector<uint8_t> Encode(const std::vector<float>& linear, TexelFormat format)
+{
+    std::vector<uint8_t> encoded(linear.size() / 4 * TexelBytes(format));
+    if (format == TexelFormat::Rgba16Float)
+    {
+        auto* halves = reinterpret_cast<uint16_t*>(encoded.data());
+        for (size_t index = 0; index < linear.size(); ++index)
+        {
+            halves[index] = glm::packHalf1x16(linear[index]);
+        }
+        return encoded;
+    }
+    for (size_t index = 0; index < linear.size(); ++index)
+    {
+        const bool colour = format == TexelFormat::Rgba8Srgb && index % 4 != 3;
+        encoded[index] = ToUnorm8(colour ? LinearToSrgb(linear[index]) : linear[index]);
+    }
+    return encoded;
+}
+
+// The next level down, as a linear blit makes it (vkCmdBlitImage, VK_FILTER_LINEAR): each target
+// texel is the source bilinearly sampled at the target texel's centre, clamped to the edge; the 2x2
+// average where the source size is even. sRGB images filter in linear space, as the blit did.
+std::vector<float> Downsample(const std::vector<float>& source, uint32_t width, uint32_t height, uint32_t targetWidth, uint32_t targetHeight)
+{
+    std::vector<float> target(static_cast<size_t>(targetWidth) * targetHeight * 4);
+    const float scaleX = static_cast<float>(width) / static_cast<float>(targetWidth);
+    const float scaleY = static_cast<float>(height) / static_cast<float>(targetHeight);
+    for (uint32_t y = 0; y < targetHeight; ++y)
+    {
+        const float sy = (static_cast<float>(y) + 0.5f) * scaleY - 0.5f;
+        const int32_t y0 = static_cast<int32_t>(std::floor(sy));
+        const float fy = sy - static_cast<float>(y0);
+        const uint32_t rowA = static_cast<uint32_t>(std::clamp(y0, 0, static_cast<int32_t>(height) - 1));
+        const uint32_t rowB = static_cast<uint32_t>(std::clamp(y0 + 1, 0, static_cast<int32_t>(height) - 1));
+        for (uint32_t x = 0; x < targetWidth; ++x)
+        {
+            const float sx = (static_cast<float>(x) + 0.5f) * scaleX - 0.5f;
+            const int32_t x0 = static_cast<int32_t>(std::floor(sx));
+            const float fx = sx - static_cast<float>(x0);
+            const uint32_t columnA = static_cast<uint32_t>(std::clamp(x0, 0, static_cast<int32_t>(width) - 1));
+            const uint32_t columnB = static_cast<uint32_t>(std::clamp(x0 + 1, 0, static_cast<int32_t>(width) - 1));
+            const float* a = &source[(static_cast<size_t>(rowA) * width + columnA) * 4];
+            const float* b = &source[(static_cast<size_t>(rowA) * width + columnB) * 4];
+            const float* c = &source[(static_cast<size_t>(rowB) * width + columnA) * 4];
+            const float* d = &source[(static_cast<size_t>(rowB) * width + columnB) * 4];
+            float* out = &target[(static_cast<size_t>(y) * targetWidth + x) * 4];
+            for (uint32_t channel = 0; channel < 4; ++channel)
+            {
+                const float top = a[channel] + (b[channel] - a[channel]) * fx;
+                const float bottom = c[channel] + (d[channel] - c[channel]) * fx;
+                out[channel] = top + (bottom - top) * fy;
+            }
+        }
+    }
+    return target;
+}
+}
 
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
@@ -72,11 +198,10 @@ VulkanTexture::VulkanTexture(
     {
         if (!textureData.IsValid())
         {
-            throw std::runtime_error("Cannot create Vulkan texture from invalid half-float data");
+            throw std::runtime_error("Cannot create a texture from invalid half-float data");
         }
         UploadTexels(
             textureData.texels.data(),
-            static_cast<VkDeviceSize>(textureData.texels.size() * sizeof(std::uint16_t)),
             static_cast<uint32_t>(textureData.width),
             static_cast<uint32_t>(textureData.height),
             VK_FORMAT_R16G16B16A16_SFLOAT,
@@ -108,30 +233,16 @@ VulkanTexture::VulkanTexture(
         }
         const uint32_t width = static_cast<uint32_t>(equirectangular.width);
         const uint32_t height = static_cast<uint32_t>(equirectangular.height);
-        VkFormatProperties properties{};
-        vkGetPhysicalDeviceFormatProperties(m_physicalDevice, VK_FORMAT_R32G32B32A32_SFLOAT, &properties);
-        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0)
+        // Linear filtering of 32-bit floats is optional; NVRHI says sampling for filtered sampling.
+        const nvrhi::FormatSupport support = m_nvrhiDevice->queryFormatSupport(nvrhi::Format::RGBA32_FLOAT);
+        if ((support & nvrhi::FormatSupport::ShaderSample) == nvrhi::FormatSupport::ShaderSample)
         {
-            UploadTexels(
-                equirectangular.pixels.data(),
-                static_cast<VkDeviceSize>(equirectangular.pixels.size() * sizeof(float)),
-                width,
-                height,
-                VK_FORMAT_R32G32B32A32_SFLOAT,
-                uploadBatch,
-                false);
+            UploadTexels(equirectangular.pixels.data(), width, height, VK_FORMAT_R32G32B32A32_SFLOAT, uploadBatch, false);
         }
         else
         {
             const HalfFloatTextureData packed = PackRgba16Float(equirectangular);
-            UploadTexels(
-                packed.texels.data(),
-                static_cast<VkDeviceSize>(packed.texels.size() * sizeof(std::uint16_t)),
-                width,
-                height,
-                VK_FORMAT_R16G16B16A16_SFLOAT,
-                uploadBatch,
-                false);
+            UploadTexels(packed.texels.data(), width, height, VK_FORMAT_R16G16B16A16_SFLOAT, uploadBatch, false);
         }
     }
     catch (...)
@@ -166,12 +277,10 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
 {
     if (!textureData.IsValid())
     {
-        throw std::runtime_error("Cannot create Vulkan texture from invalid pixel data");
+        throw std::runtime_error("Cannot create a texture from invalid pixel data");
     }
-
     UploadTexels(
         textureData.pixels.data(),
-        static_cast<VkDeviceSize>(textureData.width) * static_cast<VkDeviceSize>(textureData.height) * 4,
         static_cast<uint32_t>(textureData.width),
         static_cast<uint32_t>(textureData.height),
         GetVkFormat(),
@@ -180,67 +289,38 @@ void VulkanTexture::UploadTexture(const TextureData& textureData, VulkanUploadBa
 
 void VulkanTexture::UploadTexels(
     const void* texels,
-    VkDeviceSize byteCount,
     uint32_t width,
     uint32_t height,
     VkFormat vkFormat,
     VulkanUploadBatch& uploadBatch,
     bool generateMips)
 {
-    VkBuffer stagingBuffer = VK_NULL_HANDLE;
-    VkDeviceSize stagingOffset = 0;
-    if (uploadBatch.CanStage())
-    {
-        const VulkanUploadBatch::StagingSlice slice = uploadBatch.Stage(texels, byteCount);
-        stagingBuffer = slice.buffer;
-        stagingOffset = slice.offset;
-    }
-    else
-    {
-        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-        CreateBuffer(
-            byteCount,
-            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            stagingBuffer,
-            stagingMemory);
-        uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
-
-        void* mappedData = nullptr;
-        CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, byteCount, 0, &mappedData), "Failed to map texture staging buffer");
-        std::memcpy(mappedData, texels, static_cast<size_t>(byteCount));
-        vkUnmapMemory(m_device, stagingMemory);
-    }
-
-    const bool canGenerateMips = FormatSupportsLinearBlit(vkFormat);
-    m_mipLevels = canGenerateMips && generateMips
-                      ? static_cast<uint32_t>(std::floor(std::log2(
-                            static_cast<double>(std::max(width, height))))) +
-                            1
-                      : 1;
-
+    const bool mipmapped = generateMips && vkFormat != VK_FORMAT_R32G32B32A32_SFLOAT;
+    m_mipLevels = mipmapped ? static_cast<uint32_t>(std::floor(std::log2(static_cast<double>(std::max(width, height))))) + 1 : 1;
     CreateImage(width, height, m_mipLevels, vkFormat);
 
-    // All commands below go into the caller's shared batch command buffer, in this same order,
-    // so the transition -> copy -> mip-chain sequence for this image is preserved exactly as
-    // before even though many other textures' sequences are interleaved in the same command
-    // buffer. Each barrier only touches this image, so that's safe.
-    const VkCommandBuffer commandBuffer = uploadBatch.GetCommandBuffer();
-    // Transition every mip level to TRANSFER_DST_OPTIMAL up front: the copy below only fills
-    // level 0, but GenerateMipmaps()'s blit chain expects every level to already be in that
-    // layout (it reads each source level back out of TRANSFER_DST_OPTIMAL).
-    TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, m_mipLevels);
-    CopyBufferToImage(commandBuffer, stagingBuffer, m_image, width, height, stagingOffset);
-
+    const size_t texelBytes = vkFormat == VK_FORMAT_R32G32B32A32_SFLOAT ? 16 : vkFormat == VK_FORMAT_R16G16B16A16_SFLOAT ? 8 : 4;
+    uploadBatch.WriteTexture(m_texture, 0, texels, width * texelBytes, static_cast<uint64_t>(width) * height * texelBytes);
     if (m_mipLevels > 1)
     {
-        GenerateMipmaps(commandBuffer, m_image, static_cast<int32_t>(width), static_cast<int32_t>(height), m_mipLevels);
+        // The chain the blits made, built here: neither NVRHI nor D3D12 blits.
+        const TexelFormat format = vkFormat == VK_FORMAT_R16G16B16A16_SFLOAT ? TexelFormat::Rgba16Float
+                                   : vkFormat == VK_FORMAT_R8G8B8A8_SRGB    ? TexelFormat::Rgba8Srgb
+                                                                            : TexelFormat::Rgba8Unorm;
+        std::vector<float> level = Decode(texels, width, height, format);
+        uint32_t levelWidth = width;
+        uint32_t levelHeight = height;
+        for (uint32_t mip = 1; mip < m_mipLevels; ++mip)
+        {
+            const uint32_t nextWidth = std::max(levelWidth / 2, 1u);
+            const uint32_t nextHeight = std::max(levelHeight / 2, 1u);
+            level = Downsample(level, levelWidth, levelHeight, nextWidth, nextHeight);
+            const std::vector<uint8_t> encoded = Encode(level, format);
+            uploadBatch.WriteTexture(m_texture, mip, encoded.data(), nextWidth * TexelBytes(format), encoded.size());
+            levelWidth = nextWidth;
+            levelHeight = nextHeight;
+        }
     }
-    else
-    {
-        TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 1);
-    }
-
     CreateView(vkFormat);
 }
 
@@ -248,78 +328,19 @@ void VulkanTexture::UploadCompressedTexture(const CompressedTexture& texture, Vu
 {
     if (texture.levels.empty())
     {
-        throw std::runtime_error("Cannot create a Vulkan texture from a compressed texture with no levels");
+        throw std::runtime_error("Cannot create a texture from a compressed texture with no levels");
     }
-
-    // Every level goes into one staging buffer, back to back. Each level is a whole number of
-    // 16-byte blocks, so every level's offset meets the block-size alignment copies require.
-    VkDeviceSize totalSize = 0;
-    for (const CompressedTextureLevel& level : texture.levels)
-    {
-        totalSize += static_cast<VkDeviceSize>(level.blocks.size());
-    }
-
-    std::vector<uint8_t> levelBytes;
-    levelBytes.reserve(static_cast<size_t>(totalSize));
-    std::vector<VkBufferImageCopy> regions;
-    regions.reserve(texture.levels.size());
-    for (uint32_t levelIndex = 0; levelIndex < static_cast<uint32_t>(texture.levels.size()); ++levelIndex)
-    {
-        const CompressedTextureLevel& level = texture.levels[levelIndex];
-        // The extent is the level's pixel size, which a partial edge block may exceed; Vulkan
-        // accepts that for block formats when the extent reaches the edge of the level.
-        VkBufferImageCopy region{};
-        region.bufferOffset = static_cast<VkDeviceSize>(levelBytes.size());
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, levelIndex, 0, 1};
-        region.imageExtent = {level.width, level.height, 1};
-        regions.push_back(region);
-        levelBytes.insert(levelBytes.end(), level.blocks.begin(), level.blocks.end());
-    }
-
-    VkBuffer stagingBuffer = VK_NULL_HANDLE;
-    VkDeviceSize stagingOffset = 0;
-    if (uploadBatch.CanStage())
-    {
-        const VulkanUploadBatch::StagingSlice slice = uploadBatch.Stage(levelBytes.data(), totalSize);
-        stagingBuffer = slice.buffer;
-        stagingOffset = slice.offset;
-    }
-    else
-    {
-        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-        CreateBuffer(
-            totalSize,
-            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            stagingBuffer,
-            stagingMemory);
-        uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
-        void* mappedData = nullptr;
-        CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, totalSize, 0, &mappedData), "Failed to map compressed texture staging buffer");
-        std::memcpy(mappedData, levelBytes.data(), levelBytes.size());
-        vkUnmapMemory(m_device, stagingMemory);
-    }
-    for (VkBufferImageCopy& region : regions)
-    {
-        region.bufferOffset += stagingOffset;
-    }
-
     const VkFormat vkFormat = ToVkFormat(texture.format);
     m_mipLevels = static_cast<uint32_t>(texture.levels.size());
     CreateImage(texture.levels[0].width, texture.levels[0].height, m_mipLevels, vkFormat);
 
-    // The whole chain arrives in one copy: no blits, which block formats could not do anyway.
-    const VkCommandBuffer commandBuffer = uploadBatch.GetCommandBuffer();
-    TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, m_mipLevels);
-    vkCmdCopyBufferToImage(
-        commandBuffer,
-        stagingBuffer,
-        m_image,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        static_cast<uint32_t>(regions.size()),
-        regions.data());
-    TransitionImageLayout(commandBuffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, m_mipLevels);
-
+    // Every format here is 16 bytes a 4x4 block; a level's rows are rows of blocks.
+    for (uint32_t levelIndex = 0; levelIndex < m_mipLevels; ++levelIndex)
+    {
+        const CompressedTextureLevel& level = texture.levels[levelIndex];
+        const uint64_t rowPitch = static_cast<uint64_t>((level.width + 3) / 4) * 16;
+        uploadBatch.WriteTexture(m_texture, levelIndex, level.blocks.data(), rowPitch, level.blocks.size());
+    }
     CreateView(vkFormat);
 }
 
@@ -339,6 +360,12 @@ VkFormat VulkanTexture::ToVkFormat(CompressedTextureFormat format)
 
 void VulkanTexture::CreateView(VkFormat vkFormat)
 {
+    // The native view the Vulkan descriptor writes take (the ray texture table's); NVRHI makes its
+    // own views, and D3D12 needs none of this.
+    if (m_device == VK_NULL_HANDLE || m_image == VK_NULL_HANDLE)
+    {
+        return;
+    }
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = m_image;
@@ -354,9 +381,7 @@ void VulkanTexture::CreateView(VkFormat vkFormat)
 
 VkFormat VulkanTexture::GetVkFormat() const
 {
-    return m_textureFormat == VulkanTextureFormat::SrgbColor
-               ? VK_FORMAT_R8G8B8A8_SRGB
-               : VK_FORMAT_R8G8B8A8_UNORM;
+    return m_textureFormat == VulkanTextureFormat::SrgbColor ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 }
 
 VulkanTexture::~VulkanTexture()
@@ -374,7 +399,7 @@ void VulkanTexture::DestroyHandles()
     // The image goes before the range it is bound to.
     m_texture = nullptr;
     m_image = VK_NULL_HANDLE;
-    VulkanMemoryPool::Free(m_device, m_memory);
+    VulkanMemoryPool::Free(m_memory);
 }
 
 VkImageView VulkanTexture::GetImageView() const
@@ -385,44 +410,6 @@ VkImageView VulkanTexture::GetImageView() const
 nvrhi::ITexture* VulkanTexture::GetNvrhiTexture() const
 {
     return m_texture;
-}
-
-void VulkanTexture::CreateBuffer(
-    VkDeviceSize size,
-    VkBufferUsageFlags usage,
-    VkMemoryPropertyFlags properties,
-    VkBuffer& buffer,
-    VkDeviceMemory& memory) const
-{
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = size;
-    bufferInfo.usage = usage;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create texture buffer");
-
-    // Either both handles come back valid or neither does: the caller only takes ownership of a
-    // complete staging buffer.
-    try
-    {
-        VkMemoryRequirements memoryRequirements{};
-        vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
-
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = memoryRequirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, properties);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate texture buffer memory");
-        CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind texture buffer memory");
-    }
-    catch (...)
-    {
-        vkFreeMemory(m_device, memory, nullptr);
-        memory = VK_NULL_HANDLE;
-        vkDestroyBuffer(m_device, buffer, nullptr);
-        buffer = VK_NULL_HANDLE;
-        throw;
-    }
 }
 
 void VulkanTexture::CreateImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkFormat format)
@@ -449,181 +436,12 @@ void VulkanTexture::CreateImage(uint32_t width, uint32_t height, uint32_t mipLev
     }
     m_image = ToNative<VkImage>(m_texture->getNativeObject(nvrhi::ObjectTypes::VK_Image));
 
-    VkMemoryRequirements memoryRequirements{};
-    vkGetImageMemoryRequirements(m_device, m_image, &memoryRequirements);
-
     // The image is the caller's to release (DestroyHandles), so only the memory is undone here.
-    m_memory = VulkanMemoryPool::Allocate(
-        m_physicalDevice, m_device, memoryRequirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VulkanMemoryPool::Resource::Image);
+    m_memory = VulkanMemoryPool::AllocateFor(m_nvrhiDevice, m_texture);
     if (!m_nvrhiDevice->bindTextureMemory(m_texture, m_memory.heap, m_memory.offset))
     {
-        VulkanMemoryPool::Free(m_device, m_memory);
+        VulkanMemoryPool::Free(m_memory);
         throw std::runtime_error("Failed to bind texture image memory");
     }
-}
-
-void VulkanTexture::TransitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t baseMipLevel, uint32_t levelCount) const
-{
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = oldLayout;
-    barrier.newLayout = newLayout;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseMipLevel = baseMipLevel;
-    barrier.subresourceRange.levelCount = levelCount;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
-
-    VkPipelineStageFlags sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-    VkPipelineStageFlags destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-
-    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-    {
-        barrier.srcAccessMask = 0;
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    }
-    else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-    {
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    }
-    else
-    {
-        throw std::runtime_error("Unsupported texture image layout transition");
-    }
-
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        sourceStage,
-        destinationStage,
-        0,
-        0,
-        nullptr,
-        0,
-        nullptr,
-        1,
-        &barrier);
-}
-
-void VulkanTexture::CopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height, VkDeviceSize bufferOffset) const
-{
-    VkBufferImageCopy region{};
-    region.bufferOffset = bufferOffset;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent = {width, height, 1};
-
-    vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-}
-
-bool VulkanTexture::FormatSupportsLinearBlit(VkFormat format) const
-{
-    VkFormatProperties formatProperties{};
-    vkGetPhysicalDeviceFormatProperties(m_physicalDevice, format, &formatProperties);
-
-    constexpr VkFormatFeatureFlags kRequiredFeatures =
-        VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
-        VK_FORMAT_FEATURE_BLIT_SRC_BIT |
-        VK_FORMAT_FEATURE_BLIT_DST_BIT;
-    return (formatProperties.optimalTilingFeatures & kRequiredFeatures) == kRequiredFeatures;
-}
-
-// Blits each mip level down from the previous one, halving width/height each step. Every level
-// must already be in TRANSFER_DST_OPTIMAL when this is called (see UploadTexture's up-front,
-// whole-mip-range transition); each iteration reuses level (i - 1) as the blit source by flipping
-// it to TRANSFER_SRC_OPTIMAL, then leaves it in SHADER_READ_ONLY_OPTIMAL once it's done being
-// read from. The final (smallest) level is transitioned to SHADER_READ_ONLY_OPTIMAL after the loop
-// since it's only ever a blit destination.
-void VulkanTexture::GenerateMipmaps(VkCommandBuffer commandBuffer, VkImage image, int32_t texWidth, int32_t texHeight, uint32_t mipLevels) const
-{
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.image = image;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
-    barrier.subresourceRange.levelCount = 1;
-
-    int32_t mipWidth = texWidth;
-    int32_t mipHeight = texHeight;
-
-    for (uint32_t level = 1; level < mipLevels; ++level)
-    {
-        barrier.subresourceRange.baseMipLevel = level - 1;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        vkCmdPipelineBarrier(
-            commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-        const int32_t nextMipWidth = mipWidth > 1 ? mipWidth / 2 : 1;
-        const int32_t nextMipHeight = mipHeight > 1 ? mipHeight / 2 : 1;
-
-        VkImageBlit blit{};
-        blit.srcOffsets[1] = {mipWidth, mipHeight, 1};
-        blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        blit.srcSubresource.mipLevel = level - 1;
-        blit.srcSubresource.baseArrayLayer = 0;
-        blit.srcSubresource.layerCount = 1;
-        blit.dstOffsets[1] = {nextMipWidth, nextMipHeight, 1};
-        blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        blit.dstSubresource.mipLevel = level;
-        blit.dstSubresource.baseArrayLayer = 0;
-        blit.dstSubresource.layerCount = 1;
-        vkCmdBlitImage(
-            commandBuffer,
-            image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            1, &blit, VK_FILTER_LINEAR);
-
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(
-            commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-        mipWidth = nextMipWidth;
-        mipHeight = nextMipHeight;
-    }
-
-    barrier.subresourceRange.baseMipLevel = mipLevels - 1;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(
-        commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &barrier);
-}
-
-uint32_t VulkanTexture::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
-{
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memoryProperties);
-
-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
-    {
-        const bool typeMatches = (typeFilter & (1u << i)) != 0;
-        const bool propertiesMatch = (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties;
-        if (typeMatches && propertiesMatch)
-        {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("Failed to find suitable texture memory type");
 }
 }

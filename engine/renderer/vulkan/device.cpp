@@ -227,6 +227,11 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
                                     vulkan12Features.descriptorBindingVariableDescriptorCount == VK_TRUE;
     // Hit shading reads the meshes' vertex and index buffers through 64-bit pointers
     // (ray_hit_common.slang), so it needs 64-bit integers in shaders as well.
+    // The ray scene's texture table and every material sampler table need it with or without ray queries.
+    if (!descriptorIndexing)
+    {
+        throw std::runtime_error(std::string(deviceProperties.deviceName) + " lacks descriptor indexing");
+    }
     m_supportsRayQuery = rayQueryExtensions && vulkan12Features.bufferDeviceAddress == VK_TRUE && descriptorIndexing &&
                          supportedFeatures.shaderInt64 == VK_TRUE &&
                          accelerationFeatures.accelerationStructure == VK_TRUE && rayQueryFeatures.rayQuery == VK_TRUE;
@@ -256,15 +261,12 @@ VulkanDevice::VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const Opti
     enabled12.timelineSemaphore = VK_TRUE;
     enabled12.bufferDeviceAddress = (wantsBufferDeviceAddress || m_supportsRayQuery) ? vulkan12Features.bufferDeviceAddress : VK_FALSE;
     m_bufferDeviceAddressEnabled = enabled12.bufferDeviceAddress == VK_TRUE;
-    if (m_supportsRayQuery)
-    {
-        enabled12.runtimeDescriptorArray = VK_TRUE;
-        enabled12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
-        enabled12.descriptorBindingPartiallyBound = VK_TRUE;
-        enabled12.descriptorBindingVariableDescriptorCount = VK_TRUE;
-        m_supportsUpdateUnusedWhilePending = vulkan12Features.descriptorBindingUpdateUnusedWhilePending == VK_TRUE;
-        enabled12.descriptorBindingUpdateUnusedWhilePending = m_supportsUpdateUnusedWhilePending ? VK_TRUE : VK_FALSE;
-    }
+    enabled12.runtimeDescriptorArray = VK_TRUE;
+    enabled12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+    enabled12.descriptorBindingPartiallyBound = VK_TRUE;
+    enabled12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+    m_supportsUpdateUnusedWhilePending = vulkan12Features.descriptorBindingUpdateUnusedWhilePending == VK_TRUE;
+    enabled12.descriptorBindingUpdateUnusedWhilePending = m_supportsUpdateUnusedWhilePending ? VK_TRUE : VK_FALSE;
     deviceFeatures.shaderInt64 = m_supportsRayQuery ? VK_TRUE : VK_FALSE;
     VkPhysicalDeviceFeatures2 enabledFeatures{};
     enabledFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -354,6 +356,24 @@ bool VulkanDevice::SupportsIndependentBlend() const
 bool VulkanDevice::SupportsRayQuery() const
 {
     return m_supportsRayQuery;
+}
+
+bool VulkanDevice::HasLargeHostVisibleDeviceMemory() const
+{
+    VkPhysicalDeviceMemoryProperties memory{};
+    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memory);
+    constexpr VkMemoryPropertyFlags kWanted =
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    for (uint32_t type = 0; type < memory.memoryTypeCount; ++type)
+    {
+        // A full-size BAR heap only: a 256 MiB window is better left to the driver.
+        if ((memory.memoryTypes[type].propertyFlags & kWanted) == kWanted &&
+            memory.memoryHeaps[memory.memoryTypes[type].heapIndex].size > (VkDeviceSize{1} << 30))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool VulkanDevice::SupportsUpdateUnusedWhilePending() const

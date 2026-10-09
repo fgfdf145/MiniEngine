@@ -113,9 +113,12 @@ struct alignas(16) GpuToonMaterial
     float characterRim[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     // x = kToonFeature* bits, y = the render queue; zw unused.
     uint32_t features[4] = {0u, 2000u, 0u, 0u};
+    // The draw's material texture samplers (GpuMaterialData::samplerIndices), written by the toon
+    // passes from the draw's material: toon shaders know the draw by its toon index alone.
+    uint32_t samplerIndices[8] = {};
 };
 
-static_assert(sizeof(GpuToonMaterial) == 29 * 16, "GpuToonMaterial must stay 29 x vec4 to match ToonMaterial in toon_common.slang");
+static_assert(sizeof(GpuToonMaterial) == 31 * 16, "GpuToonMaterial must stay 31 x vec4 to match ToonMaterial in toon_common.slang");
 static_assert(offsetof(GpuToonMaterial, features) == 28 * 16, "features must be the last vec4");
 
 // What a toon material carries beside its PBR fallback. Its maps sit in the PBR texture slots the

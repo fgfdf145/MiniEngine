@@ -63,6 +63,7 @@ struct ToonMaterial
     float4 headUp;
     float4 characterRim;
     uint4 features;
+    uint4 samplerIndices[2];
 };
 
 // VulkanToonMaterials: the frame's toon materials, indexed by the draw's toonIndex.
@@ -81,31 +82,31 @@ struct DrawConstants
 // The toon maps, each in the PBR slot of the material set (set 1) that ReadToonMaterial
 // (gltf_model_loader.cpp) puts it in, so each is decoded in its colour space.
 [[vk::binding(0, 1)]] Texture2D toonBaseMap : register(t0, space1);                 // _BaseMap (sRGB)
-[[vk::binding(MATERIAL_SAMPLER(0), 1)]] SamplerState toonBaseMapSampler : register(s64, space1);
+#define toonBaseMapSampler MaterialSampler(0)
 [[vk::binding(2, 1)]] Texture2D toonShadingGradeMap : register(t2, space1);         // _ShadingGradeMap, r
-[[vk::binding(MATERIAL_SAMPLER(2), 1)]] SamplerState toonShadingGradeMapSampler : register(s66, space1);
+#define toonShadingGradeMapSampler MaterialSampler(2)
 [[vk::binding(3, 1)]] Texture2D toonAdditiveMatCapMask : register(t3, space1);      // _AdditiveMatCapMask, g
-[[vk::binding(MATERIAL_SAMPLER(3), 1)]] SamplerState toonAdditiveMatCapMaskSampler : register(s67, space1);
+#define toonAdditiveMatCapMaskSampler MaterialSampler(3)
 [[vk::binding(4, 1)]] Texture2D toonOcclusionMap : register(t4, space1);            // _OcclusionMap, g
-[[vk::binding(MATERIAL_SAMPLER(4), 1)]] SamplerState toonOcclusionMapSampler : register(s68, space1);
+#define toonOcclusionMapSampler MaterialSampler(4)
 [[vk::binding(5, 1)]] Texture2D toonAdditiveMatCap : register(t5, space1);          // _AdditiveMatCap (sRGB)
-[[vk::binding(MATERIAL_SAMPLER(5), 1)]] SamplerState toonAdditiveMatCapSampler : register(s69, space1);
+#define toonAdditiveMatCapSampler MaterialSampler(5)
 [[vk::binding(13, 1)]] Texture2D toonAlphaBlendMatCapMask : register(t13, space1);   // _AlphaBlendMatCapMask, g
-[[vk::binding(MATERIAL_SAMPLER(13), 1)]] SamplerState toonAlphaBlendMatCapMaskSampler : register(s77, space1);
+#define toonAlphaBlendMatCapMaskSampler MaterialSampler(13)
 [[vk::binding(14, 1)]] Texture2D toonFaceMaskMap : register(t14, space1);            // _FaceMaskMap, g
-[[vk::binding(MATERIAL_SAMPLER(14), 1)]] SamplerState toonFaceMaskMapSampler : register(s78, space1);
+#define toonFaceMaskMapSampler MaterialSampler(14)
 [[vk::binding(15, 1)]] Texture2D toonAlphaBlendMatCap : register(t15, space1);       // _AlphaBlendMatCap (sRGB)
-[[vk::binding(MATERIAL_SAMPLER(15), 1)]] SamplerState toonAlphaBlendMatCapSampler : register(s79, space1);
+#define toonAlphaBlendMatCapSampler MaterialSampler(15)
 [[vk::binding(16, 1)]] Texture2D toonSkinMaskMap : register(t16, space1);            // _SkinMaskMap, g
-[[vk::binding(MATERIAL_SAMPLER(16), 1)]] SamplerState toonSkinMaskMapSampler : register(s80, space1);
+#define toonSkinMaskMapSampler MaterialSampler(16)
 [[vk::binding(18, 1)]] Texture2D toonFaceShadowGradientMap : register(t18, space1);  // _FaceShadowGradientMap, g (UV 1)
-[[vk::binding(MATERIAL_SAMPLER(18), 1)]] SamplerState toonFaceShadowGradientMapSampler : register(s82, space1);
+#define toonFaceShadowGradientMapSampler MaterialSampler(18)
 [[vk::binding(21, 1)]] Texture2D toonFaceShadowGradientMask : register(t21, space1); // _FaceShadowGradientMaskMap, g (UV 1)
-[[vk::binding(MATERIAL_SAMPLER(21), 1)]] SamplerState toonFaceShadowGradientMaskSampler : register(s85, space1);
+#define toonFaceShadowGradientMaskSampler MaterialSampler(21)
 [[vk::binding(22, 1)]] Texture2D toonOutlineWidthMap : register(t22, space1);        // _OutlineWidthTexture, g
-[[vk::binding(MATERIAL_SAMPLER(22), 1)]] SamplerState toonOutlineWidthMapSampler : register(s86, space1);
+#define toonOutlineWidthMapSampler MaterialSampler(22)
 [[vk::binding(23, 1)]] Texture2D toonAlphaOverrideMap : register(t23, space1);       // _AlphaOverrideMap, g
-[[vk::binding(MATERIAL_SAMPLER(23), 1)]] SamplerState toonAlphaOverrideMapSampler : register(s87, space1);
+#define toonAlphaOverrideMapSampler MaterialSampler(23)
 
 bool ToonHas(ToonMaterial material, uint feature)
 {

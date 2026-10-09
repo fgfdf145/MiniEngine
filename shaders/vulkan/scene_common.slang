@@ -106,13 +106,29 @@ struct CameraBuffer
 // The frame set's textures sample with samplers of their own: binding b's at FRAME_SAMPLER(b)
 // (kFrameSamplerBindingOffset in engine/renderer/vulkan/uniform_buffer.h).
 #define FRAME_SAMPLER(b) ((b) + 64)
-// The material set's likewise (kMaterialSamplerBindingOffset).
-#define MATERIAL_SAMPLER(b) ((b) + 64)
 
 #define MATERIAL_MIP_BIAS (ubo.textureParams.x)
 // A material texture sampled with that bias. Fragment shaders only (a macro, so the compute shaders
 // that include this file never compile it).
 #define MaterialTexture(materialTexture, uv) materialTexture.SampleBias(materialTexture##Sampler, uv, MATERIAL_MIP_BIAS)
+
+// Every material sampler (VulkanSamplerCache's order), set 0 binding 128: a material names each of its
+// textures' samplers by index (MaterialData::samplerIndices, a byte each), and a shader that samples
+// a material's textures loads those indices first (LoadMaterialSamplers). The material set (set 1) holds
+// textures alone, so D3D12's small sampler heap holds one table rather than 32 samplers a material.
+#define MATERIAL_SAMPLER_COUNT 108 // kMaterialSamplerCount
+[[vk::binding(128, 0)]] SamplerState materialSamplers[MATERIAL_SAMPLER_COUNT] : register(s128, space0);
+static uint4 gMaterialSamplerIndices[2];
+void LoadMaterialSamplers(uint4 indices[2])
+{
+    gMaterialSamplerIndices = indices;
+}
+uint MaterialSamplerIndex(uint binding)
+{
+    return (gMaterialSamplerIndices[binding >> 4u][(binding >> 2u) & 3u] >> ((binding & 3u) * 8u)) & 0xffu;
+}
+// Material set binding b's sampler: each material texture's xSampler is this (MaterialTexture's).
+#define MaterialSampler(binding) materialSamplers[MaterialSamplerIndex(binding)]
 
 // The scene's ambient luminance (cd/m^2) arriving along the unit direction d: its Ambient lights
 // plus its Hemisphere lights, each of which is sky above its up axis and ground below. A hemisphere

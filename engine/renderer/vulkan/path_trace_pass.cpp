@@ -308,7 +308,7 @@ void VulkanPathTracePass::Record(
             settings.lightGrid && settings.lightCandidates > 0, frame.localLightCount);
         if (frame.gpuTimer != nullptr && (m_lights->GetLightCount(frame.frameSlot) > 0 || m_lights->HasLightGrid(frame.frameSlot)))
         {
-            frame.gpuTimer->Mark(commandBuffer, "PathTraceLights");
+            frame.gpuTimer->Mark("PathTraceLights");
         }
     }
     nvrhi::ITexture* lut = m_multiScattering.texture;
@@ -346,7 +346,7 @@ void VulkanPathTracePass::Record(
         // Its own GPU timer section; the renderer's mark after the pass closes the layer's.
         if (frame.pathTraceLayer && m_layerReady && frame.gpuTimer != nullptr)
         {
-            frame.gpuTimer->Mark(commandBuffer, "PathTraceOpaque");
+            frame.gpuTimer->Mark("PathTraceOpaque");
         }
     }
 

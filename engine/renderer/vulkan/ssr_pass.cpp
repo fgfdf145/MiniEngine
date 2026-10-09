@@ -303,7 +303,6 @@ void VulkanSsrResolvePass::Record(
     const ScenePassFrameContext& frame) const
 {
     // Runs even with SSR off: the bound descriptors name both images in GENERAL.
-    m_history.RecordBarrier(commandBuffer, frame.ssrHistory.valid);
 
     SsrResolvePushConstants constants{};
     constants.extent = Extent(frame);

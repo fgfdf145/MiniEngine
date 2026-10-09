@@ -77,7 +77,7 @@ void VulkanRenderer::ExplainDdgiLookup(const ImageCaptureRequest& device, glm::v
 {
     const ReferenceFrame& frame = m_referenceFrame;
     const std::vector<uint8_t> stateBytes =
-        ReadBufferBytes(device, m_ddgi->GetProbeStateBuffer(), static_cast<size_t>(kDdgiProbeStateBytes) * kDdgiProbesPerLevel * kDdgiMaxLevels);
+        ReadBufferBytes(device, m_ddgi->GetProbeStateHandle(), static_cast<size_t>(kDdgiProbeStateBytes) * kDdgiProbesPerLevel * kDdgiMaxLevels);
     constexpr int kIrrTile = kDdgiIrradianceTexels + 2;
     constexpr int kVisTile = kDdgiVisibilityTexels + 2;
     const glm::ivec2 irrSize(kIrrTile * kDdgiGridSize.x * kDdgiGridSize.y, kIrrTile * kDdgiGridSize.z);
@@ -88,12 +88,11 @@ void VulkanRenderer::ExplainDdgiLookup(const ImageCaptureRequest& device, glm::v
     {
         ImageCaptureRequest request = device;
         request.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-        request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         request.layer = level;
-        request.image = m_ddgi->GetIrradianceImage();
+        request.texture = m_ddgi->GetIrradianceTexture();
         request.extent = {static_cast<uint32_t>(irrSize.x), static_cast<uint32_t>(irrSize.y)};
         irr[level] = ReadImageHalfFloats(request);
-        request.image = m_ddgi->GetVisibilityImage();
+        request.texture = m_ddgi->GetVisibilityTexture();
         request.format = VK_FORMAT_R16G16_SFLOAT;
         request.extent = {static_cast<uint32_t>(visSize.x), static_cast<uint32_t>(visSize.y)};
         vis[level] = ReadImageHalfFloats(request);
@@ -225,13 +224,12 @@ void VulkanRenderer::CompareDdgiProbes(const std::filesystem::path& prefix, cons
     const ReferenceFrame& frame = m_referenceFrame;
     // The finest level's probe records and irradiance tiles.
     const std::vector<uint8_t> stateBytes =
-        ReadBufferBytes(device, m_ddgi->GetProbeStateBuffer(), static_cast<size_t>(kDdgiProbeStateBytes) * kDdgiProbesPerLevel);
+        ReadBufferBytes(device, m_ddgi->GetProbeStateHandle(), static_cast<size_t>(kDdgiProbeStateBytes) * kDdgiProbesPerLevel);
     ImageCaptureRequest atlasRequest = device;
-    atlasRequest.image = m_ddgi->GetIrradianceImage();
+    atlasRequest.texture = m_ddgi->GetIrradianceTexture();
     atlasRequest.format = VK_FORMAT_R16G16B16A16_SFLOAT;
     constexpr uint32_t kTile = kDdgiIrradianceTexels + 2;
     atlasRequest.extent = {kTile * static_cast<uint32_t>(kDdgiGridSize.x * kDdgiGridSize.y), kTile * static_cast<uint32_t>(kDdgiGridSize.z)};
-    atlasRequest.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     const std::vector<glm::vec4> atlas = ReadImageHalfFloats(atlasRequest);
 
     struct Probe
@@ -392,24 +390,16 @@ void VulkanRenderer::CaptureDdgiReferenceNow(const DdgiReferenceRequest& referen
             light.illuminance.g,
             light.illuminance.b);
     }
-    vkDeviceWaitIdle(m_device->GetHandle());
+    m_nvrhi->Get()->waitForIdle();
 
     // What the probes sent each pixel: view 15 wrote irradiance / pi, pre-exposed, into SceneGi.
     ImageCaptureRequest request{};
-    request.physicalDevice = m_device->GetPhysicalDevice();
-    request.device = m_device->GetHandle();
-    request.queueFamily = m_device->GetQueueFamilies().graphicsFamily.value();
-    request.queue = m_device->GetGraphicsQueue();
-    request.image = m_view.targets->GetImage(
+    request.device = m_nvrhi->Get();
+    request.texture = m_view.targets->GetTexture(
         RenderTargetId::SceneGi,
         m_view.targets->ResolveIndex(RenderTargetId::SceneGi, *m_lastRecordedImageIndex, frame.frameSlot));
     request.format = m_view.targets->GetFormat(RenderTargetId::SceneGi);
     request.extent = m_view.targets->GetExtent();
-    request.layout = m_view.layoutTracker.GetLayout(RenderTargetId::SceneGi);
-    if (request.layout == VK_IMAGE_LAYOUT_UNDEFINED)
-    {
-        throw std::runtime_error("The last frame did not write the DDGI irradiance or the path traced light");
-    }
     const std::vector<glm::vec4> texels = ReadImageHalfFloats(request);
 
     const RayScene scene = m_rayScene->CopyCpuScene();

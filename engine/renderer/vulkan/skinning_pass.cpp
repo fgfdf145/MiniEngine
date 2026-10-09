@@ -95,23 +95,33 @@ nvrhi::BindingSetHandle VulkanSkinningPass::Acquire(const VulkanBuffer& buffer) 
     return CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_meshSetLayout, "Failed to create a skinning binding set");
 }
 
-void VulkanSkinningPass::Record(
-    VkCommandBuffer commandBuffer,
-    nvrhi::ICommandList* commandList,
-    uint32_t frameSlot,
-    std::span<const Dispatch> dispatches)
+void VulkanSkinningPass::Record(nvrhi::ICommandList* commandList, uint32_t frameSlot, std::span<const Dispatch> dispatches)
 {
     if (dispatches.empty())
     {
         return;
     }
 
-    // Last frame's draws read the buffers this overwrites: an execution dependency on everything
-    // before (no memory to make visible for a write after a read). The buffers are read by vertex
-    // input and every kind of shader, which NVRHI's per-buffer states would spell out mesh by mesh:
-    // the two barriers stay native and global.
-    vkCmdPipelineBarrier(
-        commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 0, nullptr);
+    // The posed buffers rest in their read state (VulkanBuffer: vertex input, shader reads, the ray
+    // tracing builds); each one written here is an unordered access target for the dispatches, which
+    // also orders the write after last frame's reads.
+    const auto setWritten = [&](bool written)
+    {
+        for (const Dispatch& dispatch : dispatches)
+        {
+            if (dispatch.set == nullptr)
+            {
+                continue;
+            }
+            for (nvrhi::IBuffer* buffer :
+                 {dispatch.buffer->GetVertexBuffer(), dispatch.buffer->GetPositionBuffer(), dispatch.buffer->GetPreviousPositionBuffer()})
+            {
+                commandList->setBufferState(buffer, written ? nvrhi::ResourceStates::UnorderedAccess : buffer->getDesc().initialState);
+            }
+        }
+        commandList->commitBarriers();
+    };
+    setWritten(true);
     {
         const NvrhiPassScope scope(commandList, {});
         auto* palette = static_cast<glm::mat4*>(m_paletteMapped.at(frameSlot));
@@ -142,17 +152,8 @@ void VulkanSkinningPass::Record(
         }
     }
 
-    // The posed vertices for everything that reads them this frame: vertex input, and the shaders
-    // that fetch vertices themselves (ray hit shading).
-    VkMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0, 1, &barrier, 0, nullptr, 0, nullptr);
+    // The posed vertices for everything that reads them this frame: vertex input, the shaders that
+    // fetch vertices themselves (ray hit shading) and the ray tracing refits.
+    setWritten(false);
 }
 }

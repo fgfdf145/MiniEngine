@@ -2,6 +2,8 @@
 
 #include "common.h"
 
+#include <nvrhi/nvrhi.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -9,10 +11,11 @@
 namespace me
 {
 
-// GPU time per section of the frame's command buffer, from timestamp queries. Each frame slot
-// owns a range of one query pool; BeginFrame reads what the slot recorded last time (its fence has
-// signaled by then, so the results are ready) and starts a new frame, and each Mark closes the
-// section since the previous mark. Sections are averaged over the last kAverageFrames frames.
+// GPU time per section of the frame's command list, from NVRHI timer queries. Each frame slot owns
+// kMaxMarks queries; BeginFrame reads what the slot recorded last time (its frame has completed by
+// then, so the results are ready) and starts a new frame on the frame's command list, and each Mark
+// closes the section since the previous mark. Sections are averaged over the last kAverageFrames
+// frames.
 class VulkanGpuTimer
 {
   public:
@@ -25,15 +28,16 @@ class VulkanGpuTimer
         double averageMs = 0.0;
     };
 
-    VulkanGpuTimer(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t graphicsFamily, uint32_t frameCount);
+    VulkanGpuTimer(nvrhi::IDevice* device, uint32_t frameCount);
     ~VulkanGpuTimer();
 
     VulkanGpuTimer(const VulkanGpuTimer&) = delete;
     VulkanGpuTimer& operator=(const VulkanGpuTimer&) = delete;
 
-    void BeginFrame(VkCommandBuffer commandBuffer, uint32_t frameSlot);
+    // Marks go to commandList, the frame's, until the next BeginFrame.
+    void BeginFrame(nvrhi::ICommandList* commandList, uint32_t frameSlot);
     // Ends the section that started at the previous mark (or BeginFrame).
-    void Mark(VkCommandBuffer commandBuffer, const char* name);
+    void Mark(const char* name);
 
     // In recording order; empty until a frame has come back.
     std::vector<Section> GetSections() const;
@@ -50,11 +54,11 @@ class VulkanGpuTimer
         std::vector<double> samples;
     };
 
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkQueryPool m_pool = VK_NULL_HANDLE;
-    bool m_supported = false;
-    double m_nanosecondsPerTick = 1.0;
-    uint64_t m_validMask = ~0ull;
+    nvrhi::IDevice* m_device = nullptr;
+    nvrhi::ICommandList* m_commandList = nullptr;
+    // Per slot: kMaxMarks + 1 queries, one a section; the one after the last mark is begun and never
+    // ended.
+    std::vector<std::vector<nvrhi::TimerQueryHandle>> m_queries;
     // What each slot recorded: its mark names, in order, and whether its queries are in flight.
     std::vector<std::vector<const char*>> m_slotMarks;
     std::vector<bool> m_slotPending;

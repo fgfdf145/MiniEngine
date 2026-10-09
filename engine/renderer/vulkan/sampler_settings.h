@@ -43,6 +43,8 @@ class VulkanSamplerCache
     // array holds them all in this order (ray_hit_common.slang's raySamplers).
     static constexpr uint32_t kSamplerCount = 3 * 3 * 2 * 2 * 3;
     static TextureSampler SamplerAt(uint32_t index);
+    // SamplerAt's inverse.
+    static uint32_t IndexOf(const TextureSampler& sampler);
 
   private:
     using Key = std::tuple<TextureWrap, TextureWrap, TextureFilter, TextureFilter, TextureMipFilter>;

@@ -27,64 +27,41 @@ void PushSample(std::vector<double>& samples, uint32_t cursor, double value)
 }
 }
 
-VulkanGpuTimer::VulkanGpuTimer(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t graphicsFamily, uint32_t frameCount)
-    : m_device(device), m_slotMarks(frameCount), m_slotPending(frameCount, false)
+VulkanGpuTimer::VulkanGpuTimer(nvrhi::IDevice* device, uint32_t frameCount)
+    : m_device(device), m_queries(frameCount), m_slotMarks(frameCount), m_slotPending(frameCount, false)
 {
-    VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
-    uint32_t familyCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &familyCount, nullptr);
-    std::vector<VkQueueFamilyProperties> families(familyCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &familyCount, families.data());
-    const uint32_t validBits = graphicsFamily < familyCount ? families[graphicsFamily].timestampValidBits : 0;
-    m_supported = validBits > 0 && properties.limits.timestampPeriod > 0.0f;
-    if (!m_supported)
+    for (std::vector<nvrhi::TimerQueryHandle>& queries : m_queries)
     {
-        return;
-    }
-    m_nanosecondsPerTick = properties.limits.timestampPeriod;
-    m_validMask = validBits >= 64 ? ~0ull : (1ull << validBits) - 1;
-
-    VkQueryPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-    poolInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    poolInfo.queryCount = (kMaxMarks + 1) * frameCount;
-    CheckVulkan(vkCreateQueryPool(m_device, &poolInfo, nullptr, &m_pool), "Failed to create the GPU timer query pool");
-}
-
-VulkanGpuTimer::~VulkanGpuTimer()
-{
-    if (m_pool != VK_NULL_HANDLE)
-    {
-        vkDestroyQueryPool(m_device, m_pool, nullptr);
+        for (uint32_t index = 0; index <= kMaxMarks; ++index)
+        {
+            queries.push_back(m_device->createTimerQuery());
+        }
     }
 }
 
-void VulkanGpuTimer::BeginFrame(VkCommandBuffer commandBuffer, uint32_t frameSlot)
+VulkanGpuTimer::~VulkanGpuTimer() = default;
+
+void VulkanGpuTimer::BeginFrame(nvrhi::ICommandList* commandList, uint32_t frameSlot)
 {
-    if (!m_supported)
-    {
-        return;
-    }
     Collect(frameSlot);
+    m_commandList = commandList;
     m_recordingSlot = frameSlot;
     m_slotMarks[frameSlot].clear();
-    const uint32_t first = frameSlot * (kMaxMarks + 1);
-    vkCmdResetQueryPool(commandBuffer, m_pool, first, kMaxMarks + 1);
-    vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_pool, first);
+    m_commandList->beginTimerQuery(m_queries[frameSlot][0]);
     m_slotPending[frameSlot] = true;
 }
 
-void VulkanGpuTimer::Mark(VkCommandBuffer commandBuffer, const char* name)
+void VulkanGpuTimer::Mark(const char* name)
 {
     std::vector<const char*>& marks = m_slotMarks[m_recordingSlot];
-    if (!m_supported || marks.size() >= kMaxMarks)
+    if (m_commandList == nullptr || marks.size() >= kMaxMarks)
     {
         return;
     }
+    const std::vector<nvrhi::TimerQueryHandle>& queries = m_queries[m_recordingSlot];
+    m_commandList->endTimerQuery(queries[marks.size()]);
     marks.push_back(name);
-    const uint32_t query = m_recordingSlot * (kMaxMarks + 1) + static_cast<uint32_t>(marks.size());
-    vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_pool, query);
+    m_commandList->beginTimerQuery(queries[marks.size()]);
 }
 
 void VulkanGpuTimer::Collect(uint32_t frameSlot)
@@ -95,24 +72,14 @@ void VulkanGpuTimer::Collect(uint32_t frameSlot)
         return;
     }
     m_slotPending[frameSlot] = false;
-    std::vector<uint64_t> ticks(marks.size() + 1);
-    const VkResult result = vkGetQueryPoolResults(
-        m_device,
-        m_pool,
-        frameSlot * (kMaxMarks + 1),
-        static_cast<uint32_t>(ticks.size()),
-        ticks.size() * sizeof(uint64_t),
-        ticks.data(),
-        sizeof(uint64_t),
-        VK_QUERY_RESULT_64_BIT);
-    if (result != VK_SUCCESS)
+    // Each section's query, read in seconds; the frame is their sum (the gaps between one's end
+    // and the next one's begin are two timestamps apart).
+    std::vector<double> sectionMs(marks.size());
+    for (size_t index = 0; index < marks.size(); ++index)
     {
-        return;
+        sectionMs[index] = static_cast<double>(m_device->getTimerQueryTime(m_queries[frameSlot][index])) * 1e3;
+        m_device->resetTimerQuery(m_queries[frameSlot][index]);
     }
-    const auto toMs = [this](uint64_t from, uint64_t to)
-    {
-        return static_cast<double>((to - from) & m_validMask) * m_nanosecondsPerTick * 1e-6;
-    };
 
     // A different set of marks (a pass switched off, the order changed) starts the averages over.
     bool sameLayout = m_sections.size() == marks.size();
@@ -132,9 +99,9 @@ void VulkanGpuTimer::Collect(uint32_t frameSlot)
     }
     for (size_t index = 0; index < marks.size(); ++index)
     {
-        PushSample(m_sections[index].samples, m_sampleCursor, toMs(ticks[index], ticks[index + 1]));
+        PushSample(m_sections[index].samples, m_sampleCursor, sectionMs[index]);
     }
-    m_lastFrameMs = toMs(ticks.front(), ticks.back());
+    m_lastFrameMs = std::accumulate(sectionMs.begin(), sectionMs.end(), 0.0);
     PushSample(m_frameSamples, m_sampleCursor, m_lastFrameMs);
     ++m_sampleCursor;
 }

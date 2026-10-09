@@ -27,12 +27,10 @@ class VulkanLightingPass : public IScenePass
 {
   public:
     VulkanLightingPass(
-        VkDevice device,
-        VkPipelineCache pipelineCache,
+        nvrhi::IDevice* nvrhiDevice,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
-        VkDescriptorSetLayout emptySetLayout,
-        VkDescriptorSetLayout gbufferSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
+        nvrhi::IBindingLayout* gbufferSetLayout,
         const VulkanRayScene& rayScene);
     ~VulkanLightingPass() override;
 
@@ -48,28 +46,15 @@ class VulkanLightingPass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreatePipeline(
-        VkPipelineCache pipelineCache,
-        VkDescriptorSetLayout frameSetLayout,
-        VkDescriptorSetLayout emptySetLayout,
-        VkDescriptorSetLayout gbufferSetLayout);
-    void CreateTracedPipeline(
-        VkPipelineCache pipelineCache,
-        VkDescriptorSetLayout frameSetLayout,
-        VkDescriptorSetLayout raySetLayout,
-        VkDescriptorSetLayout gbufferSetLayout,
-        VkDescriptorSetLayout rayTextureSetLayout);
     void CreateFramebuffers(const SceneRenderTargets& targets);
-    void DestroyFramebuffers();
-    // Shared by the destructor and the constructor's unwind path, as in every pass.
-    void DestroyHandles();
 
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
-    VkPipelineLayout m_tracedPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_tracedPipeline = VK_NULL_HANDLE;
-    std::vector<VkFramebuffer> m_framebuffers;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    // The push constants' own layout (register space 4) and its binding set.
+    nvrhi::BindingLayoutHandle m_pushLayout;
+    nvrhi::BindingSetHandle m_pushSet;
+    nvrhi::GraphicsPipelineHandle m_pipeline;
+    nvrhi::GraphicsPipelineHandle m_tracedPipeline;
+    // One per transient copy of SceneHdr.
+    std::vector<nvrhi::FramebufferHandle> m_framebuffers;
 };
 }

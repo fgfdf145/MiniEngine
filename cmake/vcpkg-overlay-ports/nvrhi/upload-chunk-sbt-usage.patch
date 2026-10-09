@@ -1,0 +1,15 @@
+diff --git a/src/vulkan/vulkan-upload.cpp b/src/vulkan/vulkan-upload.cpp
+index 9882f14..8765e49 100644
+--- a/src/vulkan/vulkan-upload.cpp
++++ b/src/vulkan/vulkan-upload.cpp
+@@ -51,7 +51,9 @@ namespace nvrhi::vulkan
+ 
+             // The upload manager buffers are used in buildTopLevelAccelStruct to store instance data, and SBT for shader entries
+             desc.isAccelStructBuildInput = m_Device->queryFeatureSupport(Feature::RayTracingAccelStruct);
+-            desc.isShaderBindingTable = m_Device->queryFeatureSupport(Feature::RayTracingAccelStruct);
++            // The shader binding table usage needs VK_KHR_ray_tracing_pipeline, which a device with
++            // acceleration structures (ray queries) alone does not have.
++            desc.isShaderBindingTable = m_Device->queryFeatureSupport(Feature::RayTracingPipeline);
+ 
+             chunk->buffer = m_Device->createBuffer(desc);
+             chunk->mappedMemory = m_Device->mapBuffer(chunk->buffer, CpuAccessMode::Write);

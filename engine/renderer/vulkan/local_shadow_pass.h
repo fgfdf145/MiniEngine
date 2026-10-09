@@ -13,55 +13,36 @@ namespace me
 {
 
 // Renders the local lights' shadow atlas (see local_shadows.h): one 2D depth image, one viewport
-// per tile, which the material pass samples through set 0, binding 13. The casters and their push
-// constants are the cascade pass's, and so are the shaders.
+// per tile, which the material pass samples through set 0, binding 13. The casters, their push
+// constants and the shaders are the cascade pass's (ShadowCasterRenderer).
 //
-// Like VulkanShadowPass it is not an IScenePass: the atlas has a fixed size, is one image shared by
-// every frame in flight, and orders itself through its render pass dependencies. Its render pass
-// clears the whole atlas from UNDEFINED and leaves it SHADER_READ_ONLY_OPTIMAL, every frame, tiles
-// or none, because the material pass binds it either way. RenderTargetLayoutTracker never sees it.
+// Like VulkanShadowPass it is not an IScenePass: the atlas has a fixed size and is one image shared by
+// every frame in flight. It rests as a shader resource; every frame clears the whole atlas, tiles or
+// none, because the material pass binds it either way.
 class VulkanLocalShadowPass
 {
   public:
-    VulkanLocalShadowPass(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
-        nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
-        VkDescriptorSetLayout materialSetLayout);
+    VulkanLocalShadowPass(nvrhi::IDevice* nvrhiDevice, nvrhi::IBindingLayout* frameSetLayout, nvrhi::IBindingLayout* materialSetLayout);
     ~VulkanLocalShadowPass();
 
     VulkanLocalShadowPass(const VulkanLocalShadowPass&) = delete;
     VulkanLocalShadowPass& operator=(const VulkanLocalShadowPass&) = delete;
 
-    // The atlas view and comparison sampler the material pass binds.
+    // The atlas and comparison sampler the material pass binds.
     TextureDescriptorBinding GetSampledBinding() const;
-
-    // Clears the atlas and renders into each tile every caster whose bounds reach its frustum.
+    // Clears the atlas and renders into each tile every caster whose bounds reach its frustum. frameSet:
+    // a frame set, for the alpha test's materials.
     void Record(
-        VkCommandBuffer commandBuffer,
+        nvrhi::ICommandList* commandList,
+        nvrhi::IBindingSet* frameSet,
         std::span<const ShadowDrawItem> drawItems,
         std::span<const LocalShadowTile> tiles) const;
 
   private:
-    void CreateImage(VkPhysicalDevice physicalDevice);
-    void CreateSampler(VkPhysicalDevice physicalDevice, nvrhi::IDevice* nvrhiDevice);
-    void CreateRenderPass();
-    void CreateFramebuffer();
-    void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout materialSetLayout);
-    void DestroyHandles();
-
-    VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
-    VkFormat m_format = VK_FORMAT_UNDEFINED;
-    VkImage m_image = VK_NULL_HANDLE;
     nvrhi::TextureHandle m_texture;
-    VkImageView m_view = VK_NULL_HANDLE;
-    VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
+    nvrhi::FramebufferHandle m_framebuffer;
     nvrhi::SamplerHandle m_sampler;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_opaquePipeline = VK_NULL_HANDLE;
-    VkPipeline m_maskPipeline = VK_NULL_HANDLE;
+    std::unique_ptr<ShadowCasterRenderer> m_casters;
 };
 }

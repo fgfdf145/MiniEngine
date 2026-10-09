@@ -18,10 +18,12 @@ namespace me
 
 struct VulkanMemoryBlock
 {
-    VkDevice device = VK_NULL_HANDLE;
+    nvrhi::IDevice* device = nullptr;
     nvrhi::HeapHandle heap;
     VkDeviceMemory memory = VK_NULL_HANDLE;
-    uint32_t memoryTypeIndex = 0;
+    // The Vulkan memory types the block's heap may be (VkMemoryRequirements::memoryTypeBits); ~0 on
+    // D3D12.
+    uint32_t memoryTypeBits = ~0u;
     VulkanMemoryPool::Resource resource = VulkanMemoryPool::Resource::Buffer;
     BlockSuballocator ranges;
 
@@ -56,35 +58,90 @@ uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, Vk
     throw std::runtime_error("Failed to find a suitable Vulkan memory type");
 }
 
-// Called with g_mutex held. A device-local heap of exactly memoryTypeIndex; NVRHI allocates it with
-// the device address flag when the device has buffer device addresses, which the buffers it makes
-// all ask for.
-nvrhi::HeapHandle CreateHeap(VkDevice device, VkDeviceSize size, uint32_t memoryTypeIndex)
+bool IsVulkan(nvrhi::IDevice* device)
 {
-    const auto found = g_nvrhiDevices.find(device);
-    if (found == g_nvrhiDevices.end())
-    {
-        throw std::runtime_error("Vulkan memory pool: no NVRHI device for this VkDevice");
-    }
+    return device->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN;
+}
+
+// Called with g_mutex held. A device-local heap; on Vulkan of one of memoryTypeBits' types, which
+// NVRHI allocates with the device address flag when the device has buffer device addresses (the
+// buffers it makes all ask for them).
+nvrhi::HeapHandle CreateHeap(nvrhi::IDevice* device, VkDeviceSize size, uint32_t memoryTypeBits)
+{
     nvrhi::HeapDesc desc;
     desc.capacity = size;
     desc.type = nvrhi::HeapType::DeviceLocal;
-    desc.memoryTypeBits = 1u << memoryTypeIndex;
+    desc.memoryTypeBits = memoryTypeBits;
     desc.debugName = "VulkanMemoryPool";
-    nvrhi::HeapHandle heap = found->second->createHeap(desc);
+    nvrhi::HeapHandle heap = device->createHeap(desc);
     if (!heap)
     {
-        // NVRHI logs the VkResult; running out of memory is what it is in practice, and what
+        // NVRHI logs the API's result; running out of memory is what it is in practice, and what
         // callers recover from.
-        throw VulkanError(VK_ERROR_OUT_OF_DEVICE_MEMORY, "Failed to allocate Vulkan device memory");
+        throw VulkanError(VK_ERROR_OUT_OF_DEVICE_MEMORY, "Failed to allocate device memory");
     }
     g_committedBytes += size;
     return heap;
 }
 
-VkDeviceMemory NativeMemory(nvrhi::IHeap* heap)
+VkDeviceMemory NativeMemory(nvrhi::IDevice* device, nvrhi::IHeap* heap)
 {
-    return ToNative<VkDeviceMemory>(heap->getNativeObject(nvrhi::ObjectTypes::VK_DeviceMemory));
+    return IsVulkan(device) ? ToNative<VkDeviceMemory>(heap->getNativeObject(nvrhi::ObjectTypes::VK_DeviceMemory)) : VK_NULL_HANDLE;
+}
+
+VulkanPooledMemory AllocateRange(
+    nvrhi::IDevice* device, VkDeviceSize size, VkDeviceSize alignment, uint32_t memoryTypeBits, VulkanMemoryPool::Resource resource)
+{
+    VulkanPooledMemory result{};
+    result.size = size;
+    std::lock_guard lock(g_mutex);
+    if (size >= kDedicatedThreshold)
+    {
+        result.heap = CreateHeap(device, size, memoryTypeBits);
+        result.memory = NativeMemory(device, result.heap);
+        return result;
+    }
+
+    for (const std::unique_ptr<VulkanMemoryBlock>& block : g_blocks)
+    {
+        if (block->device != device || block->memoryTypeBits != memoryTypeBits || block->resource != resource)
+        {
+            continue;
+        }
+        if (const std::optional<uint64_t> offset = block->ranges.Allocate(size, alignment))
+        {
+            result.heap = block->heap;
+            result.memory = block->memory;
+            result.offset = *offset;
+            result.block = block.get();
+            return result;
+        }
+    }
+
+    auto block = std::make_unique<VulkanMemoryBlock>(kBlockSize);
+    block->device = device;
+    block->memoryTypeBits = memoryTypeBits;
+    block->resource = resource;
+    block->heap = CreateHeap(device, kBlockSize, memoryTypeBits);
+    block->memory = NativeMemory(device, block->heap);
+    const std::optional<uint64_t> offset = block->ranges.Allocate(size, alignment);
+    if (!offset)
+    {
+        block->heap = nullptr;
+        g_committedBytes -= kBlockSize;
+        throw std::runtime_error("Memory pool: a request does not fit in a fresh block");
+    }
+    result.heap = block->heap;
+    result.memory = block->memory;
+    result.offset = *offset;
+    result.block = block.get();
+    g_blocks.push_back(std::move(block));
+    return result;
+}
+
+VkDevice NativeDevice(nvrhi::IDevice* device)
+{
+    return ToNative<VkDevice>(device->getNativeObject(nvrhi::ObjectTypes::VK_Device));
 }
 }
 
@@ -94,14 +151,14 @@ void VulkanMemoryPool::RegisterNvrhiDevice(VkDevice device, nvrhi::IDevice* nvrh
     g_nvrhiDevices[device] = nvrhiDevice;
 }
 
-void VulkanMemoryPool::UnregisterNvrhiDevice(VkDevice device)
+void VulkanMemoryPool::UnregisterNvrhiDevice(nvrhi::IDevice* nvrhiDevice)
 {
     std::vector<std::unique_ptr<VulkanMemoryBlock>> released;
     {
         std::lock_guard lock(g_mutex);
         for (auto block = g_blocks.begin(); block != g_blocks.end();)
         {
-            if ((*block)->device != device)
+            if ((*block)->device != nvrhiDevice)
             {
                 ++block;
                 continue;
@@ -109,7 +166,10 @@ void VulkanMemoryPool::UnregisterNvrhiDevice(VkDevice device)
             released.push_back(std::move(*block));
             block = g_blocks.erase(block);
         }
-        g_nvrhiDevices.erase(device);
+        for (auto entry = g_nvrhiDevices.begin(); entry != g_nvrhiDevices.end();)
+        {
+            entry = entry->second == nvrhiDevice ? g_nvrhiDevices.erase(entry) : std::next(entry);
+        }
     }
     for (std::unique_ptr<VulkanMemoryBlock>& block : released)
     {
@@ -117,7 +177,7 @@ void VulkanMemoryPool::UnregisterNvrhiDevice(VkDevice device)
         {
             // Something still binds to it, and may free its range later: freeing the memory under it,
             // or the block its range names, would be worse than the leak.
-            LOG_ERROR("Vulkan memory pool: a block is still in use as its device goes; leaking it");
+            LOG_ERROR("Memory pool: a block is still in use as its device goes; leaking it");
             block->heap.Detach();
             static_cast<void>(block.release());
             continue;
@@ -125,6 +185,33 @@ void VulkanMemoryPool::UnregisterNvrhiDevice(VkDevice device)
         block->heap = nullptr;
         g_committedBytes -= kBlockSize;
     }
+}
+
+VulkanPooledMemory VulkanMemoryPool::AllocateFor(nvrhi::IDevice* device, nvrhi::IBuffer* buffer, Resource resource)
+{
+    if (IsVulkan(device))
+    {
+        // The memory types too, which NVRHI's requirements leave out.
+        VkMemoryRequirements requirements{};
+        vkGetBufferMemoryRequirements(
+            NativeDevice(device), ToNative<VkBuffer>(buffer->getNativeObject(nvrhi::ObjectTypes::VK_Buffer)), &requirements);
+        return AllocateRange(device, requirements.size, requirements.alignment, requirements.memoryTypeBits, resource);
+    }
+    const nvrhi::MemoryRequirements requirements = device->getBufferMemoryRequirements(buffer);
+    return AllocateRange(device, requirements.size, requirements.alignment, ~0u, resource);
+}
+
+VulkanPooledMemory VulkanMemoryPool::AllocateFor(nvrhi::IDevice* device, nvrhi::ITexture* texture)
+{
+    if (IsVulkan(device))
+    {
+        VkMemoryRequirements requirements{};
+        vkGetImageMemoryRequirements(
+            NativeDevice(device), ToNative<VkImage>(texture->getNativeObject(nvrhi::ObjectTypes::VK_Image)), &requirements);
+        return AllocateRange(device, requirements.size, requirements.alignment, requirements.memoryTypeBits, Resource::Image);
+    }
+    const nvrhi::MemoryRequirements requirements = device->getTextureMemoryRequirements(texture);
+    return AllocateRange(device, requirements.size, requirements.alignment, ~0u, Resource::Image);
 }
 
 VulkanPooledMemory VulkanMemoryPool::Allocate(
@@ -139,55 +226,20 @@ VulkanPooledMemory VulkanMemoryPool::Allocate(
         throw std::runtime_error("Vulkan memory pool: only device-local memory is pooled");
     }
     const uint32_t memoryTypeIndex = FindMemoryType(physicalDevice, requirements.memoryTypeBits, properties);
-
-    VulkanPooledMemory result{};
-    result.size = requirements.size;
-    std::lock_guard lock(g_mutex);
-    if (requirements.size >= kDedicatedThreshold)
+    nvrhi::IDevice* nvrhiDevice = nullptr;
     {
-        result.heap = CreateHeap(device, requirements.size, memoryTypeIndex);
-        result.memory = NativeMemory(result.heap);
-        return result;
-    }
-
-    for (const std::unique_ptr<VulkanMemoryBlock>& block : g_blocks)
-    {
-        if (block->device != device || block->memoryTypeIndex != memoryTypeIndex || block->resource != resource)
+        std::lock_guard lock(g_mutex);
+        const auto found = g_nvrhiDevices.find(device);
+        if (found == g_nvrhiDevices.end())
         {
-            continue;
+            throw std::runtime_error("Vulkan memory pool: no NVRHI device for this VkDevice");
         }
-        if (const std::optional<uint64_t> offset = block->ranges.Allocate(requirements.size, requirements.alignment))
-        {
-            result.heap = block->heap;
-            result.memory = block->memory;
-            result.offset = *offset;
-            result.block = block.get();
-            return result;
-        }
+        nvrhiDevice = found->second;
     }
-
-    auto block = std::make_unique<VulkanMemoryBlock>(kBlockSize);
-    block->device = device;
-    block->memoryTypeIndex = memoryTypeIndex;
-    block->resource = resource;
-    block->heap = CreateHeap(device, kBlockSize, memoryTypeIndex);
-    block->memory = NativeMemory(block->heap);
-    const std::optional<uint64_t> offset = block->ranges.Allocate(requirements.size, requirements.alignment);
-    if (!offset)
-    {
-        block->heap = nullptr;
-        g_committedBytes -= kBlockSize;
-        throw std::runtime_error("Vulkan memory pool: a request does not fit in a fresh block");
-    }
-    result.heap = block->heap;
-    result.memory = block->memory;
-    result.offset = *offset;
-    result.block = block.get();
-    g_blocks.push_back(std::move(block));
-    return result;
+    return AllocateRange(nvrhiDevice, requirements.size, requirements.alignment, 1u << memoryTypeIndex, resource);
 }
 
-void VulkanMemoryPool::Free(VkDevice /*device*/, VulkanPooledMemory& allocation)
+void VulkanMemoryPool::Free(VulkanPooledMemory& allocation)
 {
     if (!allocation.heap)
     {
@@ -206,7 +258,7 @@ void VulkanMemoryPool::Free(VkDevice /*device*/, VulkanPooledMemory& allocation)
     allocation = {};
 }
 
-size_t VulkanMemoryPool::ReleaseEmptyBlocks(VkDevice device, size_t keep, size_t maxRelease)
+size_t VulkanMemoryPool::ReleaseEmptyBlocks(nvrhi::IDevice* device, size_t keep, size_t maxRelease)
 {
     std::vector<std::unique_ptr<VulkanMemoryBlock>> released;
     {

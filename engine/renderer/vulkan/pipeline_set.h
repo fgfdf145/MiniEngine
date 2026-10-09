@@ -1,8 +1,9 @@
 #pragma once
 
 #include "common.h"
-
 #include <engine/renderer/material_pipeline.h>
+
+#include <nvrhi/nvrhi.h>
 
 #include <array>
 
@@ -10,19 +11,18 @@ namespace me
 {
 
 // Owns every material pipeline variant plus the state they share. The variants differ only in
-// their blend / depth-write / cull / alpha-mask flags, so they are built from a single pair of
-// shader modules, share one VkPipelineLayout, and are created in a single
-// vkCreateGraphicsPipelines call. The pipeline cache is owned by the renderer and outlives this
-// set, so a rebuild reuses the driver's earlier shader compilation.
+// their blend / depth-write / cull / alpha-mask flags, so they are built from one vertex shader and
+// one fragment shader specialised per variant, over the same binding layouts: the frame set (set 0),
+// the material set (set 1) and the draw's push constants (register space 2).
 //
-// Viewport and scissor are dynamic state, set at record time, and the descriptor set layouts are
-// the renderer's fixed frame and material layouts. The pipelines therefore depend on nothing but
-// the render pass: they survive both a scene-viewport resize and a scene content reload untouched.
+// The viewport is set per draw state, and the binding layouts are the renderer's fixed frame and
+// material layouts. The pipelines therefore depend on nothing but the attachments' formats: they
+// survive both a scene-viewport resize and a scene content reload untouched.
 inline constexpr uint32_t kMaxMaterialColorAttachments = 8;
 
 // What differs between the pipeline sets that draw material items. Everything else (vertex
-// shader, vertex input, descriptor set layouts, push constants, depth and cull policy per
-// variant) is shared by construction.
+// shader, vertex input, binding layouts, push constants, depth and cull policy per variant) is
+// shared by construction.
 struct MaterialPipelineSetConfig
 {
     // The compiled fragment stage, relative to EnginePaths::ShaderRoot().
@@ -48,36 +48,45 @@ struct MaterialPipelineSetConfig
     // masked, depth tested (nearer or equal) but not written.
     bool decal = false;
     // gbuffer.frag's two path traced layer variants (PATH_TRACE_LAYER_PASS), against
-    // VulkanPathTraceLayerPass's render passes: 1 writes the fragment's depth, kept by a MAX blend on
+    // VulkanPathTraceLayerPass's framebuffers: 1 writes the fragment's depth, kept by a MAX blend on
     // every variant, depth tested (nearer or equal) against the scene's but not written; 2 writes the
     // G-buffer of the fragment at that depth, with no depth attachment. Constant 3, kBlendItem, says
     // which variants draw Blend items, for every set.
     int32_t layerPass = 0;
 };
 
+// The vertex input every material pipeline reads (triangle.vert, toon.vert): the vertex at binding 0
+// (locations 0 to 6, the outline normal at 6, which triangle.vert leaves unread) and where each vertex
+// was last frame at binding 1 (location 7). D3D12 matches them by semantic name.
+nvrhi::InputLayoutHandle CreateMaterialInputLayout(nvrhi::IDevice* device, nvrhi::IShader* vertexShader);
+
+// The draws' push constants (ObjectPushConstants, triangle.vert's DrawConstants) in register space 2, a
+// layout of their own, and the one binding set naming them.
+struct MaterialDrawConstants
+{
+    explicit MaterialDrawConstants(nvrhi::IDevice* device);
+    nvrhi::BindingLayoutHandle layout;
+    nvrhi::BindingSetHandle set;
+};
+
 class VulkanPipelineSet
 {
   public:
     VulkanPipelineSet(
-        VkDevice device,
-        VkPipelineCache pipelineCache,
-        VkRenderPass renderPass,
-        VkDescriptorSetLayout frameSetLayout,
-        VkDescriptorSetLayout materialSetLayout,
+        nvrhi::IDevice* device,
+        const nvrhi::FramebufferInfo& framebuffer,
+        nvrhi::IBindingLayout* frameSetLayout,
+        nvrhi::IBindingLayout* materialSetLayout,
+        nvrhi::IBindingLayout* drawConstantsLayout,
         const MaterialPipelineSetConfig& config);
     ~VulkanPipelineSet();
 
     VulkanPipelineSet(const VulkanPipelineSet&) = delete;
     VulkanPipelineSet& operator=(const VulkanPipelineSet&) = delete;
 
-    VkPipeline Get(MaterialPipelineKey key) const;
-    VkPipelineLayout GetLayout() const;
+    nvrhi::IGraphicsPipeline* Get(MaterialPipelineKey key) const;
 
   private:
-    void DestroyHandles();
-
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkPipelineLayout m_layout = VK_NULL_HANDLE;
-    std::array<VkPipeline, kMaterialPipelineVariantCount> m_pipelines{};
+    std::array<nvrhi::GraphicsPipelineHandle, kMaterialPipelineVariantCount> m_pipelines{};
 };
 }

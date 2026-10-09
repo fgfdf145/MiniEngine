@@ -4,6 +4,8 @@
 
 #include <engine/core/video/video_recorder.h>
 
+#include <nvrhi/nvrhi.h>
+
 #include <optional>
 #include <span>
 #include <vector>
@@ -12,12 +14,12 @@ namespace me
 {
 
 // Reads the frames a video recording wants back from the GPU without stalling it: each frame slot
-// has a host-visible buffer the frame's command buffer copies the image into, read once the slot's
-// fence says that frame finished, frames in flight later.
+// has a staging texture the frame's command list copies the image (or the images of a mosaic) into,
+// read once the slot's frame has finished, frames in flight later.
 class VulkanVideoReadback
 {
   public:
-    VulkanVideoReadback(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t frameSlots);
+    VulkanVideoReadback(nvrhi::IDevice* device, uint32_t frameSlots);
     ~VulkanVideoReadback();
 
     VulkanVideoReadback(const VulkanVideoReadback&) = delete;
@@ -26,35 +28,33 @@ class VulkanVideoReadback
     // Whether a recording can take images of this format.
     static bool SupportsFormat(VkFormat format);
 
-    // Records the copy of image (created with VK_IMAGE_USAGE_TRANSFER_SRC_BIT, in layout and
-    // returned to it) into the slot's buffer, after everything the command buffer did before.
+    // Records the copy of image into the slot's staging texture, after everything the command list
+    // did before; the image goes back to being a shader resource after.
     void RecordCopy(
-        VkCommandBuffer commandBuffer,
+        nvrhi::ICommandList* commandList,
         uint32_t frameSlot,
-        VkImage image,
+        nvrhi::ITexture* image,
         VkFormat format,
         VkExtent2D extent,
-        VkImageLayout layout,
         double timeSeconds);
 
     // One image of a mosaic: where its top-left corner goes on the canvas, in pixels.
     struct MosaicTile
     {
-        VkImage image = VK_NULL_HANDLE;
+        nvrhi::ITexture* image = nullptr;
         VkExtent2D extent{};
         uint32_t x = 0;
         uint32_t y = 0;
     };
-    // Records the copy of several images of one format, each in layout and returned to it, into one
-    // canvas of canvasExtent in the slot's buffer, the rest of it black: a quad recording's frame
+    // Records the copy of several images of one format into one canvas of canvasExtent in the slot's
+    // staging texture, the rest of it black: a quad recording's frame
     // (docs/design/2026-10-07-quad-vehicle-recording-design.md). The tiles must lie inside the canvas.
     void RecordMosaicCopy(
-        VkCommandBuffer commandBuffer,
+        nvrhi::ICommandList* commandList,
         uint32_t frameSlot,
         std::span<const MosaicTile> tiles,
         VkFormat format,
         VkExtent2D canvasExtent,
-        VkImageLayout layout,
         double timeSeconds);
 
     struct Frame
@@ -62,32 +62,36 @@ class VulkanVideoReadback
         VideoFrame frame;
         VkExtent2D extent{};
     };
-    // The slot's copy, once the slot's fence has been waited on since RecordCopy; empty when the
-    // slot has none.
+    // The slot's copy, once the slot's frame has completed since RecordCopy; empty when the slot has
+    // none.
     std::optional<Frame> Take(uint32_t frameSlot);
     bool HasPending() const;
 
   private:
+    struct Rect
+    {
+        uint32_t x = 0;
+        uint32_t y = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+    };
     struct Slot
     {
-        VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
-        void* mapped = nullptr;
-        VkDeviceSize capacity = 0;
-        bool coherent = false;
+        nvrhi::StagingTextureHandle staging;
+        VkExtent2D capacity{};
+        VkFormat stagingFormat = VK_FORMAT_UNDEFINED;
         bool pending = false;
-        VkDeviceSize size = 0;
         VkExtent2D extent{};
         VideoPixelFormat format = VideoPixelFormat::Rgba8;
         double timeSeconds = 0.0;
+        // What the copies wrote; the rest of the canvas is black.
+        std::vector<Rect> written;
     };
 
-    // Makes the slot's buffer at least byteCount bytes.
-    void Reserve(Slot& slot, VkDeviceSize byteCount);
-    void Release(Slot& slot);
+    // Makes the slot's staging texture at least extent, of format.
+    void Reserve(Slot& slot, VkExtent2D extent, VkFormat format);
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-    VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_device = nullptr;
     std::vector<Slot> m_slots;
 };
 }

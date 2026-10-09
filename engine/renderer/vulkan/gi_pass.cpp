@@ -226,7 +226,6 @@ void VulkanGiResolvePass::Record(
     }
     // Runs even with GI off: the debug view reads the zero it writes. Both history images are put in
     // GENERAL first (discarded when the history is invalid), and stay there.
-    m_history.RecordBarrier(commandBuffer, frame.giHistory.valid);
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneGi, frame.imageIndex, frame.frameSlot);
     nvrhi::ITexture* historyRead = m_history.GetTexture(frame.giHistory.readIndex);

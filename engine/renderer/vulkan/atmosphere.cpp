@@ -298,7 +298,7 @@ void VulkanAtmosphere::RecordClouds(
         constants.data());
     if (timer != nullptr)
     {
-        timer->Mark(commandBuffer, "CloudMarch");
+        timer->Mark("CloudMarch");
     }
     // The resolve reads the samples as storage too: the second UnorderedAccess is NVRHI's UAV barrier.
     commandList->setTextureState(samples, nvrhi::AllSubresources, States::UnorderedAccess);
@@ -552,16 +552,11 @@ void VulkanAtmosphere::Record(
         commandList->commitBarriers();
         Dispatch(commandList, kIrradiancePipeline, frameBindingSet, set, 1, 1, 1);
 
-        // A copy for the CPU, read once this slot's fence has signaled; NVRHI has no state for the
-        // host's read, so that barrier is native.
+        // A copy for the CPU, read once this slot's frame has completed (as every readback here: the
+        // frame's completion makes the copy visible to the host).
         commandList->setBufferState(m_irradianceHandle, States::CopySource);
         commandList->commitBarriers();
         commandList->copyBuffer(readback.handle, 0, m_irradianceHandle, 0, kIrradianceBytes);
-        VkMemoryBarrier toHost{};
-        toHost.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        toHost.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        toHost.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &toHost, 0, nullptr, 0, nullptr);
     }
     readback.written = parameters != nullptr;
 }

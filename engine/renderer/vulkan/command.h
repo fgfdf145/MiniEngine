@@ -6,6 +6,7 @@
 
 #include <entt/entt.hpp>
 
+#include <array>
 #include <functional>
 
 #include <nvrhi/nvrhi.h>
@@ -15,10 +16,11 @@ namespace me
 
 struct VulkanDrawItem
 {
-    VkBuffer vertexBuffer = VK_NULL_HANDLE;
-    VkBuffer indexBuffer = VK_NULL_HANDLE;
+    nvrhi::IBuffer* vertexBuffer = nullptr;
+    nvrhi::IBuffer* indexBuffer = nullptr;
     uint32_t indexCount = 0;
-    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    // Set 1, the material's textures (VulkanMaterialSetCache).
+    nvrhi::IBindingSet* materialSet = nullptr;
     ObjectPushConstants drawConstants;
     MaterialPipelineKey pipelineKey;
     // Index into the previous model matrix buffer (set 0 binding 2), passed to the draw as
@@ -41,9 +43,12 @@ struct VulkanDrawItem
     // which the toon passes' head frame follows.
     entt::entity entity = entt::null;
     int32_t toonHeadJoint = -1;
-    // Where each vertex was last frame (VulkanBuffer::GetPreviousPositionHandle): binding 1 of the
+    // Where each vertex was last frame (VulkanBuffer::GetPreviousPositionBuffer): binding 1 of the
     // material pipelines, whose motion vectors start from it.
-    VkBuffer previousPositionBuffer = VK_NULL_HANDLE;
+    nvrhi::IBuffer* previousPositionBuffer = nullptr;
+    // The material's samplers as indices into set 0's table (GpuMaterialData::samplerIndices), which
+    // the toon passes copy into their own materials.
+    std::array<uint32_t, 8> samplerIndices{};
 };
 
 class NvrhiDevice;

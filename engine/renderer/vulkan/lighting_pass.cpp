@@ -1,10 +1,12 @@
 #include "lighting_pass.h"
 
 #include "gbuffer_inputs.h"
+#include "nvrhi_pass.h"
 #include "pipeline.h"
 #include "ray_scene.h"
 
 #include <array>
+#include <stdexcept>
 
 namespace me
 {
@@ -24,39 +26,62 @@ struct LightingPushConstants
 };
 
 static_assert(sizeof(LightingPushConstants) == 32, "LightingPushConstants must match the shader's block");
+
+// deferred_lighting.frag has no set of its own: its push constants are the only thing in register space
+// 4 (docs/design/2026-10-09-dxil-shader-portability-design.md), a set both variants leave free.
+constexpr uint32_t kPushConstantSpace = 4;
 }
 
 VulkanLightingPass::VulkanLightingPass(
-    VkDevice device,
-    VkPipelineCache pipelineCache,
+    nvrhi::IDevice* nvrhiDevice,
     const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout,
-    VkDescriptorSetLayout emptySetLayout,
-    VkDescriptorSetLayout gbufferSetLayout,
+    nvrhi::IBindingLayout* frameSetLayout,
+    nvrhi::IBindingLayout* gbufferSetLayout,
     const VulkanRayScene& rayScene)
-    : m_device(device)
+    : m_nvrhiDevice(nvrhiDevice)
 {
-    try
+    CreateFramebuffers(targets);
+    nvrhi::BindingLayoutDesc pushDesc;
+    pushDesc.visibility = nvrhi::ShaderType::Pixel;
+    pushDesc.registerSpace = kPushConstantSpace;
+    pushDesc.registerSpaceIsDescriptorSet = true;
+    pushDesc.bindingOffsets = ShaderBindingOffsets();
+    pushDesc.bindings = {nvrhi::BindingLayoutItem::PushConstants(0, sizeof(LightingPushConstants))};
+    m_pushLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, pushDesc, "Failed to create the lighting push constant layout");
+    nvrhi::BindingSetDesc pushSet;
+    pushSet.bindings = {nvrhi::BindingSetItem::PushConstants(0, sizeof(LightingPushConstants))};
+    m_pushSet = CreateNvrhiBindingSet(m_nvrhiDevice, pushSet, m_pushLayout, "Failed to create the lighting push constant set");
+
+    const auto pipeline = [&](const char* shader, std::initializer_list<nvrhi::IBindingLayout*> layouts)
     {
-        m_renderPass = CreateFullscreenRenderPass(m_device, targets.GetFormat(RenderTargetId::SceneHdr), "lighting");
-        CreatePipeline(pipelineCache, frameSetLayout, emptySetLayout, gbufferSetLayout);
-        if (rayScene.HasHardwareRayTracing())
+        nvrhi::GraphicsPipelineDesc desc;
+        desc.VS = CreateNvrhiShader(m_nvrhiDevice, nvrhi::ShaderType::Vertex, "fullscreen.vert.spv");
+        desc.PS = CreateNvrhiShader(m_nvrhiDevice, nvrhi::ShaderType::Pixel, shader);
+        desc.primType = nvrhi::PrimitiveType::TriangleList;
+        for (nvrhi::IBindingLayout* layout : layouts)
         {
-            CreateTracedPipeline(pipelineCache, frameSetLayout, rayScene.GetSetLayout(), gbufferSetLayout, rayScene.GetTextureSetLayout());
+            desc.bindingLayouts.push_back(layout);
         }
-        CreateFramebuffers(targets);
-    }
-    catch (...)
+        desc.renderState.rasterState.setCullNone();
+        desc.renderState.depthStencilState.disableDepthTest().disableDepthWrite();
+        nvrhi::GraphicsPipelineHandle result = m_nvrhiDevice->createGraphicsPipeline(desc, m_framebuffers.front());
+        if (!result)
+        {
+            throw std::runtime_error(std::string("Failed to create the lighting pipeline for ") + shader);
+        }
+        return result;
+    };
+    m_pipeline = pipeline("deferred_lighting.frag.spv", {frameSetLayout, gbufferSetLayout, m_pushLayout});
+    if (rayScene.HasHardwareRayTracing())
     {
-        DestroyHandles();
-        throw;
+        // Its set 1 is the ray scene and set 3 its texture table.
+        m_tracedPipeline = pipeline(
+            "deferred_lighting_ray_query.frag.spv",
+            {frameSetLayout, rayScene.GetNvrhiSetLayout(), gbufferSetLayout, rayScene.GetNvrhiTextureSetLayout(), m_pushLayout});
     }
 }
 
-VulkanLightingPass::~VulkanLightingPass()
-{
-    DestroyHandles();
-}
+VulkanLightingPass::~VulkanLightingPass() = default;
 
 ScenePassId VulkanLightingPass::Id() const
 {
@@ -78,50 +103,28 @@ void VulkanLightingPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    // No clear values: the attachment's loadOp is DONT_CARE because the triangle writes every
-    // pixel, background included.
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_renderPass;
-    renderPassInfo.framebuffer = m_framebuffers.at(
-        targets.ResolveIndex(RenderTargetId::SceneHdr, frame.imageIndex, frame.frameSlot));
-    renderPassInfo.renderArea.offset = {0, 0};
-    renderPassInfo.renderArea.extent = frame.extent;
-
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    SetViewportAndScissor(commandBuffer, frame.extent);
-    // The ray query variant traces the local lights' shadows; its set 1 is the ray scene and set 3 its
-    // texture table.
-    const bool traced = frame.rayTracing.localShadows && m_tracedPipeline != VK_NULL_HANDLE;
-    const VkPipelineLayout layout = traced ? m_tracedPipelineLayout : m_pipelineLayout;
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, traced ? m_tracedPipeline : m_pipeline);
+    (void)commandBuffer;
+    // The triangle writes every pixel, background included: nothing is cleared. The layout tracker put
+    // the HDR target in COLOR_ATTACHMENT_OPTIMAL (the write) and the G-buffer in the read layout.
+    const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneHdr, frame.imageIndex, frame.frameSlot);
+    nvrhi::ICommandList* commandList = frame.commandList;
+    const NvrhiPassScope scope(commandList, {{targets.GetTexture(RenderTargetId::SceneHdr, slot), nvrhi::ResourceStates::RenderTarget}});
+    // The ray query variant traces the local lights' shadows.
+    const bool traced = frame.rayTracing.localShadows && m_tracedPipeline && frame.rayBindingSet != nullptr && frame.rayTextureTable != nullptr;
+    nvrhi::GraphicsState state;
+    state.framebuffer = m_framebuffers.at(slot);
+    state.viewport = NativeViewportState(frame.extent);
     if (traced)
     {
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 1, 1, &frame.raySet, 0, nullptr);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 3, 1, &frame.rayTextureSet, 0, nullptr);
+        state.pipeline = m_tracedPipeline;
+        state.bindings = {frame.frameBindingSet, frame.rayBindingSet, frame.gbufferBindingSet, frame.rayTextureTable, m_pushSet};
     }
-
-    // Set 0 is the same per-swapchain-image camera set the material passes bind; its layout
-    // already includes the fragment stage. Set 2 is the per-frame-slot G-buffer set. Set 1 is
-    // never bound: its layout is empty.
-    vkCmdBindDescriptorSets(
-        commandBuffer,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        layout,
-        0,
-        1,
-        &frame.frameDescriptorSet,
-        0,
-        nullptr);
-    vkCmdBindDescriptorSets(
-        commandBuffer,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        layout,
-        2,
-        1,
-        &frame.gbufferDescriptorSet,
-        0,
-        nullptr);
+    else
+    {
+        state.pipeline = m_pipeline;
+        state.bindings = {frame.frameBindingSet, frame.gbufferBindingSet, m_pushSet};
+    }
+    commandList->setGraphicsState(state);
 
     LightingPushConstants constants{};
     // The same constant the forward pass clears with, so the two orders' backgrounds cannot differ.
@@ -131,152 +134,28 @@ void VulkanLightingPass::Record(
         frame.rayTracing.sunShadows ? 1.0f : 0.0f,
         traced ? 1.0f : 0.0f,
         frame.pathTracing.enabled ? (frame.pathTracing.restir ? 2.0f : (frame.pathTracing.offline.enabled ? 3.0f : 1.0f)) : 0.0f);
-    vkCmdPushConstants(
-        commandBuffer,
-        layout,
-        VK_SHADER_STAGE_FRAGMENT_BIT,
-        0,
-        sizeof(constants),
-        &constants);
-
-    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
-    vkCmdEndRenderPass(commandBuffer);
+    commandList->setPushConstants(&constants, sizeof(constants));
+    commandList->draw(nvrhi::DrawArguments().setVertexCount(3));
 }
 
 void VulkanLightingPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
-    // The render pass and pipeline depend only on the HDR format, which a rebuild never changes.
-    DestroyFramebuffers();
+    // The pipelines depend only on the HDR format, which a rebuild never changes.
     CreateFramebuffers(targets);
-}
-
-void VulkanLightingPass::CreatePipeline(
-    VkPipelineCache pipelineCache,
-    VkDescriptorSetLayout frameSetLayout,
-    VkDescriptorSetLayout emptySetLayout,
-    VkDescriptorSetLayout gbufferSetLayout)
-{
-    const std::array<VkDescriptorSetLayout, 3> setLayouts = {frameSetLayout, emptySetLayout, gbufferSetLayout};
-
-    // The background and the debug switch are push constants, set per frame.
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(LightingPushConstants);
-
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
-    pipelineLayoutInfo.pSetLayouts = setLayouts.data();
-    pipelineLayoutInfo.pushConstantRangeCount = 1;
-    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-
-    CheckVulkan(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout), "Failed to create lighting pipeline layout");
-
-    m_pipeline = CreateFullscreenPipeline(
-        m_device,
-        pipelineCache,
-        m_renderPass,
-        m_pipelineLayout,
-        "deferred_lighting.frag.spv",
-        "lighting");
-}
-
-void VulkanLightingPass::CreateTracedPipeline(
-    VkPipelineCache pipelineCache,
-    VkDescriptorSetLayout frameSetLayout,
-    VkDescriptorSetLayout raySetLayout,
-    VkDescriptorSetLayout gbufferSetLayout,
-    VkDescriptorSetLayout rayTextureSetLayout)
-{
-    const std::array<VkDescriptorSetLayout, 4> setLayouts = {frameSetLayout, raySetLayout, gbufferSetLayout, rayTextureSetLayout};
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(LightingPushConstants);
-
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
-    pipelineLayoutInfo.pSetLayouts = setLayouts.data();
-    pipelineLayoutInfo.pushConstantRangeCount = 1;
-    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-    CheckVulkan(
-        vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_tracedPipelineLayout),
-        "Failed to create the ray traced lighting pipeline layout");
-    m_tracedPipeline = CreateFullscreenPipeline(
-        m_device,
-        pipelineCache,
-        m_renderPass,
-        m_tracedPipelineLayout,
-        "deferred_lighting_ray_query.frag.spv",
-        "lighting (ray traced shadows)");
 }
 
 void VulkanLightingPass::CreateFramebuffers(const SceneRenderTargets& targets)
 {
-    const VkExtent2D extent = targets.GetExtent();
-    const uint32_t copyCount = targets.GetTransientCopyCount();
-    m_framebuffers.reserve(copyCount);
-
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
-    {
-        const VkImageView attachment = targets.GetView(RenderTargetId::SceneHdr, slot);
-
-        VkFramebufferCreateInfo framebufferInfo{};
-        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = m_renderPass;
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = &attachment;
-        framebufferInfo.width = extent.width;
-        framebufferInfo.height = extent.height;
-        framebufferInfo.layers = 1;
-
-        VkFramebuffer framebuffer = VK_NULL_HANDLE;
-        CheckVulkan(vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &framebuffer), "Failed to create lighting framebuffer");
-        m_framebuffers.push_back(framebuffer);
-    }
-}
-
-void VulkanLightingPass::DestroyFramebuffers()
-{
-    for (VkFramebuffer framebuffer : m_framebuffers)
-    {
-        if (framebuffer != VK_NULL_HANDLE)
-        {
-            vkDestroyFramebuffer(m_device, framebuffer, nullptr);
-        }
-    }
     m_framebuffers.clear();
-}
-
-void VulkanLightingPass::DestroyHandles()
-{
-    if (m_tracedPipeline != VK_NULL_HANDLE)
+    for (uint32_t slot = 0; slot < targets.GetTransientCopyCount(); ++slot)
     {
-        vkDestroyPipeline(m_device, m_tracedPipeline, nullptr);
-        m_tracedPipeline = VK_NULL_HANDLE;
-    }
-    if (m_tracedPipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_tracedPipelineLayout, nullptr);
-        m_tracedPipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_pipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    DestroyFramebuffers();
-    if (m_renderPass != VK_NULL_HANDLE)
-    {
-        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
-        m_renderPass = VK_NULL_HANDLE;
+        nvrhi::FramebufferHandle framebuffer = m_nvrhiDevice->createFramebuffer(
+            nvrhi::FramebufferDesc().addColorAttachment(targets.GetTexture(RenderTargetId::SceneHdr, slot)));
+        if (!framebuffer)
+        {
+            throw std::runtime_error("Failed to create a lighting framebuffer");
+        }
+        m_framebuffers.push_back(framebuffer);
     }
 }
 }

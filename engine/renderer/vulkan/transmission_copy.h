@@ -31,9 +31,6 @@ class VulkanTransmissionImage
     VkImage GetImage() const;
     nvrhi::ITexture* GetTexture() const;
 
-    // Moves a new image from UNDEFINED to its resting layout; later calls do nothing. Recorded by
-    // the copy pass every frame, so the descriptor names the true layout from the first frame on.
-    void RecordInitialTransition(VkCommandBuffer commandBuffer) const;
 
   private:
     void Destroy();
@@ -44,13 +41,12 @@ class VulkanTransmissionImage
     nvrhi::TextureHandle m_texture;
     VkImageView m_view = VK_NULL_HANDLE;
     nvrhi::SamplerHandle m_sampler;
-    mutable bool m_initialized = false;
 };
 
 // Copies the HDR target, once everything opaque and the sky are in it, into the transmission image
 // and builds its mip chain. Does nothing on a frame without transmissive draws: the image keeps
-// whatever it last held, which nothing samples. Records through NVRHI (NvrhiPassScope) but for the
-// mip chain's blits, which NVRHI does not have: they stay native, between the copy states NVRHI sets.
+// whatever it last held, which nothing samples. Each level below the first is filtered from the one
+// above (MipDownsample).
 class VulkanTransmissionCopyPass : public IScenePass
 {
   public:
@@ -82,5 +78,7 @@ class VulkanTransmissionCopyPass : public IScenePass
     nvrhi::ComputePipelineHandle m_pipeline;
     // Per frame slot: that slot's HDR target into the copy's level 0.
     std::vector<nvrhi::BindingSetHandle> m_bindingSets;
+    MipDownsample m_downsample;
+    std::vector<nvrhi::BindingSetHandle> m_mipSets;
 };
 }

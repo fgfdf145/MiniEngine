@@ -219,7 +219,7 @@ void VulkanRestirPtPass::Record(
     {
         if (frame.gpuTimer != nullptr)
         {
-            frame.gpuTimer->Mark(commandBuffer, name);
+            frame.gpuTimer->Mark(name);
         }
     };
     dispatch(m_initialPipeline, kComputeWorkgroupSize);

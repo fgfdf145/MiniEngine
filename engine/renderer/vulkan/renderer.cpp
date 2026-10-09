@@ -455,6 +455,35 @@ std::vector<MaterialTextureBinding> BuildMaterialTextureBindings(
     return bindings;
 }
 
+// Each material binding's sampler as an index into set 0's table, a byte each, four to a word
+// (scene_common.slang's MaterialSamplerIndex): the glTF slots' own, the detail maps the default, as
+// BuildMaterialTextureBindings pairs them.
+void PackMaterialSamplerIndices(const MaterialTextureSlots& slots, uint32_t (&packed)[8])
+{
+    static_assert(kMaterialTextureBindingCount == 8 * 4, "Four sampler indices a word");
+    static_assert(VulkanSamplerCache::kSamplerCount <= 256, "A sampler index must fit a byte");
+    std::fill(std::begin(packed), std::end(packed), 0u);
+    for (uint32_t binding = 0; binding < kMaterialTextureBindingCount; ++binding)
+    {
+        const TextureSampler sampler = binding < slots.samplers.size() ? slots.samplers[binding] : TextureSampler{};
+        packed[binding / 4] |= VulkanSamplerCache::IndexOf(sampler) << ((binding % 4) * 8);
+    }
+}
+
+// The state a pass writes a target in, by its kind (render_target_layout.h's write layouts).
+nvrhi::ResourceStates GetWriteState(RenderTargetId target)
+{
+    switch (GetRenderTargetKind(target))
+    {
+    case RenderTargetKind::Depth:
+        return nvrhi::ResourceStates::DepthWrite;
+    case RenderTargetKind::Storage:
+        return nvrhi::ResourceStates::UnorderedAccess;
+    default:
+        return nvrhi::ResourceStates::RenderTarget;
+    }
+}
+
 VkExtent2D ToVkExtent(RenderExtent extent)
 {
     return VkExtent2D{
@@ -632,7 +661,7 @@ VulkanRenderer::~VulkanRenderer()
 
     if (m_device)
     {
-        vkDeviceWaitIdle(m_device->GetHandle());
+        m_nvrhi->Get()->waitForIdle();
     }
     // The device is idle: what was retired goes now, before the caches and the ray scene it names.
     m_uploadBatches.clear();
@@ -661,7 +690,7 @@ VulkanRenderer::~VulkanRenderer()
     m_samplerCache.reset();
     DestroyDeviceResources();
     m_dlss.reset();
-    m_stagingChunkPool.reset();
+    m_uploadPool.reset();
     m_nvrhi.reset();
     m_device.reset();
     m_instance.reset();
@@ -912,7 +941,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     m_retireQueue.Collect(m_commandContext->CompletedSubmits());
     // The memory pool's blocks that emptied, back to the driver one a frame beyond a few spares (each
     // vkFreeMemory holds the driver for about a millisecond; compaction empties dozens at once).
-    VulkanMemoryPool::ReleaseEmptyBlocks(m_device->GetHandle(), kSpareMemoryBlocks, 1);
+    VulkanMemoryPool::ReleaseEmptyBlocks(m_nvrhi->Get(), kSpareMemoryBlocks, 1);
 
     if (packet.contentChanged)
     {
@@ -1371,10 +1400,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         videoRecorder->ClaimFrameAt(videoFrameTime);
     if (recordVideoFrame && !m_videoReadback)
     {
-        m_videoReadback = std::make_unique<VulkanVideoReadback>(
-            m_device->GetPhysicalDevice(),
-            m_device->GetHandle(),
-            static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+        m_videoReadback = std::make_unique<VulkanVideoReadback>(m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     }
     // The quad recording takes its cameras' images into one canvas, when its video wants this moment
     // and every view is at the size the canvas has room for.
@@ -1386,10 +1412,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         quadRecording->recorder->ClaimFrameAt(videoFrameTime);
     if (recordQuadFrame && !m_quadReadback)
     {
-        m_quadReadback = std::make_unique<VulkanVideoReadback>(
-            m_device->GetPhysicalDevice(),
-            m_device->GetHandle(),
-            static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+        m_quadReadback = std::make_unique<VulkanVideoReadback>(m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     }
 
     // The UI named the render thread's textures by ID; with the swapchain image known, they get the
@@ -1414,44 +1437,31 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     m_cpuStages.Mark("FrameSetup");
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
                                           {
-                                              // A view's tracker holds one layout per target, but a target has
-                                              // one image per copy, so what it learned last frame describes a
-                                              // different VkImage than this frame touches. Every command buffer
-                                              // therefore starts from undefined rather than carry a layout
-                                              // across to the wrong image, which is why the reset lives here,
-                                              // where the command buffer begins, and covers the ImGui
-                                              // declaration below as well as the scene passes.
-                                              //
-                                              // That costs nothing: AcquireNextImage already waited on this
-                                              // frame slot's fence, so the previous use of these images has
-                                              // completed, and every target is cleared or fully rewritten
-                                              // before it is read, so discarding its contents is what we want
-                                              // anyway.
-                                              m_view.layoutTracker.Reset();
-                                              for (const std::unique_ptr<VulkanSceneView>& view : m_captureViews)
-                                              {
-                                                  view->layoutTracker.Reset();
-                                              }
-                                              m_gpuTimer->BeginFrame(commandBuffer, frame.frameSlot);
+                                              // Every target rests in its initial state between command lists
+                                              // (keepInitialState), which NVRHI tracks; the textures made since
+                                              // the last frame leave UNDEFINED for it first (Vulkan).
+                                              RecordInitialTransitions(frame.commandList);
+                                              m_gpuTimer->BeginFrame(frame.commandList, frame.frameSlot);
 
                                               // The skinned submeshes posed first: every pass after draws them.
-                                              m_skinningPass->Record(commandBuffer, frame.commandList, frame.frameSlot, shared.skinningDispatches);
-                                              m_gpuTimer->Mark(commandBuffer, "Skinning");
+                                              m_skinningPass->Record(frame.commandList, frame.frameSlot, shared.skinningDispatches);
+                                              m_gpuTimer->Mark("Skinning");
 
                                               // Ahead of the scene passes, whose material pass samples it, and of
                                               // the probes, whose hits do. It orders itself through its render
                                               // pass dependencies and never goes through the layout tracker (see
                                               // VulkanShadowPass).
                                               m_view.shadowPass->Record(
-                                                  commandBuffer,
+                                                  frame.commandList,
+                                                  frame.frameBindingSet,
                                                   shared.shadowDrawItems,
                                                   mainPrepared->shadowPlan.has_value() ? &*mainPrepared->shadowPlan : nullptr,
                                                   m_gpuTimer.get(),
                                                   m_parallelRecorder.get());
                                               m_cpuStages.Mark("RecordShadows");
                                               // The same, for the local lights' atlas.
-                                              m_localShadowPass->Record(commandBuffer, shared.shadowDrawItems, shared.localShadowTiles);
-                                              m_gpuTimer->Mark(commandBuffer, "LocalShadows");
+                                              m_localShadowPass->Record(frame.commandList, frame.frameBindingSet, shared.shadowDrawItems, shared.localShadowTiles);
+                                              m_gpuTimer->Mark("LocalShadows");
                                               m_cpuStages.Mark("RecordLocalShadows");
 
                                               // Ahead of the scene passes, whose fragment shaders sample the
@@ -1464,7 +1474,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr,
                                                   frame.frameSlot,
                                                   environmentData.cloudLayer.w > 0.0f ? &environmentData.cloudLife : nullptr);
-                                              m_gpuTimer->Mark(commandBuffer, "Atmosphere");
+                                              m_gpuTimer->Mark("Atmosphere");
                                               // The viewport's aerial perspective and clouds, marched and
                                               // resolved, after the LUTs and the noise they read and before the
                                               // sky pass composites them.
@@ -1475,7 +1485,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   frame.frameBindingSet,
                                                   environmentMode == EnvironmentMode::Atmosphere,
                                                   m_gpuTimer.get());
-                                              m_gpuTimer->Mark(commandBuffer, "CloudResolve");
+                                              m_gpuTimer->Mark("CloudResolve");
                                               // After the atmosphere, whose sky-view LUT the capture samples.
                                               m_environmentProbe->Record(
                                                   commandBuffer,
@@ -1483,11 +1493,11 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   frame.frameBindingSet,
                                                   environmentMode != EnvironmentMode::None,
                                                   environmentData);
-                                              m_gpuTimer->Mark(commandBuffer, "EnvironmentProbe");
+                                              m_gpuTimer->Mark("EnvironmentProbe");
                                               // The ray materials, when content changed, and the barrier that
                                               // makes the ray scene visible to every trace after it.
-                                              m_rayScene->Record(commandBuffer, frame.frameSlot, frame.hardwareRays);
-                                              m_gpuTimer->Mark(commandBuffer, "RayScene");
+                                              m_rayScene->Record(frame.commandList, frame.frameSlot, frame.hardwareRays);
+                                              m_gpuTimer->Mark("RayScene");
                                               // The probes trace the ray scene and must be current before
                                               // any surface samples them.
                                               m_ddgi->Record(
@@ -1500,7 +1510,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   ddgiLightingEpoch,
                                                   ddgiGeometryEpoch,
                                                   frame.hardwareRays);
-                                              m_gpuTimer->Mark(commandBuffer, "Ddgi");
+                                              m_gpuTimer->Mark("Ddgi");
                                               m_cpuStages.Mark("RecordPrePasses");
 
                                               // The capture views, each whole: its shadows, its atmosphere and
@@ -1510,7 +1520,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               {
                                                   VulkanSceneView& view = *prepared->view;
                                                   view.shadowPass->Record(
-                                                      commandBuffer,
+                                                      prepared->frame.commandList,
+                                                      prepared->frame.frameBindingSet,
                                                       shared.shadowDrawItems,
                                                       prepared->shadowPlan.has_value() ? &*prepared->shadowPlan : nullptr,
                                                       nullptr,
@@ -1525,18 +1536,17 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   static constexpr std::array<RenderTargetId, 1> kCaptureReads = {RenderTargetId::SceneLdr};
                                                   RenderPassIo captureIo{};
                                                   captureIo.reads = kCaptureReads;
-                                                  RecordTransitions(commandBuffer, view, captureIo, prepared->frame);
-                                                  m_gpuTimer->Mark(commandBuffer, "CaptureView");
+                                                  RecordTransitions(view, captureIo, prepared->frame);
+                                                  m_gpuTimer->Mark("CaptureView");
                                               }
                                               if (recordQuadFrame)
                                               {
                                                   m_quadReadback->RecordMosaicCopy(
-                                                      commandBuffer,
+                                                      frame.commandList,
                                                       frame.frameSlot,
                                                       quadTiles,
                                                       m_view.targets->GetFormat(RenderTargetId::SceneLdr),
                                                       ToVkExtent(RenderExtent{quadRecording->mosaic.width, quadRecording->mosaic.height}),
-                                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                                       videoFrameTime);
                                               }
                                               m_cpuStages.Mark("RecordCaptureViews");
@@ -1552,10 +1562,10 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   RenderTargetId::SelectionOutline};
                                               RenderPassIo imguiIo{};
                                               imguiIo.reads = kImGuiReads;
-                                              RecordTransitions(commandBuffer, m_view, imguiIo, frame);
+                                              RecordTransitions(m_view, imguiIo, frame);
 
                                               RecordEditorLayer(commandBuffer, imageIndex, packet.ui.GetDrawData());
-                                              m_gpuTimer->Mark(commandBuffer, "ImGui");
+                                              m_gpuTimer->Mark("ImGui");
 
                                               if (recordVideoFrame)
                                               {
@@ -1563,12 +1573,11 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   // shader-read, as CaptureViewport expects to find it.
                                                   const uint32_t ldrIndex = m_view.targets->ResolveIndex(RenderTargetId::SceneLdr, imageIndex, 0);
                                                   m_videoReadback->RecordCopy(
-                                                      commandBuffer,
+                                                      frame.commandList,
                                                       frame.frameSlot,
-                                                      m_view.targets->GetImage(RenderTargetId::SceneLdr, ldrIndex),
+                                                      m_view.targets->GetTexture(RenderTargetId::SceneLdr, ldrIndex),
                                                       m_view.targets->GetFormat(RenderTargetId::SceneLdr),
                                                       videoExtent,
-                                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                                       videoFrameTime);
                                               }
                                           });
@@ -1980,6 +1989,7 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.scatterPipelines = m_scatterPipelines.get();
     frame.frameDescriptorSet = view.uniformBuffer->GetFrameDescriptorSet(imageIndex);
     frame.frameBindingSet = view.uniformBuffer->GetFrameBindingSet(imageIndex);
+    frame.drawConstantsSet = m_materialDrawConstants->set;
     frame.commandList = m_commandContext->GetCommandList();
     frame.gbufferDescriptorSet = view.gbufferDescriptors->GetSet(*view.targets, imageIndex, frame.frameSlot);
     frame.gbufferBindingSet = view.gbufferDescriptors->GetBindingSet(*view.targets, imageIndex, frame.frameSlot);
@@ -2327,7 +2337,6 @@ void VulkanRenderer::DestroySwapchainResources()
     {
         m_view.targets->ReleaseImages();
     }
-    m_view.layoutTracker.Reset();
     if (m_imguiLayer)
     {
         m_imguiLayer->DestroyVulkanResources();
@@ -2347,7 +2356,8 @@ void VulkanRenderer::CreateDeviceResources()
     m_frameSetLayout = std::make_unique<VulkanFrameDescriptorSetLayout>(m_nvrhi->Get());
     m_materialSetLayout = std::make_unique<VulkanMaterialDescriptorSetLayout>(m_nvrhi->Get());
     m_materialSets = std::make_unique<VulkanMaterialSetCache>(m_nvrhi->Get(), m_materialSetLayout->Get());
-    m_stagingChunkPool = std::make_unique<VulkanStagingChunkPool>(m_device->GetHandle());
+    m_materialDrawConstants = std::make_unique<MaterialDrawConstants>(m_nvrhi->Get());
+    m_uploadPool = std::make_unique<GpuUploadPool>(m_nvrhi->Get());
 
     VkPipelineCacheCreateInfo cacheInfo{};
     cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
@@ -2356,53 +2366,38 @@ void VulkanRenderer::CreateDeviceResources()
         "Failed to create pipeline cache");
 
     m_view.shadowPass = std::make_unique<VulkanShadowPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        m_materialSetLayout->GetHandle(),
-        kShadowMapResolution);
-    m_localShadowPass = std::make_unique<VulkanLocalShadowPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        m_materialSetLayout->GetHandle());
+        m_nvrhi->Get(), m_frameSetLayout->Get(), m_materialSetLayout->Get(), kShadowMapResolution);
+    m_localShadowPass = std::make_unique<VulkanLocalShadowPass>(m_nvrhi->Get(), m_frameSetLayout->Get(), m_materialSetLayout->Get());
     m_transmissionImage = std::make_unique<VulkanTransmissionImage>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get());
 
     m_atmosphere = std::make_unique<VulkanAtmosphere>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), m_frameSetLayout->Get());
     m_view.atmosphere = m_atmosphere->CreateView();
-    // The scene as the DDGI probe rays trace it, one instance buffer per frame in flight. With
-    // hardware ray tracing its texture table names a white texture where no material's is.
-    TextureDescriptorBinding rayDefaultTexture{};
+    // The scene as the DDGI probe rays trace it, one instance buffer per frame in flight. Its texture
+    // table names a white texture where no material's is, and every material sampler is in its sets.
     std::vector<nvrhi::ISampler*> raySamplerTable;
-    if (m_device->SupportsRayQuery())
+    for (uint32_t index = 0; index < VulkanSamplerCache::kSamplerCount; ++index)
     {
-        for (uint32_t index = 0; index < VulkanSamplerCache::kSamplerCount; ++index)
-        {
-            raySamplerTable.push_back(m_samplerCache->Get(VulkanSamplerCache::SamplerAt(index)));
-        }
-        VulkanUploadBatch rayUploadBatch(
-            m_device->GetHandle(),
-            m_device->GetQueueFamilies().graphicsFamily.value(),
-            m_device->GetGraphicsQueue());
+        raySamplerTable.push_back(m_samplerCache->Get(VulkanSamplerCache::SamplerAt(index)));
+    }
+    {
+        VulkanUploadBatch rayUploadBatch(m_nvrhi->Get());
         m_rayDefaultTexture = std::make_unique<VulkanTexture>(
             m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), CreateSolidTexture(255, 255, 255, 255), rayUploadBatch, VulkanTextureFormat::LinearData);
         rayUploadBatch.Flush();
-        rayDefaultTexture = TextureDescriptorBinding{m_rayDefaultTexture->GetImageView(), m_samplerCache->GetNative(TextureSampler{})};
     }
+    const TextureDescriptorBinding rayDefaultTexture =
+        BindTexture(m_rayDefaultTexture->GetImageView(), m_rayDefaultTexture->GetNvrhiTexture(), m_samplerCache->Get(TextureSampler{}));
     m_rayScene = std::make_unique<VulkanRayScene>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
         m_nvrhi->Get(),
         m_nvrhi->GetVulkan(),
-        m_pipelineCache,
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_device->SupportsRayQuery(),
         rayDefaultTexture,
         std::move(raySamplerTable),
         m_device->SupportsUpdateUnusedWhilePending(),
-        m_device->BufferDeviceAddressEnabled());
+        m_device->HasLargeHostVisibleDeviceMemory());
     m_rayScene->SetRetire([this](std::function<void()> release)
                           {
                               Retire(std::move(release));
@@ -2418,10 +2413,7 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), m_frameSetLayout->Get());
 
     // Set 0 binding 6 must name a valid image even when no HDRI is loaded.
-    VulkanUploadBatch uploadBatch(
-        m_device->GetHandle(),
-        m_device->GetQueueFamilies().graphicsFamily.value(),
-        m_device->GetGraphicsQueue());
+    VulkanUploadBatch uploadBatch(m_nvrhi->Get());
     FloatTextureData black{};
     black.width = 1;
     black.height = 1;
@@ -2455,11 +2447,7 @@ void VulkanRenderer::CreateDeviceResources()
         m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), ltcTexture(kLtcAmplitudes), uploadBatch);
     uploadBatch.Flush();
 
-    m_gpuTimer = std::make_unique<VulkanGpuTimer>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_device->GetQueueFamilies().graphicsFamily.value(),
-        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+    m_gpuTimer = std::make_unique<VulkanGpuTimer>(m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     if (State().parallelRecording)
     {
         m_parallelRecorder = std::make_unique<VulkanParallelRecorder>(
@@ -2544,21 +2532,16 @@ PhotoViewPicture VulkanRenderer::ReadPhotoViewNow()
     {
         throw std::runtime_error("No frame has been drawn to capture");
     }
-    vkDeviceWaitIdle(m_device->GetHandle());
+    m_nvrhi->Get()->waitForIdle();
 
     const VulkanSceneView& view = *m_captureViews[*m_photoViewIndex];
     ImageCaptureRequest request{};
-    request.physicalDevice = m_device->GetPhysicalDevice();
-    request.device = m_device->GetHandle();
-    request.queueFamily = m_device->GetQueueFamilies().graphicsFamily.value();
-    request.queue = m_device->GetGraphicsQueue();
+    request.device = m_nvrhi->Get();
     // SceneLdr is indexed by swapchain image; the frame slot is ignored for it.
     const uint32_t index = view.targets->ResolveIndex(RenderTargetId::SceneLdr, *m_lastRecordedImageIndex, 0);
-    request.image = view.targets->GetImage(RenderTargetId::SceneLdr, index);
+    request.texture = view.targets->GetTexture(RenderTargetId::SceneLdr, index);
     request.format = view.targets->GetFormat(RenderTargetId::SceneLdr);
     request.extent = view.targets->GetOutputExtent();
-    // The capture views end their frame with SceneLdr shader-read (kCaptureReads).
-    request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     PhotoViewPicture picture;
     picture.rgba = ReadImageRgba8(request);
     picture.width = request.extent.width;
@@ -2581,20 +2564,15 @@ void VulkanRenderer::CaptureViewportNow(const std::filesystem::path& path)
     {
         throw std::runtime_error("No frame has been drawn to capture");
     }
-    vkDeviceWaitIdle(m_device->GetHandle());
+    m_nvrhi->Get()->waitForIdle();
 
     ImageCaptureRequest request{};
-    request.physicalDevice = m_device->GetPhysicalDevice();
-    request.device = m_device->GetHandle();
-    request.queueFamily = m_device->GetQueueFamilies().graphicsFamily.value();
-    request.queue = m_device->GetGraphicsQueue();
+    request.device = m_nvrhi->Get();
     // SceneLdr is indexed by swapchain image; the frame slot is ignored for it.
     const uint32_t index = m_view.targets->ResolveIndex(RenderTargetId::SceneLdr, *m_lastRecordedImageIndex, 0);
-    request.image = m_view.targets->GetImage(RenderTargetId::SceneLdr, index);
+    request.texture = m_view.targets->GetTexture(RenderTargetId::SceneLdr, index);
     request.format = m_view.targets->GetFormat(RenderTargetId::SceneLdr);
     request.extent = m_view.targets->GetOutputExtent();
-    // The ImGui pass sampled it last, so the tracker left it shader-read.
-    request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     CaptureImageToPng(request, path);
     // The EV the render thread drew the frame with; the main thread's camera trails it by a frame.
     LOG_INFO("Captured the viewport to '{}' at EV100 {:.2f}", path.string(), m_view.exposureEv100.value_or(State().camera.exposureEv100));
@@ -2621,7 +2599,7 @@ void VulkanRenderer::FlushVideoFrames()
     {
         return;
     }
-    vkDeviceWaitIdle(m_device->GetHandle());
+    m_nvrhi->Get()->waitForIdle();
     // Oldest first: the recorder writes them in the order it is given them.
     std::vector<VulkanVideoReadback::Frame> frames;
     for (uint32_t slot = 0; slot < VulkanCommandContext::kMaxFramesInFlight; ++slot)
@@ -2689,7 +2667,7 @@ void VulkanRenderer::FlushQuadVideoFrames()
     {
         return;
     }
-    vkDeviceWaitIdle(m_device->GetHandle());
+    m_nvrhi->Get()->waitForIdle();
     // Oldest first: the recorder writes them in the order it is given them.
     std::vector<VulkanVideoReadback::Frame> canvases;
     for (uint32_t slot = 0; slot < VulkanCommandContext::kMaxFramesInFlight; ++slot)
@@ -2730,7 +2708,7 @@ std::vector<VulkanVideoReadback::MosaicTile> VulkanRenderer::BuildQuadMosaicTile
         }
         // SceneLdr is indexed by swapchain image; the frame slot is ignored for it.
         const uint32_t ldrIndex = view.targets->ResolveIndex(RenderTargetId::SceneLdr, imageIndex, 0);
-        tiles.push_back(VulkanVideoReadback::MosaicTile{view.targets->GetImage(RenderTargetId::SceneLdr, ldrIndex), extent, tile.x, tile.y});
+        tiles.push_back(VulkanVideoReadback::MosaicTile{view.targets->GetTexture(RenderTargetId::SceneLdr, ldrIndex), extent, tile.x, tile.y});
     }
     return tiles;
 }
@@ -2766,6 +2744,7 @@ void VulkanRenderer::DestroyDeviceResources()
     m_renderSubmeshes.clear();
     m_liveSubmeshes.clear();
     m_materialSets.reset();
+    m_materialDrawConstants.reset();
     m_materialSetLayout.reset();
     m_frameSetLayout.reset();
 }
@@ -2805,6 +2784,11 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings(const Vul
     bindings.ddgiProbeStates = m_ddgi->GetProbeStateHandle();
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
     bindings.environmentMap = BindTexture(environmentMap.GetImageView(), environmentMap.GetNvrhiTexture(), floatTableSampler);
+    bindings.materialSamplers.reserve(kMaterialSamplerCount);
+    for (uint32_t index = 0; index < kMaterialSamplerCount; ++index)
+    {
+        bindings.materialSamplers.push_back(m_samplerCache->Get(VulkanSamplerCache::SamplerAt(index)));
+    }
     return bindings;
 }
 
@@ -2870,12 +2854,9 @@ bool VulkanRenderer::PreparePathTraceLayer(VulkanSceneView& view, bool halfResol
         // Set 0 names the new images from now on, in the layout they rest in: the frames that may
         // still use the sets finish first, and the images are moved there at once.
         m_commandContext->WaitForAllFrames();
-        VulkanUploadBatch transitions(
-            m_device->GetHandle(), m_device->GetQueueFamilies().graphicsFamily.value(), m_device->GetGraphicsQueue());
-        layerPass->RecordInitialTransition(transitions.GetCommandBuffer());
-        transitions.Flush();
         RunNvrhiCommands([&](nvrhi::ICommandList* commandList)
                          {
+                             layerPass->RecordInitialTransition(commandList);
                              pathTracePass->RecordLayerInitialTransition(commandList);
                          });
         TextureDescriptorBinding depth;
@@ -2910,10 +2891,7 @@ void VulkanRenderer::UpdateMinimapTexture(const std::string& path)
             const std::filesystem::path file = EnginePaths::ResolveProjectPath(path);
             try
             {
-                VulkanUploadBatch uploadBatch(
-                    m_device->GetHandle(),
-                    m_device->GetQueueFamilies().graphicsFamily.value(),
-                    m_device->GetGraphicsQueue());
+                VulkanUploadBatch uploadBatch(m_nvrhi->Get());
                 // Read as UNORM: only ImGui shows it, and ImGui works on sRGB values as they are.
                 m_minimapTexture = std::make_unique<VulkanTexture>(
                     m_device->GetPhysicalDevice(),
@@ -2946,7 +2924,7 @@ void VulkanRenderer::ReleaseMinimapTexture()
         return;
     }
     // Frames in flight may still sample it; a scene change is rare enough to wait for them.
-    vkDeviceWaitIdle(m_device->GetHandle());
+    m_nvrhi->Get()->waitForIdle();
     if (m_minimapBinding != VK_NULL_HANDLE)
     {
         ImGui_ImplVulkan_RemoveTexture(m_minimapBinding);
@@ -2976,10 +2954,7 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
             const FloatTextureData& image = prepared.image;
             if (path == wanted)
             {
-                VulkanUploadBatch uploadBatch(
-                    m_device->GetHandle(),
-                    m_device->GetQueueFamilies().graphicsFamily.value(),
-                    m_device->GetGraphicsQueue());
+                VulkanUploadBatch uploadBatch(m_nvrhi->Get());
                 auto texture = std::make_unique<VulkanTexture>(
                     m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), image, uploadBatch);
                 uploadBatch.Flush();
@@ -3055,14 +3030,8 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     }
     view.gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets);
 
-    auto geometryPass = std::make_unique<VulkanGeometryPass>(
-        m_device->GetHandle(), m_pipelineCache, *view.targets, m_frameSetLayout->GetHandle());
-    auto forwardPass = std::make_unique<VulkanForwardPass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        ForwardPassPart::OpaqueAndSky);
+    auto geometryPass = std::make_unique<VulkanGeometryPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get());
+    auto forwardPass = std::make_unique<VulkanForwardPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), ForwardPassPart::OpaqueAndSky);
 
     MaterialPipelineSetConfig geometryConfig{};
     geometryConfig.fragmentShader = "gbuffer.frag.spv";
@@ -3072,15 +3041,15 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     geometryConfig.depthLessOrEqual = false;
 
     // Both sets are built here, while the typed pass pointers are in hand: the pipelines depend on
-    // nothing but these render passes and the two device lifetime set layouts.
+    // nothing but these passes' attachment formats and the device lifetime binding layouts.
     if (viewport)
     {
         m_geometryPipelines = std::make_unique<VulkanPipelineSet>(
-            m_device->GetHandle(),
-            m_pipelineCache,
-            geometryPass->GetRenderPass(),
-            m_frameSetLayout->GetHandle(),
-            m_materialSetLayout->GetHandle(),
+            m_nvrhi->Get(),
+            geometryPass->GetFramebufferInfo(),
+            m_frameSetLayout->Get(),
+            m_materialSetLayout->Get(),
+            m_materialDrawConstants->layout,
             geometryConfig);
         if (m_device->SupportsIndependentBlend())
         {
@@ -3089,25 +3058,25 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
             decalConfig.depthLessOrEqual = true;
             decalConfig.decal = true;
             m_decalPipelines = std::make_unique<VulkanPipelineSet>(
-                m_device->GetHandle(),
-                m_pipelineCache,
-                geometryPass->GetRenderPass(),
-                m_frameSetLayout->GetHandle(),
-                m_materialSetLayout->GetHandle(),
+                m_nvrhi->Get(),
+                geometryPass->GetFramebufferInfo(),
+                m_frameSetLayout->Get(),
+                m_materialSetLayout->Get(),
+                m_materialDrawConstants->layout,
                 decalConfig);
         }
         // The default config is the forward shape: triangle.frag, one HDR attachment, RGB writes.
         m_forwardPipelines = std::make_unique<VulkanPipelineSet>(
-            m_device->GetHandle(),
-            m_pipelineCache,
-            forwardPass->GetRenderPass(),
-            m_frameSetLayout->GetHandle(),
-            m_materialSetLayout->GetHandle(),
+            m_nvrhi->Get(),
+            forwardPass->GetFramebufferInfo(),
+            m_frameSetLayout->Get(),
+            m_materialSetLayout->Get(),
+            m_materialDrawConstants->layout,
             MaterialPipelineSetConfig{});
     }
     // The scatter pre-pass: the forward shader's inputs, its own output (light and draw slot, alpha
     // included), its own depth, no blending.
-    auto scatterPass = std::make_unique<VulkanScatterPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), *view.targets);
+    auto scatterPass = std::make_unique<VulkanScatterPass>(m_nvrhi->Get(), *view.targets);
     if (viewport)
     {
         MaterialPipelineSetConfig scatterConfig{};
@@ -3116,11 +3085,11 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         scatterConfig.depthLessOrEqual = false;
         scatterConfig.scatterPrepass = true;
         m_scatterPipelines = std::make_unique<VulkanPipelineSet>(
-            m_device->GetHandle(),
-            m_pipelineCache,
-            scatterPass->GetRenderPass(),
-            m_frameSetLayout->GetHandle(),
-            m_materialSetLayout->GetHandle(),
+            m_nvrhi->Get(),
+            scatterPass->GetFramebufferInfo(),
+            m_frameSetLayout->Get(),
+            m_materialSetLayout->Get(),
+            m_materialDrawConstants->layout,
             scatterConfig);
     }
     view.scatterPass = scatterPass.get();
@@ -3142,7 +3111,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_atmosphere->GetMultiScatteringBinding());
     view.pathTracePass = pathTracePass.get();
     // The forward-shaded surfaces' layer it traces too: gbuffer.frag twice, against its two passes.
-    auto pathTraceLayerPass = std::make_unique<VulkanPathTraceLayerPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), *view.targets);
+    auto pathTraceLayerPass = std::make_unique<VulkanPathTraceLayerPass>(m_nvrhi->Get(), *view.targets);
     if (viewport && pathTraceLayerPass->IsSupported() && pathTracePass->IsSupported())
     {
         MaterialPipelineSetConfig layerConfig{};
@@ -3151,22 +3120,22 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         layerConfig.depthLessOrEqual = true;
         layerConfig.layerPass = 1;
         m_pathTraceLayerDepthPipelines = std::make_unique<VulkanPipelineSet>(
-            m_device->GetHandle(),
-            m_pipelineCache,
-            pathTraceLayerPass->GetDepthRenderPass(),
-            m_frameSetLayout->GetHandle(),
-            m_materialSetLayout->GetHandle(),
+            m_nvrhi->Get(),
+            pathTraceLayerPass->GetDepthFramebufferInfo(),
+            m_frameSetLayout->Get(),
+            m_materialSetLayout->Get(),
+            m_materialDrawConstants->layout,
             layerConfig);
         layerConfig.fragmentShader = "path_trace_layer_surface.frag.spv";
         layerConfig.colorAttachmentCount = VulkanPathTraceLayerPass::kSurfaceColorSlots;
         layerConfig.writeAlpha = true;
         layerConfig.layerPass = 2;
         m_pathTraceLayerSurfacePipelines = std::make_unique<VulkanPipelineSet>(
-            m_device->GetHandle(),
-            m_pipelineCache,
-            pathTraceLayerPass->GetSurfaceRenderPass(),
-            m_frameSetLayout->GetHandle(),
-            m_materialSetLayout->GetHandle(),
+            m_nvrhi->Get(),
+            pathTraceLayerPass->GetSurfaceFramebufferInfo(),
+            m_frameSetLayout->Get(),
+            m_materialSetLayout->Get(),
+            m_materialDrawConstants->layout,
             layerConfig);
     }
     view.pathTraceLayerPass = pathTraceLayerPass.get();
@@ -3178,13 +3147,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanAoTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_rayScene));
     view.passes.push_back(std::make_unique<VulkanAoResolvePass>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanLightingPass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        view.gbufferDescriptors->GetEmptySetLayout(),
-        view.gbufferDescriptors->GetSetLayout(),
-        *m_rayScene));
+        m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), view.gbufferDescriptors->GetBindingLayout(), *m_rayScene));
     view.passes.push_back(std::make_unique<VulkanGiTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanGiResolvePass>(m_nvrhi->Get(), m_device->GetHandle(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanGiCompositePass>(
@@ -3198,31 +3161,15 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::move(forwardPass));
     if (!view.toonMaterials)
     {
-        view.toonMaterials = std::make_unique<VulkanToonMaterials>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+        view.toonMaterials = std::make_unique<VulkanToonMaterials>(m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     }
     view.passes.push_back(std::make_unique<VulkanToonPrepass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        m_materialSetLayout->GetHandle(),
-        *view.toonMaterials));
+        m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), m_materialSetLayout->Get(), *view.toonMaterials));
     view.passes.push_back(std::make_unique<VulkanToonPass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        m_materialSetLayout->GetHandle(),
-        *view.toonMaterials));
+        m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), m_materialSetLayout->Get(), *view.toonMaterials));
     view.passes.push_back(std::make_unique<VulkanTransmissionCopyPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_transmissionImage));
-    // Compatible with the opaque half's render pass, so the same forward pipelines draw in it.
-    view.passes.push_back(std::make_unique<VulkanForwardPass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        ForwardPassPart::Translucent));
+    // The opaque half's attachment formats, so the same forward pipelines draw in it.
+    view.passes.push_back(std::make_unique<VulkanForwardPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), ForwardPassPart::Translucent));
     auto taaPass = std::make_unique<VulkanTaaPass>(m_nvrhi->Get(), m_device->GetHandle(), *view.targets, m_frameSetLayout->Get());
     const VulkanTaaPass& taa = *taaPass;
     view.passes.push_back(std::move(taaPass));
@@ -3233,15 +3180,8 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanBloomPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::move(exposurePass));
     view.passes.push_back(std::make_unique<VulkanTonemapPass>(m_nvrhi->Get(), *view.targets, view.gbufferDescriptors->GetBindingLayout()));
-    view.passes.push_back(std::make_unique<VulkanSelectionMaskPass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_materialSetLayout->GetHandle()));
-    view.passes.push_back(std::make_unique<VulkanSelectionOutlinePass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets));
+    view.passes.push_back(std::make_unique<VulkanSelectionMaskPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), m_materialSetLayout->Get()));
+    view.passes.push_back(std::make_unique<VulkanSelectionOutlinePass>(m_nvrhi->Get(), *view.targets));
 }
 
 void VulkanRenderer::CreateDescriptorResources()
@@ -3328,7 +3268,7 @@ void VulkanRenderer::RecreateSwapchain()
         return;
     }
 
-    vkDeviceWaitIdle(m_device->GetHandle());
+    m_nvrhi->Get()->waitForIdle();
     DestroyDescriptorResources();
     DestroySwapchainResources();
     CreateSwapchainResources();
@@ -3407,7 +3347,7 @@ void VulkanRenderer::RebuildViewTargets(VulkanSceneView& view, VkExtent2D render
     // Both passes' render passes and the targets' sampler survive, and the pipelines use dynamic
     // viewport/scissor state, so neither they nor the uniform buffer have to be rebuilt while the
     // user drags the viewport edge. The images are new, so the tracker goes back to undefined.
-    vkDeviceWaitIdle(m_device->GetHandle());
+    m_nvrhi->Get()->waitForIdle();
     view.targets->Rebuild(render, output, static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
     view.gbufferDescriptors->OnTargetsRebuilt(*view.targets);
     for (const std::unique_ptr<IScenePass>& pass : view.passes)
@@ -3442,7 +3382,7 @@ void VulkanRenderer::SyncCaptureViews(std::span<const SceneCaptureView> cameras)
     if (cameras.size() < m_captureViews.size())
     {
         // The frames in flight may still draw them.
-        vkDeviceWaitIdle(m_device->GetHandle());
+        m_nvrhi->Get()->waitForIdle();
         m_captureViews.resize(cameras.size());
         LOG_INFO("Capture views: {}", cameras.size());
     }
@@ -3487,7 +3427,7 @@ void VulkanRenderer::SyncCaptureViews(std::span<const SceneCaptureView> cameras)
             {
                 throw;
             }
-            vkDeviceWaitIdle(m_device->GetHandle());
+            m_nvrhi->Get()->waitForIdle();
             m_captureViews.resize(index);
             m_dlss->ReleaseFeature(DlssFeatureSlot::Photo);
             m_photoDlssMode = DlssMode::Off;
@@ -3549,12 +3489,7 @@ std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D re
         output,
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
     view->shadowPass = std::make_unique<VulkanShadowPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        m_materialSetLayout->GetHandle(),
-        kShadowMapResolution);
+        m_nvrhi->Get(), m_frameSetLayout->Get(), m_materialSetLayout->Get(), kShadowMapResolution);
     view->atmosphere = m_atmosphere->CreateView();
     m_atmosphere->EnsureCloudTarget(*view->atmosphere, render);
     CreateScenePasses(*view);
@@ -3592,12 +3527,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
     constexpr VkDeviceSize kStagedBytesPerUploadFlush = VkDeviceSize{64} << 20;
     const auto makeUploadBatch = [this]()
     {
-        auto batch = std::make_unique<VulkanUploadBatch>(
-            m_device->GetPhysicalDevice(),
-            m_device->GetHandle(),
-            m_device->GetQueueFamilies().graphicsFamily.value(),
-            m_device->GetGraphicsQueue());
-        batch->SetChunkPool(m_stagingChunkPool.get());
+        auto batch = std::make_unique<VulkanUploadBatch>(m_nvrhi->Get(), m_uploadPool.get());
         return batch;
     };
     std::unique_ptr<VulkanUploadBatch> uploadBatch = makeUploadBatch();
@@ -3924,6 +3854,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
         for (size_t index = 0; index < madeSubmeshes.size(); ++index)
         {
             madeSubmeshes[index]->materialSet = m_materialSets->Acquire(bindings[index]);
+            PackMaterialSamplerIndices(madeSlots[index], madeSubmeshes[index]->material.samplerIndices);
             madeSubmeshes[index]->rayBaseColor = bindings[index].baseColor;
             madeSubmeshes[index]->rayEmissive = bindings[index].emissive;
             madeSubmeshes[index]->rayMetallic = bindings[index].metallic;
@@ -4169,12 +4100,7 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
             {
                 if (!uploadBatch)
                 {
-                    uploadBatch = std::make_unique<VulkanUploadBatch>(
-                        m_device->GetPhysicalDevice(),
-                        m_device->GetHandle(),
-                        m_device->GetQueueFamilies().graphicsFamily.value(),
-                        m_device->GetGraphicsQueue());
-                    uploadBatch->SetChunkPool(m_stagingChunkPool.get());
+                    uploadBatch = std::make_unique<VulkanUploadBatch>(m_nvrhi->Get(), m_uploadPool.get());
                 }
                 return *uploadBatch;
             };
@@ -4662,9 +4588,9 @@ void VulkanRenderer::AppendDrawItem(
                                (renderSubmesh.material.shadingModel[0] & kShadingFlagForward) != 0u;
     const bool transmissive = forwardShaded && (renderSubmesh.material.shadingModel[0] & kShadingFlagTransmission) != 0u;
     sortKeys.push_back({pipelineKey, -viewCenter.z, forwardShaded, transmissive});
-    items.push_back(VulkanDrawItem{
-        renderSubmesh.buffer->GetVertexHandle(),
-        renderSubmesh.buffer->GetIndexHandle(),
+    VulkanDrawItem& item = items.emplace_back(VulkanDrawItem{
+        renderSubmesh.buffer->GetVertexBuffer(),
+        renderSubmesh.buffer->GetIndexBuffer(),
         renderSubmesh.buffer->GetIndexCount(),
         renderSubmesh.materialSet,
         drawConstants,
@@ -4679,7 +4605,8 @@ void VulkanRenderer::AppendDrawItem(
         renderSubmesh.toon.get(),
         renderSubmesh.entity,
         renderSubmesh.toonHeadJoint,
-        renderSubmesh.buffer->GetPreviousPositionHandle()});
+        renderSubmesh.buffer->GetPreviousPositionBuffer()});
+    std::copy(std::begin(renderSubmesh.material.samplerIndices), std::end(renderSubmesh.material.samplerIndices), item.samplerIndices.begin());
 }
 
 std::vector<ShadowDrawItem> VulkanRenderer::BuildSelectionDrawItems(
@@ -4822,9 +4749,9 @@ bool VulkanRenderer::WithinDrawDistance(const RenderSubmesh& renderSubmesh, cons
 
 void VulkanRenderer::FillShadowDrawItem(const RenderSubmesh& renderSubmesh, const glm::mat4& model, ShadowDrawItem& item)
 {
-    item.vertexBuffer = renderSubmesh.buffer->GetVertexHandle();
-    item.positionBuffer = renderSubmesh.buffer->GetPositionHandle();
-    item.indexBuffer = renderSubmesh.buffer->GetIndexHandle();
+    item.vertexBuffer = renderSubmesh.buffer->GetVertexBuffer();
+    item.positionBuffer = renderSubmesh.buffer->GetPositionBuffer();
+    item.indexBuffer = renderSubmesh.buffer->GetIndexBuffer();
     item.indexCount = renderSubmesh.buffer->GetIndexCount();
     item.model = model;
     item.worldBoundsCenter = glm::vec3(item.model * glm::vec4(renderSubmesh.localBoundsCenter, 1.0f));
@@ -4835,7 +4762,8 @@ void VulkanRenderer::FillShadowDrawItem(const RenderSubmesh& renderSubmesh, cons
                   glm::length(glm::vec3(item.model[1])),
                   glm::length(glm::vec3(item.model[2]))});
     item.alphaMask = renderSubmesh.alphaMode == MaterialAlphaMode::Mask;
-    item.materialDescriptorSet = renderSubmesh.materialSet;
+    item.materialSet = renderSubmesh.materialSet;
+    item.drawSlot = renderSubmesh.drawSlot;
     std::memcpy(item.material.baseColorFactor, renderSubmesh.material.baseColorFactor, sizeof(item.material.baseColorFactor));
     std::memcpy(item.material.nodeGraphFactors, renderSubmesh.material.nodeGraphFactors, sizeof(item.material.nodeGraphFactors));
     item.material.alphaCutoff = renderSubmesh.material.alphaCutoff;
@@ -4843,43 +4771,25 @@ void VulkanRenderer::FillShadowDrawItem(const RenderSubmesh& renderSubmesh, cons
     std::memcpy(item.baseColorTransform, &renderSubmesh.textureTransforms.rows[0], sizeof(item.baseColorTransform));
 }
 
-void VulkanRenderer::RecordTransitions(
-    VkCommandBuffer commandBuffer,
-    VulkanSceneView& view,
-    const RenderPassIo& io,
-    const ScenePassFrameContext& frame)
+void VulkanRenderer::RecordTransitions(VulkanSceneView& view, const RenderPassIo& io, const ScenePassFrameContext& frame)
 {
-    for (const TargetTransition& transition : view.layoutTracker.Transition(io))
+    // What the pass reads as shader resources, what it writes in its write state (render_target_layout.h).
+    // NVRHI knows where each target is, and a write after a write in unordered access gets its UAV
+    // barrier.
+    nvrhi::ICommandList* commandList = frame.commandList;
+    const auto texture = [&](RenderTargetId target)
     {
-        VkImageMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.oldLayout = transition.oldLayout;
-        barrier.newLayout = transition.newLayout;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = view.targets->GetImage(
-            transition.target,
-            view.targets->ResolveIndex(transition.target, frame.imageIndex, frame.frameSlot));
-        barrier.subresourceRange.aspectMask = view.targets->GetAspect(transition.target);
-        barrier.subresourceRange.baseMipLevel = 0;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = 1;
-        barrier.srcAccessMask = AccessMaskForLayout(transition.oldLayout);
-        barrier.dstAccessMask = AccessMaskForLayout(transition.newLayout);
-
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            StageMaskForLayout(transition.oldLayout),
-            StageMaskForLayout(transition.newLayout),
-            0,
-            0,
-            nullptr,
-            0,
-            nullptr,
-            1,
-            &barrier);
+        return view.targets->GetTexture(target, view.targets->ResolveIndex(target, frame.imageIndex, frame.frameSlot));
+    };
+    for (const RenderTargetId target : io.reads)
+    {
+        commandList->setTextureState(texture(target), nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
     }
+    for (const RenderTargetId target : io.writes)
+    {
+        commandList->setTextureState(texture(target), nvrhi::AllSubresources, GetWriteState(target));
+    }
+    commandList->commitBarriers();
 }
 
 void VulkanRenderer::UpdatePathTracing(
@@ -5036,17 +4946,16 @@ void VulkanRenderer::RecordScenePasses(
     std::span<const ScenePassId> passOrder,
     VulkanGpuTimer* timer)
 {
-    // The layout tracker is reset by the caller, at the head of the command buffer it describes.
     // Only the passes in this frame's order record, but every owned pass follows a target rebuild
     // (see RebuildViewTargets), so flipping the switch never meets a stale framebuffer.
     for (const ScenePassId id : passOrder)
     {
         const IScenePass* pass = view.FindPass(id);
-        RecordTransitions(commandBuffer, view, pass->Io(), frame);
+        RecordTransitions(view, pass->Io(), frame);
         pass->Record(commandBuffer, *view.targets, frame);
         if (timer != nullptr)
         {
-            timer->Mark(commandBuffer, ScenePassName(id));
+            timer->Mark(ScenePassName(id));
         }
     }
 }

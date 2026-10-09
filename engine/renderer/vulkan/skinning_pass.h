@@ -50,9 +50,9 @@ class VulkanSkinningPass
     // dispatches with it.
     nvrhi::BindingSetHandle Acquire(const VulkanBuffer& buffer) const;
 
-    // Copies the palettes into the frame slot's buffer and records every dispatch, through NVRHI,
-    // between the native barriers that order it after last frame's draws and before this frame's.
-    void Record(VkCommandBuffer commandBuffer, nvrhi::ICommandList* commandList, uint32_t frameSlot, std::span<const Dispatch> dispatches);
+    // Copies the palettes into the frame slot's buffer and records every dispatch, the posed buffers
+    // moved out of their read state for the writes and back after.
+    void Record(nvrhi::ICommandList* commandList, uint32_t frameSlot, std::span<const Dispatch> dispatches);
 
   private:
     nvrhi::IDevice* m_nvrhiDevice = nullptr;

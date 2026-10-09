@@ -29,13 +29,12 @@ VkVertexInputBindingDescription GetPositionBindingDescription();
 VkVertexInputAttributeDescription GetPositionAttributeDescription();
 
 // A mesh's device-local buffers, made by NVRHI and bound to ranges of VulkanMemoryPool's heaps. The
-// recording code is still Vulkan's, so the getters hand out the native handles.
+// native handles (Vulkan's, null on D3D12) are for the Vulkan ray tracing builds.
 class VulkanBuffer
 {
   public:
     // Records this buffer's vertex/index upload into a caller-supplied batch instead of
-    // submitting and waiting on its own. The caller must call uploadBatch.Flush() (directly or
-    // via destruction) before the buffers are used, and keep the batch alive until then.
+    // submitting and waiting on its own. The caller submits the batch before the buffers are used.
     // deviceAddressable (needs bufferDeviceAddress): the vertex and index buffers are storage buffers
     // with device addresses too, which hardware ray tracing's hit shading reads the hit's vertices
     // through (GetVertexAddress, GetIndexAddress).
@@ -86,7 +85,7 @@ class VulkanBuffer
     {
         return m_posed ? m_previousPosition.native : m_position.native;
     }
-    // The same buffers as NVRHI's, for the passes that bind them through NVRHI (the skinning pass).
+    // The same buffers as NVRHI's, which the passes draw and dispatch with.
     nvrhi::IBuffer* GetVertexBuffer() const
     {
         return m_vertex.handle;
@@ -94,6 +93,10 @@ class VulkanBuffer
     nvrhi::IBuffer* GetPositionBuffer() const
     {
         return m_position.handle;
+    }
+    nvrhi::IBuffer* GetIndexBuffer() const
+    {
+        return m_index.handle;
     }
     nvrhi::IBuffer* GetBindPoseBuffer() const
     {
@@ -125,16 +128,12 @@ class VulkanBuffer
 
     // Shared by the destructor and the constructors' unwind path. Skips empty buffers.
     void DestroyHandles();
-    // A host-visible staging buffer of its own, for a batch that cannot stage (native until the
-    // upload batch moves to NVRHI).
-    void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory);
     // usage is the buffer's Vulkan usage beyond the transfers, which NVRHI gives every buffer.
     void CreateDeviceLocalBuffer(VkDeviceSize size, VkBufferUsageFlags usage, DeviceBuffer& buffer, VkDeviceAddress* address = nullptr);
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
     void UploadIndices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
     void UploadPositions(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
-    // Stages size bytes and records their copy into a new device-local buffer.
+    // A new device-local buffer of size bytes and its upload from source.
     void UploadDeviceLocal(
         const void* source,
         VkDeviceSize size,

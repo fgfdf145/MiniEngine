@@ -1,16 +1,9 @@
 #include "local_shadow_pass.h"
 
-#include "buffer.h"
-#include "format_support.h"
-#include "nvrhi_resources.h"
-#include "pipeline.h"
 #include "sampler_settings.h"
 
 #include <engine/core/log/log.h>
-#include <engine/core/paths/engine_paths.h>
 
-#include <array>
-#include <cstring>
 #include <stdexcept>
 
 namespace me
@@ -19,412 +12,82 @@ namespace me
 namespace
 {
 // The cascades' slope-scaled rasterization bias; the shader's normal offset covers the rest.
-constexpr float kDepthBiasConstant = 1.0f;
+constexpr int kDepthBiasConstant = 1;
 constexpr float kDepthBiasSlope = 2.0f;
-
-VkFormatFeatureFlags QueryOptimalFeatures(VkPhysicalDevice physicalDevice, VkFormat format)
-{
-    VkFormatProperties properties{};
-    vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
-    return properties.optimalTilingFeatures;
-}
 }
 
-VulkanLocalShadowPass::VulkanLocalShadowPass(
-    VkPhysicalDevice physicalDevice,
-    VkDevice device,
-    nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
-    VkDescriptorSetLayout materialSetLayout)
-    : m_device(device),
-      m_nvrhiDevice(nvrhiDevice)
+VulkanLocalShadowPass::VulkanLocalShadowPass(nvrhi::IDevice* nvrhiDevice, nvrhi::IBindingLayout* frameSetLayout, nvrhi::IBindingLayout* materialSetLayout)
+    : m_nvrhiDevice(nvrhiDevice)
 {
-    // A throw out of a constructor skips the destructor; DestroyHandles skips null handles, so the
-    // unwind path and the destructor share it.
-    try
+    const nvrhi::FormatSupport needed = nvrhi::FormatSupport::DepthStencil | nvrhi::FormatSupport::ShaderSample;
+    nvrhi::TextureDesc desc;
+    desc.width = kLocalShadowAtlasSize;
+    desc.height = kLocalShadowAtlasSize;
+    desc.format = (m_nvrhiDevice->queryFormatSupport(nvrhi::Format::D32) & needed) == needed ? nvrhi::Format::D32 : nvrhi::Format::D16;
+    desc.isRenderTarget = true;
+    desc.isShaderResource = true;
+    desc.debugName = "Local shadow atlas";
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    m_texture = m_nvrhiDevice->createTexture(desc);
+    if (!m_texture)
     {
-        CreateImage(physicalDevice);
-        CreateSampler(physicalDevice, nvrhiDevice);
-        CreateRenderPass();
-        CreateFramebuffer();
-        CreatePipelines(pipelineCache, materialSetLayout);
+        throw std::runtime_error("Failed to create the local shadow atlas");
     }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
-    }
-    LOG_INFO(
-        "Created a {}x{} local shadow atlas of {} tiles",
-        kLocalShadowAtlasSize,
-        kLocalShadowAtlasSize,
-        kLocalShadowTileCount);
+    m_framebuffer = CreateNvrhiFramebuffer(m_nvrhiDevice, {}, m_texture);
+
+    // As the cascades: a linear comparison sampler turns the shader's 3x3 taps into a 4x4 texel filter.
+    // The shader keeps every tap inside its tile, so the address mode never matters; clamping keeps it
+    // harmless anyway.
+    nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(true);
+    samplerDesc.reductionType = nvrhi::SamplerReductionType::Comparison;
+    samplerDesc.comparisonFunc = nvrhi::ComparisonFunc::LessOrEqual;
+    m_sampler = CreateNvrhiSampler(m_nvrhiDevice, samplerDesc, "Failed to create local shadow atlas sampler");
+
+    ShadowCasterPipelineDesc casters;
+    casters.depthFunc = nvrhi::ComparisonFunc::Less;
+    casters.depthBias = kDepthBiasConstant;
+    casters.slopeScaledDepthBias = kDepthBiasSlope;
+    m_casters = std::make_unique<ShadowCasterRenderer>(m_nvrhiDevice, m_framebuffer->getFramebufferInfo(), frameSetLayout, materialSetLayout, casters);
+    LOG_INFO("Created a {}x{} local shadow atlas of {} tiles", kLocalShadowAtlasSize, kLocalShadowAtlasSize, kLocalShadowTileCount);
 }
 
-VulkanLocalShadowPass::~VulkanLocalShadowPass()
-{
-    DestroyHandles();
-}
+VulkanLocalShadowPass::~VulkanLocalShadowPass() = default;
 
 TextureDescriptorBinding VulkanLocalShadowPass::GetSampledBinding() const
 {
-    return BindTexture(m_view, m_texture, m_sampler);
+    return BindTexture(VK_NULL_HANDLE, m_texture, m_sampler);
 }
 
 void VulkanLocalShadowPass::Record(
-    VkCommandBuffer commandBuffer,
+    nvrhi::ICommandList* commandList,
+    nvrhi::IBindingSet* frameSet,
     std::span<const ShadowDrawItem> drawItems,
     std::span<const LocalShadowTile> tiles) const
 {
-    VkClearValue clearValue{};
-    clearValue.depthStencil = {1.0f, 0};
-
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_renderPass;
-    renderPassInfo.framebuffer = m_framebuffer;
-    renderPassInfo.renderArea.extent = {kLocalShadowAtlasSize, kLocalShadowAtlasSize};
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearValue;
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-    VkPipeline boundPipeline = VK_NULL_HANDLE;
+    // Cleared whole every frame, and back where the material pass samples it.
+    commandList->clearState();
+    ClearDepth(commandList, m_texture, 1.0f);
+    commandList->setTextureState(m_texture, nvrhi::AllSubresources, nvrhi::ResourceStates::DepthWrite);
+    commandList->commitBarriers();
     for (const LocalShadowTile& tile : tiles)
     {
-        VkViewport viewport{};
-        viewport.x = static_cast<float>(tile.atlasOffsetTexels.x);
-        viewport.y = static_cast<float>(tile.atlasOffsetTexels.y);
-        viewport.width = static_cast<float>(kLocalShadowTileSize);
-        viewport.height = static_cast<float>(kLocalShadowTileSize);
-        viewport.maxDepth = 1.0f;
-        VkRect2D scissor{};
-        scissor.offset = {static_cast<int32_t>(tile.atlasOffsetTexels.x), static_cast<int32_t>(tile.atlasOffsetTexels.y)};
-        scissor.extent = {kLocalShadowTileSize, kLocalShadowTileSize};
-        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
-        for (const ShadowDrawItem& item : drawItems)
-        {
-            if (!FrustumIntersectsSphere(tile.viewProjection, item.worldBoundsCenter, item.worldBoundsRadius))
+        const nvrhi::ViewportState viewport = NativeViewportRect(
+            tile.atlasOffsetTexels.x, tile.atlasOffsetTexels.y, kLocalShadowTileSize, kLocalShadowTileSize);
+        m_casters->Record(
+            commandList,
+            m_framebuffer,
+            viewport,
+            frameSet,
+            tile.viewProjection,
+            drawItems,
+            [&tile](const ShadowDrawItem& item)
             {
-                continue;
-            }
-
-            const VkPipeline requiredPipeline = item.alphaMask ? m_maskPipeline : m_opaquePipeline;
-            if (requiredPipeline != boundPipeline)
-            {
-                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, requiredPipeline);
-                boundPipeline = requiredPipeline;
-            }
-            if (item.alphaMask)
-            {
-                vkCmdBindDescriptorSets(
-                    commandBuffer,
-                    VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    m_pipelineLayout,
-                    0,
-                    1,
-                    &item.materialDescriptorSet,
-                    0,
-                    nullptr);
-            }
-
-            ShadowPushConstants constants{};
-            constants.lightModelViewProjection = tile.viewProjection * item.model;
-            std::memcpy(constants.baseColorFactor, item.material.baseColorFactor, sizeof(constants.baseColorFactor));
-            std::memcpy(constants.nodeGraphFactors, item.material.nodeGraphFactors, sizeof(constants.nodeGraphFactors));
-            constants.alphaCutoffAndPadding[0] = item.material.alphaCutoff;
-            std::memcpy(constants.baseColorTransform, item.baseColorTransform, sizeof(constants.baseColorTransform));
-            vkCmdPushConstants(
-                commandBuffer,
-                m_pipelineLayout,
-                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                0,
-                sizeof(ShadowPushConstants),
-                &constants);
-
-            const VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, item.alphaMask ? &item.vertexBuffer : &item.positionBuffer, &offset);
-            vkCmdBindIndexBuffer(commandBuffer, item.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(commandBuffer, item.indexCount, 1, 0, 0, 0);
-        }
+                return FrustumIntersectsSphere(tile.viewProjection, item.worldBoundsCenter, item.worldBoundsRadius);
+            });
     }
-
-    vkCmdEndRenderPass(commandBuffer);
-}
-
-void VulkanLocalShadowPass::CreateImage(VkPhysicalDevice physicalDevice)
-{
-    static constexpr std::array<VkFormat, 2> kCandidates = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM};
-    m_format = ChooseFormat(
-        "local shadow atlas",
-        kCandidates,
-        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT,
-        [physicalDevice](VkFormat format)
-        {
-            return QueryOptimalFeatures(physicalDevice, format);
-        });
-
-    VkImageCreateInfo imageInfo{};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.format = m_format;
-    imageInfo.extent = {kLocalShadowAtlasSize, kLocalShadowAtlasSize, 1};
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    m_texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, m_image, "Failed to create local shadow atlas image");
-
-    VkImageViewCreateInfo viewInfo{};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = m_image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = m_format;
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.layerCount = 1;
-    CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_view), "Failed to create local shadow atlas view");
-}
-
-void VulkanLocalShadowPass::CreateSampler(VkPhysicalDevice physicalDevice, nvrhi::IDevice* nvrhiDevice)
-{
-    // As the cascades: a linear comparison sampler turns the shader's 3x3 taps into a 4x4 texel
-    // filter where the format allows it. The shader keeps every tap inside its tile, so the address
-    // mode never matters; clamping keeps it harmless anyway.
-    const bool linear =
-        (QueryOptimalFeatures(physicalDevice, m_format) & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
-
-    nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(linear);
-    samplerDesc.reductionType = nvrhi::SamplerReductionType::Comparison;
-    samplerDesc.comparisonFunc = nvrhi::ComparisonFunc::LessOrEqual;
-    m_sampler = CreateNvrhiSampler(nvrhiDevice, samplerDesc, "Failed to create local shadow atlas sampler");
-}
-
-void VulkanLocalShadowPass::CreateRenderPass()
-{
-    VkAttachmentDescription depthAttachment{};
-    depthAttachment.format = m_format;
-    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-    VkAttachmentReference depthReference{};
-    depthReference.attachment = 0;
-    depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.pDepthStencilAttachment = &depthReference;
-
-    // The cascade pass's two dependencies, for the same reasons: the previous frame's material
-    // pass may still read the atlas, and this frame's reads what is written here.
-    std::array<VkSubpassDependency, 2> dependencies{};
-    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependencies[0].dstSubpass = 0;
-    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    dependencies[0].srcAccessMask = 0;
-    dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    dependencies[1].srcSubpass = 0;
-    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
-    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-    VkRenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &depthAttachment;
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
-    renderPassInfo.pDependencies = dependencies.data();
-    CheckVulkan(vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_renderPass), "Failed to create local shadow render pass");
-}
-
-void VulkanLocalShadowPass::CreateFramebuffer()
-{
-    VkFramebufferCreateInfo framebufferInfo{};
-    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    framebufferInfo.renderPass = m_renderPass;
-    framebufferInfo.attachmentCount = 1;
-    framebufferInfo.pAttachments = &m_view;
-    framebufferInfo.width = kLocalShadowAtlasSize;
-    framebufferInfo.height = kLocalShadowAtlasSize;
-    framebufferInfo.layers = 1;
-    CheckVulkan(vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &m_framebuffer), "Failed to create local shadow framebuffer");
-}
-
-void VulkanLocalShadowPass::CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout materialSetLayout)
-{
-    const std::filesystem::path shaderDir = EnginePaths::ShaderRoot();
-    const VulkanShaderModule vertexShader(m_device, shaderDir / "shadow.vert.spv");
-    const VulkanShaderModule fragmentShader(m_device, shaderDir / "shadow.frag.spv");
-    const VulkanShaderModule depthVertexShader(m_device, shaderDir / "shadow_depth.vert.spv");
-
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushConstantRange.size = sizeof(ShadowPushConstants);
-
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &materialSetLayout;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &pushConstantRange;
-    CheckVulkan(vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_pipelineLayout), "Failed to create local shadow pipeline layout");
-
-    const VkVertexInputBindingDescription bindingDescription = GetVertexBindingDescription();
-    const auto allAttributes = GetVertexAttributeDescriptions();
-    // Position and both UV sets: the alpha test may sample the base colour through either.
-    const std::array<VkVertexInputAttributeDescription, 3> attributes = {allAttributes[0], allAttributes[2], allAttributes[5]};
-
-    VkPipelineVertexInputStateCreateInfo vertexInput{};
-    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInput.vertexBindingDescriptionCount = 1;
-    vertexInput.pVertexBindingDescriptions = &bindingDescription;
-    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size());
-    vertexInput.pVertexAttributeDescriptions = attributes.data();
-
-    // Opaque casters read positions alone, from their own tightly packed stream.
-    const VkVertexInputBindingDescription positionBinding = GetPositionBindingDescription();
-    const VkVertexInputAttributeDescription positionAttribute = GetPositionAttributeDescription();
-    VkPipelineVertexInputStateCreateInfo depthVertexInput{};
-    depthVertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    depthVertexInput.vertexBindingDescriptionCount = 1;
-    depthVertexInput.pVertexBindingDescriptions = &positionBinding;
-    depthVertexInput.vertexAttributeDescriptionCount = 1;
-    depthVertexInput.pVertexAttributeDescriptions = &positionAttribute;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    // One viewport and scissor per tile, set while recording.
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.scissorCount = 1;
-    const std::array<VkDynamicState, 2> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    VkPipelineDynamicStateCreateInfo dynamicState{};
-    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-    dynamicState.pDynamicStates = dynamicStates.data();
-
-    // No culling, as the cascades: single-sided walls still have to block the light from behind.
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.lineWidth = 1.0f;
-    rasterizer.depthBiasEnable = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = kDepthBiasConstant;
-    rasterizer.depthBiasSlopeFactor = kDepthBiasSlope;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-
-    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vertexShader.GetHandle();
-    stages[0].pName = "main";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = fragmentShader.GetHandle();
-    stages[1].pName = "main";
-
-    std::array<VkGraphicsPipelineCreateInfo, 2> pipelineInfos{};
-    for (VkGraphicsPipelineCreateInfo& pipelineInfo : pipelineInfos)
-    {
-        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipelineInfo.pStages = stages.data();
-        pipelineInfo.pVertexInputState = &vertexInput;
-        pipelineInfo.pInputAssemblyState = &inputAssembly;
-        pipelineInfo.pViewportState = &viewportState;
-        pipelineInfo.pRasterizationState = &rasterizer;
-        pipelineInfo.pMultisampleState = &multisampling;
-        pipelineInfo.pDepthStencilState = &depthStencil;
-        pipelineInfo.pColorBlendState = &colorBlending;
-        pipelineInfo.pDynamicState = &dynamicState;
-        pipelineInfo.layout = m_pipelineLayout;
-        pipelineInfo.renderPass = m_renderPass;
-        pipelineInfo.subpass = 0;
-    }
-    // Opaque casters need no fragment shader; Mask ones run the alpha test.
-    VkPipelineShaderStageCreateInfo depthStage = stages[0];
-    depthStage.module = depthVertexShader.GetHandle();
-    pipelineInfos[0].stageCount = 1;
-    pipelineInfos[0].pStages = &depthStage;
-    pipelineInfos[0].pVertexInputState = &depthVertexInput;
-    pipelineInfos[1].stageCount = 2;
-
-    std::array<VkPipeline, 2> pipelines{};
-    const VkResult result = vkCreateGraphicsPipelines(
-        m_device,
-        pipelineCache,
-        static_cast<uint32_t>(pipelineInfos.size()),
-        pipelineInfos.data(),
-        nullptr,
-        pipelines.data());
-    m_opaquePipeline = pipelines[0];
-    m_maskPipeline = pipelines[1];
-    CheckVulkan(result, "Failed to create local shadow pipelines");
-}
-
-void VulkanLocalShadowPass::DestroyHandles()
-{
-    for (VkPipeline* pipeline : {&m_opaquePipeline, &m_maskPipeline})
-    {
-        if (*pipeline != VK_NULL_HANDLE)
-        {
-            vkDestroyPipeline(m_device, *pipeline, nullptr);
-            *pipeline = VK_NULL_HANDLE;
-        }
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_framebuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyFramebuffer(m_device, m_framebuffer, nullptr);
-        m_framebuffer = VK_NULL_HANDLE;
-    }
-    if (m_renderPass != VK_NULL_HANDLE)
-    {
-        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
-        m_renderPass = VK_NULL_HANDLE;
-    }
-    m_sampler = nullptr;
-    if (m_view != VK_NULL_HANDLE)
-    {
-        vkDestroyImageView(m_device, m_view, nullptr);
-        m_view = VK_NULL_HANDLE;
-    }
-    // The image and its memory go with the texture.
-    m_texture = nullptr;
-    m_image = VK_NULL_HANDLE;
+    commandList->setTextureState(m_texture, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+    commandList->commitBarriers();
+    commandList->clearState();
 }
 }

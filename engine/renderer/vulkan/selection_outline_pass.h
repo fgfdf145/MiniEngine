@@ -2,6 +2,9 @@
 
 #include "nvrhi_native.h"
 #include "scene_pass.h"
+#include "shadow_pass.h"
+
+#include <memory>
 
 #include <vector>
 
@@ -24,10 +27,10 @@ class VulkanSelectionMaskPass : public IScenePass
 {
   public:
     VulkanSelectionMaskPass(
-        VkDevice device,
-        VkPipelineCache pipelineCache,
+        nvrhi::IDevice* nvrhiDevice,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout materialSetLayout);
+        nvrhi::IBindingLayout* frameSetLayout,
+        nvrhi::IBindingLayout* materialSetLayout);
     ~VulkanSelectionMaskPass() override;
 
     VulkanSelectionMaskPass(const VulkanSelectionMaskPass&) = delete;
@@ -42,25 +45,18 @@ class VulkanSelectionMaskPass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateRenderPass(const SceneRenderTargets& targets);
-    void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout materialSetLayout);
     void CreateFramebuffers(const SceneRenderTargets& targets);
-    void DestroyFramebuffers();
-    void DestroyHandles();
 
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_opaquePipeline = VK_NULL_HANDLE;
-    VkPipeline m_maskPipeline = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    std::unique_ptr<ShadowCasterRenderer> m_casters;
     // One per SelectionDepth copy, indexed by frame slot.
-    std::vector<VkFramebuffer> m_framebuffers;
+    std::vector<nvrhi::FramebufferHandle> m_framebuffers;
 };
 
 class VulkanSelectionOutlinePass : public IScenePass
 {
   public:
-    VulkanSelectionOutlinePass(VkDevice device, VkPipelineCache pipelineCache, const SceneRenderTargets& targets);
+    VulkanSelectionOutlinePass(nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets);
     ~VulkanSelectionOutlinePass() override;
 
     VulkanSelectionOutlinePass(const VulkanSelectionOutlinePass&) = delete;
@@ -75,22 +71,15 @@ class VulkanSelectionOutlinePass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateDescriptorSetLayout();
-    void CreatePipeline(VkPipelineCache pipelineCache, const SceneRenderTargets& targets);
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
+    void CreateBindingSets(const SceneRenderTargets& targets);
     void CreateFramebuffers(const SceneRenderTargets& targets);
-    void DestroyFramebuffers();
-    void DestroyHandles();
 
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::GraphicsPipelineHandle m_pipeline;
     // The two depths it reads are transient, so the sets are indexed by frame slot; the outline is
     // ImGui's, so the framebuffers are indexed by swapchain image.
-    std::vector<VkDescriptorSet> m_descriptorSets;
-    std::vector<VkFramebuffer> m_framebuffers;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
+    std::vector<nvrhi::FramebufferHandle> m_framebuffers;
 };
 }

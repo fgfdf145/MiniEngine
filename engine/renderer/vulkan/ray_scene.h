@@ -2,7 +2,6 @@
 
 #include "common.h"
 #include "nvrhi_native.h"
-#include "descriptor_pool_list.h"
 #include "ray_acceleration.h"
 #include "uniform_buffer.h"
 
@@ -94,21 +93,22 @@ inline constexpr uint32_t kRayTexturesPerSlot = 5;
 class VulkanRayScene
 {
   public:
-    // hardwareRayTracing: the device supports ray queries (VulkanDevice::SupportsRayQuery), and with
-    // them the descriptor indexing the texture table needs. defaultTexture (hardware ray tracing only):
-    // a white texture the table names where no material's is; it must outlive the ray scene.
+    // hardwareRayTracing: the device supports ray queries. defaultTexture: a white texture the texture
+    // table names where no material's is; it must outlive the ray scene. samplerTable: every material
+    // sampler, in VulkanSamplerCache's order. nearGpuMemory: the device has video memory the CPU writes
+    // (resizable BAR), where the small buffers every hit reads go. nvrhiVulkanDevice: NVRHI's Vulkan
+    // backend, which names the native top levels for the sets and writes the texture table in batches.
     VulkanRayScene(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
         nvrhi::vulkan::IDevice* nvrhiVulkanDevice,
-        VkPipelineCache pipelineCache,
         uint32_t frameCount,
         bool hardwareRayTracing,
-        TextureDescriptorBinding defaultTexture = {},
-        std::vector<nvrhi::ISampler*> samplerTable = {},
-        bool updateUnusedWhilePending = false,
-        bool bufferDeviceAddress = false);
+        TextureDescriptorBinding defaultTexture,
+        std::vector<nvrhi::ISampler*> samplerTable,
+        bool updateUnusedWhilePending,
+        bool nearGpuMemory);
     ~VulkanRayScene();
 
     VulkanRayScene(const VulkanRayScene&) = delete;
@@ -158,7 +158,7 @@ class VulkanRayScene
     // Averages the ray materials when content changed; builds the acceleration structures new content
     // or moved instances need, the frame slot's top level only when hardwareRays says this frame's
     // traces use it; afterwards makes everything visible to compute. Record before any pass that traces.
-    void Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, bool hardwareRays);
+    void Record(nvrhi::ICommandList* commandList, uint32_t frameSlot, bool hardwareRays);
 
     bool IsReady() const;
     // True once after the hardware bottom levels a new content waited for are all built (they are
@@ -205,11 +205,12 @@ class VulkanRayScene
   private:
     struct Buffer
     {
-        VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::BufferHandle handle;
         void* mapped = nullptr;
-        VkDeviceSize size = 0;
-        // What CreateBuffer was asked for (it may have fallen back to system memory).
+        uint64_t size = 0;
+        // The element size shaders read it as (StructuredBuffer<T>), and whether CreateBuffer was asked
+        // for video memory (it may have fallen back to system memory).
+        uint32_t stride = 0;
         bool nearGpu = false;
     };
 
@@ -260,25 +261,24 @@ class VulkanRayScene
     // The release tasks, waited for before the device goes; finished ones are dropped as new ones come.
     std::vector<TaskFuture<void>> m_releases;
 
-    // Host visible and coherent, mapped. nearGpu puts it in video memory the CPU can write (resizable
-    // BAR) when the device has such memory and room in it: for the small buffers every hit reads.
-    Buffer CreateBuffer(VkDeviceSize size, bool nearGpu = false) const;
+    // Written by the CPU, mapped, read by shaders as StructuredBuffer<T> of stride bytes. nearGpu puts it
+    // in video memory the CPU can write (resizable BAR) when the device has such memory and room in it:
+    // for the small buffers every hit reads.
+    Buffer CreateBuffer(uint64_t size, uint32_t stride, bool nearGpu = false) const;
     // A build's hierarchy buffers: a spare one of the kind that holds size, else a new one with room to
     // grow. RecycleBuffer gives one back (the GPU done with it) for the next build, as freeing hundreds
     // of megabytes of mapped memory held the driver for ~35 ms, which stalled the frame's thread for as
     // long whenever a streamed map's content changed; small buffers are simply destroyed. Both run on
     // the workers.
-    Buffer AcquireBuffer(VkDeviceSize size, bool nearGpu);
+    Buffer AcquireBuffer(uint64_t size, uint32_t stride, bool nearGpu);
     void RecycleBuffer(Buffer& buffer);
-    static constexpr VkDeviceSize kRecycledBufferBytes = VkDeviceSize{4} << 20;
+    static constexpr uint64_t kRecycledBufferBytes = uint64_t{4} << 20;
     // One content's large buffers (nodes, triangles, source triangles) and a little more.
     static constexpr size_t kMaxSpareBuffers = 4;
     std::function<void(std::function<void()>)> m_retire;
     // The texture table's binding has VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT.
     bool m_updateUnusedWhilePending = false;
-    // The device has bufferDeviceAddress on: the buffers take its usage, as NVRHI's handles of them ask
-    // for their addresses.
-    bool m_bufferDeviceAddress = false;
+    bool m_nearGpuMemory = false;
     std::mutex m_spareMutex;
     std::vector<Buffer> m_spareBuffers;
     void DestroyBuffer(Buffer& buffer) const;
@@ -287,11 +287,8 @@ class VulkanRayScene
     void WriteSet(uint32_t slot);
     // Runs release now, or once the frames in flight have finished when there is a retire function.
     void Retire(std::function<void()> release);
-    void CreateMaterialPipeline(VkPipelineCache pipelineCache);
-    void DestroyHandles();
-
-    // An NVRHI handle of one of the scene's buffers, for a binding set to name.
-    nvrhi::BufferHandle NvrhiBuffer(const Buffer& buffer) const;
+    // The material averaging's set: the materials buffer and the sampler table.
+    void CreateAverageSet();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
@@ -310,45 +307,37 @@ class VulkanRayScene
     Buffer m_meshGeometry;
     Buffer m_sourceTriangles;
     std::vector<std::shared_ptr<const VulkanBuffer>> m_meshBuffers;
-    // Written by the material averaging, per content.
-    Buffer m_materials;
+    // Written by the material averaging, per content: device local, as the GPU writes it.
+    nvrhi::BufferHandle m_materials;
     // Per frame slot, sized for m_instanceCapacity instances (InstanceCapacity in ray_scene.cpp).
     std::vector<Buffer> m_instances;
     std::vector<Buffer> m_topNodes;
     size_t m_instanceCapacity = 0;
 
-    // The material averaging: one set per occupied draw slot, made when the slot gets a submesh and
-    // freed when it loses it, and one dispatch for each slot whose submesh changed.
+    // The material averaging: one dispatch for each slot whose submesh changed, reading the slot's
+    // textures from the texture table.
     struct MaterialSlot
     {
-        VkDescriptorSet set = VK_NULL_HANDLE;
-        uint32_t pool = 0;
+        // The slot holds a submesh's material.
+        bool held = false;
         // What was averaged into the slot.
         RayMaterialSource source;
         // Its textures' indices in the sampler table, packed as RayMaterial::samplers.
         glm::uvec2 samplers{0u};
     };
-    VkDescriptorSetLayout m_materialSetLayout = VK_NULL_HANDLE;
-    std::unique_ptr<VulkanDescriptorPoolList> m_materialPools;
-    // The averaging's output, the materials buffer, in one set of its own: a larger buffer is one set
-    // written again, not every slot's (tens of thousands on a map, with every material averaged again).
-    VkDescriptorSetLayout m_materialOutputLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_materialOutputPool = VK_NULL_HANDLE;
-    VkDescriptorSet m_materialOutputSet = VK_NULL_HANDLE;
-    void WriteMaterialOutputSet();
-    // A grown materials buffer's contents, copied from the old one by the next Record (which then
-    // retires it).
+    nvrhi::BindingLayoutHandle m_averageLayout;
+    nvrhi::BindingSetHandle m_averageSet;
+    nvrhi::ComputePipelineHandle m_averagePipeline;
+    // A grown materials buffer's contents, copied from the old one by the next Record.
     struct MaterialCopy
     {
-        Buffer source;
-        VkDeviceSize bytes = 0;
+        nvrhi::BufferHandle source;
+        uint64_t bytes = 0;
     };
     MaterialCopy m_materialCopy;
     std::vector<MaterialSlot> m_materialSlots;
     uint32_t m_materialCapacity = 0;
     std::vector<uint32_t> m_dirtyMaterialSlots;
-    VkPipelineLayout m_materialPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_materialPipeline = VK_NULL_HANDLE;
 
     // The last SetContent's submeshes, shared with its build and, once installed, as
     // m_installedSubmeshes: tens of thousands on a map, never copied.
@@ -388,16 +377,24 @@ class VulkanRayScene
     size_t m_meshTriangleCount = 0;
     bool m_ready = false;
 
-    // The texture table (hardware ray tracing only): allocated for m_textureCapacity draw slots,
-    // reallocated when the slots outgrow it. A slot without a material names the default texture, so
-    // an installed content still tracing a slot another content released reads something valid.
-    void WriteTextureSlot(uint32_t slot, const RayMaterialSource* source, std::vector<VkDescriptorImageInfo>& infos, std::vector<VkWriteDescriptorSet>& writes) const;
+    // The texture table: allocated for m_textureCapacity draw slots, reallocated when the slots outgrow
+    // it. A slot without a material names the default texture, so an installed content still tracing a
+    // slot another content released reads something valid. On Vulkan the engine writes it in batches
+    // (NVRHI's writeDescriptorTable is one update a call, hundreds of thousands here).
+    struct TextureWrites
+    {
+        std::vector<VkDescriptorImageInfo> infos;
+        std::vector<VkWriteDescriptorSet> writes;
+        std::vector<std::pair<uint32_t, nvrhi::ITexture*>> entries;
+    };
+    void WriteTextureSlot(uint32_t slot, const RayMaterialSource* source, TextureWrites& writes) const;
+    void FlushTextureWrites(TextureWrites& writes) const;
     TextureDescriptorBinding m_defaultTexture;
     // RayMaterial::samplers for a slot's textures (WriteTextureSlot's, with the default's sampler where
     // the source has no texture); throws for a sampler not in the table.
     glm::uvec2 SamplerIndices(const RayMaterialSource& source) const;
     std::vector<nvrhi::ISampler*> m_samplerTable;
-    std::unordered_map<VkSampler, uint32_t> m_samplerIndices;
+    std::unordered_map<nvrhi::ISampler*, uint32_t> m_samplerIndices;
     nvrhi::BindingLayoutHandle m_textureSetLayout;
     nvrhi::DescriptorTableHandle m_textureTable;
     VkDescriptorSet m_textureSet = VK_NULL_HANDLE;

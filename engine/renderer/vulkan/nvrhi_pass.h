@@ -3,14 +3,15 @@
 #include "nvrhi_native.h"
 
 #include <initializer_list>
+#include <span>
 #include <vector>
 
 namespace me
 {
 
-// An image an NVRHI pass shares with the passes that still record native Vulkan, and the state
-// native code holds it in: before the pass, and again after it. exitState, when set, is where the
-// pass leaves it instead (an image the pass brings out of UNDEFINED, Common to NVRHI).
+// An image a pass uses and the state its commands need it in as the pass begins; and as it ends,
+// the state it leaves it in: exitState, or the same state again. A state of Common asks for nothing
+// at the start: the pass rewrites the image whole, whatever it held.
 struct NvrhiSharedTexture
 {
     nvrhi::ITexture* texture = nullptr;
@@ -26,14 +27,13 @@ struct NvrhiSharedBuffer
     nvrhi::ResourceStates exitState = nvrhi::ResourceStates::Unknown;
 };
 
-// One pass's NVRHI commands in the frame's command list, between passes that record native Vulkan
-// into the same command buffer (docs/design/2026-10-08-nvrhi-backend-design.md, stage 3). The list
-// runs without automatic barriers (VulkanCommandContext): native code moves images between layouts
-// where NVRHI cannot see it, so an NVRHI pass sets the states its commands need itself
-// (setTextureState, commitBarriers). The scope forgets what NVRHI last bound, since native commands
-// rebound the command buffer since; tells NVRHI the state of each shared image as the pass begins;
-// and as it ends, leaves each in that state again, its writes made visible to the native passes after
-// it. The pass's own images NVRHI tracks for itself (keepInitialState).
+// One pass's commands in the frame's command list (docs/design/2026-10-09-d3d12-backend-design.md).
+// The list runs without automatic barriers: a pass sets the states its commands need itself
+// (setTextureState, commitBarriers), from the states NVRHI tracks for every resource (each one rests
+// in its initialState between command lists, keepInitialState). The scope forgets what was last
+// bound (a native command, NGX's, may have rebound the command buffer since); moves each shared image
+// into the state the pass begins with; and as it ends, leaves each in its exit state, its writes made
+// visible to the passes after it.
 class NvrhiPassScope
 {
   public:
@@ -41,6 +41,7 @@ class NvrhiPassScope
         nvrhi::ICommandList* commandList,
         std::initializer_list<NvrhiSharedTexture> shared,
         std::initializer_list<NvrhiSharedBuffer> sharedBuffers = {});
+    NvrhiPassScope(nvrhi::ICommandList* commandList, std::span<const NvrhiSharedTexture> shared);
     ~NvrhiPassScope();
 
     NvrhiPassScope(const NvrhiPassScope&) = delete;
@@ -68,6 +69,59 @@ nvrhi::BufferHandle CreateDeviceBuffer(nvrhi::IDevice* device, uint64_t byteSize
 nvrhi::BufferHandle CreateUploadBuffer(nvrhi::IDevice* device, uint64_t byteSize, uint32_t stride, const char* name, void** mapped);
 nvrhi::BufferHandle CreateReadbackBuffer(nvrhi::IDevice* device, uint64_t byteSize, const char* name, void** mapped);
 
+void ClearDepth(nvrhi::ICommandList* commandList, nvrhi::ITexture* texture, float depth);
+
+// Vulkan only: a keepInitialState texture comes out of UNDEFINED in the first command list that
+// moves it, so one that is only ever sampled (set 0 names it before anything writes it) would never
+// leave UNDEFINED. Texture creation registers each (D3D12 makes them in their initial state); the
+// frame's command list moves every registered one to its initial state first thing.
+void RegisterInitialTransition(nvrhi::ITexture* texture);
+void RecordInitialTransitions(nvrhi::ICommandList* commandList);
+// Forgets the registered textures, before the device goes.
+void DropInitialTransitions();
+
+// shader with its specialization constants set (Vulkan's): name only says which shader failed.
+nvrhi::ShaderHandle SpecializeShader(
+    nvrhi::IDevice* device, nvrhi::IShader* shader, std::span<const nvrhi::ShaderSpecialization> constants, const char* name);
+
+// A binding layout holding push constants alone, at registerSpace (the space a shader declares them
+// in with D3D_PUSH_CONSTANTS), and the one binding set every draw binds for it.
+struct PushConstantLayout
+{
+    nvrhi::BindingLayoutHandle layout;
+    nvrhi::BindingSetHandle set;
+};
+PushConstantLayout CreatePushConstantLayout(nvrhi::IDevice* device, uint32_t registerSpace, uint32_t size, nvrhi::ShaderType visibility);
+
+// A framebuffer over colour targets and an optional depth target; throws when NVRHI cannot make it.
+nvrhi::FramebufferHandle CreateNvrhiFramebuffer(
+    nvrhi::IDevice* device, std::initializer_list<nvrhi::ITexture*> colors, nvrhi::ITexture* depth = nullptr);
+
+// The full-screen pipelines' shape: fullscreen.vert (or another vertex shader with no vertex input),
+// a triangle list, no culling, no depth test unless the options ask for it, all four channels of
+// every colour target written without blending.
+struct FullscreenNvrhiOptions
+{
+    const char* vertexShader = "fullscreen.vert.spv";
+    // Test against the pass's depth target with nearer-or-equal (reverse-Z: GreaterOrEqual), writing
+    // nothing: with sky.vert, which places the triangle on the far plane (depth 0), that draws only
+    // where no geometry did.
+    bool depthTestAtFarPlane = false;
+    // Adds the fragment's rgb to what the target holds (One, One) and leaves alpha alone.
+    bool additiveBlend = false;
+    // Test with nearer (reverse-Z: Greater) and write the depth the fragment shader gives, as a
+    // surface drawn among the scene's geometry does. Overrides depthTestAtFarPlane.
+    bool depthTestAndWrite = false;
+    // The framebuffer's colour targets, each written like the first.
+    uint32_t colorAttachmentCount = 1;
+};
+nvrhi::GraphicsPipelineHandle CreateFullscreenNvrhiPipeline(
+    nvrhi::IDevice* device,
+    const nvrhi::FramebufferInfo& framebuffer,
+    std::initializer_list<nvrhi::IBindingLayout*> layouts,
+    const char* fragmentShader,
+    const FullscreenNvrhiOptions& options = {});
+
 // A SPIR-V shader from the shader folder (EnginePaths::ShaderRoot), entry point main. Throws when
 // the file is missing or NVRHI rejects it.
 nvrhi::ShaderHandle CreateNvrhiShader(nvrhi::IDevice* device, nvrhi::ShaderType type, const char* shaderName);
@@ -85,6 +139,8 @@ nvrhi::ComputePipelineHandle CreateNvrhiComputePipeline(
 // down. NVRHI turns every viewport into Direct3D's (a negative height from maxY); handing it the
 // rectangle upside down (minY at the bottom edge) cancels that, and the scissor is given apart.
 nvrhi::ViewportState NativeViewportState(VkExtent2D extent);
+// The same for a rectangle of the target (x, y its top-left texel), its scissor that rectangle.
+nvrhi::ViewportState NativeViewportRect(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 
 // NVRHI's VulkanBindingOffsets all zero: a binding layout item's slot is the binding the shader
 // declares, as the engine's shaders number their sets themselves.

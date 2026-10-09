@@ -89,6 +89,9 @@ struct alignas(16) GpuMaterialData
     float detailLayerScales[8] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     // x = the detail layers' intensity; yzw reserved.
     float detailLayerParams[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+    // Each of the material set's 32 textures' sampler, by its index in the frame set's sampler table
+    // (VulkanSamplerCache::IndexOf, binding 128): one byte each, binding b in byte b % 4 of word b / 4.
+    uint32_t samplerIndices[8] = {};
 };
 
 // Whether the scatter pre-pass draws the material and the forward pass diffuses its light.
@@ -115,7 +118,7 @@ struct alignas(16) ObjectPushConstants
     glm::mat4 model{1.0f};
 };
 
-static_assert(sizeof(GpuMaterialData) == 288, "GpuMaterialData must stay 18 x vec4 to match the shader struct");
+static_assert(sizeof(GpuMaterialData) == 320, "GpuMaterialData must stay 20 x vec4 to match the shader struct");
 static_assert(offsetof(GpuMaterialData, detailLayerScales) == 240, "detailLayerScales must be the sixteenth and seventeenth vec4");
 static_assert(offsetof(GpuMaterialData, detailLayerParams) == 272, "detailLayerParams must be the eighteenth vec4");
 static_assert(offsetof(GpuMaterialData, diffuseTransmission) == 208, "diffuseTransmission must be the fourteenth vec4");

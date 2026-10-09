@@ -129,7 +129,6 @@ void VulkanRtShadowPass::Record(
 {
     // Even while nothing traces: both history images rest in GENERAL.
     const bool traced = frame.rayTracing.sunShadows && m_tracePipeline && frame.rayBindingSet != nullptr && frame.rayTextureTable != nullptr;
-    m_history.RecordBarrier(commandBuffer, traced && frame.rtShadowHistory.valid);
 
     RtShadowPushConstants constants{};
     constants.extent = glm::vec2(static_cast<float>(frame.extent.width), static_cast<float>(frame.extent.height));

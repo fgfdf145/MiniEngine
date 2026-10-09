@@ -1,308 +1,159 @@
 #include "pipeline_set.h"
 
-#include "buffer.h"
-#include "pipeline.h"
-#include "reverse_depth.h"
+#include "nvrhi_pass.h"
 
+#include <engine/asset/mesh.h>
 #include <engine/core/log/log.h>
-#include <engine/core/paths/engine_paths.h>
+#include <engine/renderer/material.h>
 
-#include <algorithm>
-#include <filesystem>
-#include <type_traits>
+#include <array>
+#include <cstddef>
+#include <stdexcept>
+#include <string>
 
 namespace me
 {
 
-namespace
+nvrhi::InputLayoutHandle CreateMaterialInputLayout(nvrhi::IDevice* device, nvrhi::IShader* vertexShader)
 {
-// Per-variant state. Everything else (vertex input, input assembly, viewport/dynamic state,
-// multisampling, layout, shader modules) is shared by every variant and lives in the constructor.
-// These structs hold pointers into themselves, so the array below is filled in place and never
-// copied or moved before vkCreateGraphicsPipelines consumes it.
-struct PipelineVariantState
-{
-    // The fragment stage's specialization constants 0 (kAlphaMask), 1 (kScatterPrepass), 2
-    // (kDecal) and 3 (kBlendItem), in order.
-    struct Constants
+    const auto attribute = [](const char* name, nvrhi::Format format, uint32_t buffer, uint32_t offset, uint32_t stride)
     {
-        VkBool32 alphaMaskEnabled = VK_FALSE;
-        VkBool32 scatterPrepass = VK_FALSE;
-        VkBool32 decal = VK_FALSE;
-        VkBool32 blendItem = VK_FALSE;
-    } constants;
-    std::array<VkSpecializationMapEntry, 4> specializationEntries{};
-    VkSpecializationInfo specialization{};
-    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    std::array<VkPipelineColorBlendAttachmentState, kMaxMaterialColorAttachments> colorBlendAttachments{};
-    VkPipelineColorBlendStateCreateInfo colorBlending{};
-};
+        return nvrhi::VertexAttributeDesc().setName(name).setFormat(format).setBufferIndex(buffer).setOffset(offset).setElementStride(stride);
+    };
+    // In location order: NVRHI's Vulkan backend numbers the attributes as listed.
+    constexpr uint32_t kStride = sizeof(Vertex);
+    const std::array<nvrhi::VertexAttributeDesc, 8> attributes = {
+        attribute("POSITION", nvrhi::Format::RGB32_FLOAT, 0, static_cast<uint32_t>(offsetof(Vertex, position)), kStride),
+        attribute("COLOR", nvrhi::Format::RGB32_FLOAT, 0, static_cast<uint32_t>(offsetof(Vertex, color)), kStride),
+        attribute("TEXCOORD", nvrhi::Format::RG32_FLOAT, 0, static_cast<uint32_t>(offsetof(Vertex, texCoord)), kStride),
+        attribute("NORMAL", nvrhi::Format::RGB32_FLOAT, 0, static_cast<uint32_t>(offsetof(Vertex, normal)), kStride),
+        attribute("TANGENT", nvrhi::Format::RGBA32_FLOAT, 0, static_cast<uint32_t>(offsetof(Vertex, tangent)), kStride),
+        attribute("SECOND_TEXCOORD", nvrhi::Format::RG32_FLOAT, 0, static_cast<uint32_t>(offsetof(Vertex, texCoord1)), kStride),
+        attribute("OUTLINE_NORMAL", nvrhi::Format::RGB32_FLOAT, 0, static_cast<uint32_t>(offsetof(Vertex, outlineNormal)), kStride),
+        attribute("PREVIOUS_POSITION", nvrhi::Format::RGB32_FLOAT, 1, 0, sizeof(float) * 3)};
+    nvrhi::InputLayoutHandle layout = device->createInputLayout(attributes.data(), static_cast<uint32_t>(attributes.size()), vertexShader);
+    if (!layout)
+    {
+        throw std::runtime_error("Failed to create the material vertex input layout");
+    }
+    return layout;
+}
+
+MaterialDrawConstants::MaterialDrawConstants(nvrhi::IDevice* device)
+{
+    const PushConstantLayout constants =
+        CreatePushConstantLayout(device, 2, sizeof(ObjectPushConstants), nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel);
+    layout = constants.layout;
+    set = constants.set;
 }
 
 VulkanPipelineSet::VulkanPipelineSet(
-    VkDevice device,
-    VkPipelineCache pipelineCache,
-    VkRenderPass renderPass,
-    VkDescriptorSetLayout frameSetLayout,
-    VkDescriptorSetLayout materialSetLayout,
+    nvrhi::IDevice* device,
+    const nvrhi::FramebufferInfo& framebuffer,
+    nvrhi::IBindingLayout* frameSetLayout,
+    nvrhi::IBindingLayout* materialSetLayout,
+    nvrhi::IBindingLayout* drawConstantsLayout,
     const MaterialPipelineSetConfig& config)
-    : m_device(device)
 {
-    try
+    if (config.fragmentShader == nullptr || config.colorAttachmentCount == 0 || config.colorAttachmentCount > kMaxMaterialColorAttachments)
     {
-        if (config.fragmentShader == nullptr ||
-            config.colorAttachmentCount == 0 ||
-            config.colorAttachmentCount > kMaxMaterialColorAttachments)
+        throw std::runtime_error("MaterialPipelineSetConfig needs a fragment shader and 1 to 8 color attachments");
+    }
+    const nvrhi::ShaderHandle vertexShader = CreateNvrhiShader(device, nvrhi::ShaderType::Vertex, "triangle.vert.spv");
+    const nvrhi::ShaderHandle fragmentShader = CreateNvrhiShader(device, nvrhi::ShaderType::Pixel, config.fragmentShader);
+    const nvrhi::InputLayoutHandle inputLayout = CreateMaterialInputLayout(device, vertexShader);
+
+    for (MaterialAlphaMode mode : {MaterialAlphaMode::Opaque, MaterialAlphaMode::Mask, MaterialAlphaMode::Blend})
+    {
+        for (bool doubleSided : {false, true})
         {
-            throw std::runtime_error("MaterialPipelineSetConfig needs a fragment shader and 1 to 5 color attachments");
-        }
+            const MaterialPipelineKey key{mode, doubleSided};
+            const MaterialPipelineState state = GetMaterialPipelineState(key);
+            const size_t index = GetMaterialPipelineIndex(key);
 
-        const std::filesystem::path shaderDir = EnginePaths::ShaderRoot();
-        const VulkanShaderModule vertexShader(m_device, shaderDir / "triangle.vert.spv");
-        const VulkanShaderModule fragmentShader(m_device, shaderDir / config.fragmentShader);
+            // The fragment stage's specialization constants 0 (kAlphaMask), 1 (kScatterPrepass), 2
+            // (kDecal) and 3 (kBlendItem).
+            const std::array<nvrhi::ShaderSpecialization, 4> constants = {
+                nvrhi::ShaderSpecialization::UInt32(0, state.alphaMaskEnabled ? 1u : 0u),
+                nvrhi::ShaderSpecialization::UInt32(1, config.scatterPrepass ? 1u : 0u),
+                nvrhi::ShaderSpecialization::UInt32(2, config.decal ? 1u : 0u),
+                nvrhi::ShaderSpecialization::UInt32(3, mode == MaterialAlphaMode::Blend ? 1u : 0u)};
 
-        // The vertex, and beside it where each vertex was last frame (a skinned mesh's last pose).
-        const std::array<VkVertexInputBindingDescription, 2> bindingDescriptions = {
-            GetVertexBindingDescription(), GetPreviousPositionBindingDescription()};
-        const auto vertexAttributes = GetVertexAttributeDescriptions();
-        std::array<VkVertexInputAttributeDescription, 7> attributeDescriptions{};
-        static_assert(std::tuple_size_v<std::remove_const_t<decltype(vertexAttributes)>> + 1 == 7, "one more attribute than the vertex has");
-        std::copy(vertexAttributes.begin(), vertexAttributes.end(), attributeDescriptions.begin());
-        attributeDescriptions.back() = GetPreviousPositionAttributeDescription();
+            nvrhi::GraphicsPipelineDesc desc;
+            desc.VS = vertexShader;
+            desc.PS = SpecializeShader(device, fragmentShader, constants, config.fragmentShader);
+            desc.inputLayout = inputLayout;
+            desc.primType = nvrhi::PrimitiveType::TriangleList;
+            desc.bindingLayouts = {frameSetLayout, materialSetLayout, drawConstantsLayout};
 
-        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
-        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount = static_cast<uint32_t>(bindingDescriptions.size());
-        vertexInputInfo.pVertexBindingDescriptions = bindingDescriptions.data();
-        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+            // Winding: Vulkan framebuffer Y points down, which alone would flip glTF's CCW front faces
+            // to CW, but the render projection's Y-flip (proj[1][1] *= -1, see UpdateViewportMatrices)
+            // flips them back, so front faces arrive counter-clockwise in framebuffer space. Materials
+            // flagged doubleSided (glTF doubleSided=true, e.g. foliage/glass) use the no-cull variant.
+            nvrhi::RasterState& raster = desc.renderState.rasterState;
+            raster.setFillSolid().setFrontCounterClockwise(true);
+            raster.setCullMode(state.cullBackFaces ? nvrhi::RasterCullMode::Back : nvrhi::RasterCullMode::None);
 
-        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            // The layer's surface pass has no depth attachment: the fragments it keeps are the ones at
+            // the depth its first pass found.
+            nvrhi::DepthStencilState& depth = desc.renderState.depthStencilState;
+            depth.setDepthTestEnable(config.layerPass != 2);
+            depth.setDepthWriteEnable(state.depthWriteEnabled && !config.decal && config.layerPass == 0);
+            depth.setDepthFunc(config.depthLessOrEqual ? nvrhi::ComparisonFunc::GreaterOrEqual : nvrhi::ComparisonFunc::Greater);
+            depth.setStencilEnable(false);
 
-        // The counts are still baked in, but the values come from vkCmdSetViewport/vkCmdSetScissor
-        // (see VulkanForwardPass::Record) so that resizing the scene viewport only rebuilds
-        // its images and framebuffers, never the pipelines.
-        VkPipelineViewportStateCreateInfo viewportState{};
-        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-        viewportState.viewportCount = 1;
-        viewportState.scissorCount = 1;
-
-        const std::array<VkDynamicState, 2> dynamicStates = {
-            VK_DYNAMIC_STATE_VIEWPORT,
-            VK_DYNAMIC_STATE_SCISSOR};
-
-        VkPipelineDynamicStateCreateInfo dynamicState{};
-        dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-        dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-        dynamicState.pDynamicStates = dynamicStates.data();
-
-        VkPipelineMultisampleStateCreateInfo multisampling{};
-        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-        VkPushConstantRange pushConstantRange{};
-        // Only triangle.vert reads it: the fragment shaders take their material from set 0.
-        pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        pushConstantRange.offset = 0;
-        pushConstantRange.size = sizeof(ObjectPushConstants);
-
-        const std::array<VkDescriptorSetLayout, 2> setLayouts = {frameSetLayout, materialSetLayout};
-
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
-        pipelineLayoutInfo.pSetLayouts = setLayouts.data();
-        pipelineLayoutInfo.pushConstantRangeCount = 1;
-        pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-
-        CheckVulkan(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_layout), "Failed to create pipeline layout");
-
-        std::array<PipelineVariantState, kMaterialPipelineVariantCount> variants{};
-        std::array<VkGraphicsPipelineCreateInfo, kMaterialPipelineVariantCount> pipelineInfos{};
-
-        for (MaterialAlphaMode mode : {
-                 MaterialAlphaMode::Opaque,
-                 MaterialAlphaMode::Mask,
-                 MaterialAlphaMode::Blend})
-        {
-            for (bool doubleSided : {false, true})
+            // Whether alpha is written at all is the config's call: the forward set keeps the HDR
+            // target's clear alpha, the geometry set writes every G-buffer channel.
+            const nvrhi::ColorMask writeMask = config.writeAlpha ? nvrhi::ColorMask::All : nvrhi::ColorMask(nvrhi::ColorMask::Red | nvrhi::ColorMask::Green | nvrhi::ColorMask::Blue);
+            for (uint32_t attachment = 0; attachment < config.colorAttachmentCount; ++attachment)
             {
-                const MaterialPipelineKey key{mode, doubleSided};
-                const MaterialPipelineState state = GetMaterialPipelineState(key);
-                const size_t index = GetMaterialPipelineIndex(key);
-                PipelineVariantState& variant = variants[index];
-
-                variant.constants.alphaMaskEnabled = state.alphaMaskEnabled ? VK_TRUE : VK_FALSE;
-                variant.constants.scatterPrepass = config.scatterPrepass ? VK_TRUE : VK_FALSE;
-                variant.constants.decal = config.decal ? VK_TRUE : VK_FALSE;
-                variant.constants.blendItem = mode == MaterialAlphaMode::Blend ? VK_TRUE : VK_FALSE;
-                variant.specializationEntries[0] = {0, offsetof(PipelineVariantState::Constants, alphaMaskEnabled), sizeof(VkBool32)};
-                variant.specializationEntries[1] = {1, offsetof(PipelineVariantState::Constants, scatterPrepass), sizeof(VkBool32)};
-                variant.specializationEntries[2] = {2, offsetof(PipelineVariantState::Constants, decal), sizeof(VkBool32)};
-                variant.specializationEntries[3] = {3, offsetof(PipelineVariantState::Constants, blendItem), sizeof(VkBool32)};
-                variant.specialization.mapEntryCount = static_cast<uint32_t>(variant.specializationEntries.size());
-                variant.specialization.pMapEntries = variant.specializationEntries.data();
-                variant.specialization.dataSize = sizeof(variant.constants);
-                variant.specialization.pData = &variant.constants;
-
-                variant.stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-                variant.stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-                variant.stages[0].module = vertexShader.GetHandle();
-                variant.stages[0].pName = "main";
-
-                variant.stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-                variant.stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-                variant.stages[1].module = fragmentShader.GetHandle();
-                variant.stages[1].pName = "main";
-                variant.stages[1].pSpecializationInfo = &variant.specialization;
-
-                variant.rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-                variant.rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-                variant.rasterizer.lineWidth = 1.0f;
-                // Winding: Vulkan framebuffer Y points down, which alone would flip glTF's CCW front
-                // faces to CW — but the render projection's Y-flip (proj[1][1] *= -1, see
-                // UpdateViewportMatrices) flips them back, so front faces arrive COUNTER_CLOCKWISE in
-                // framebuffer space (same combination as the classic Vulkan tutorial). Declaring
-                // CLOCKWISE here culls the camera-facing side of every model. Materials flagged
-                // doubleSided (glTF doubleSided=true, e.g. foliage/glass) use the no-cull variant.
-                variant.rasterizer.cullMode = state.cullBackFaces ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
-                variant.rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-
-                variant.depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-                // The layer's surface pass has no depth attachment: the fragments it keeps are the ones
-                // at the depth its first pass found.
-                variant.depthStencil.depthTestEnable = config.layerPass == 2 ? VK_FALSE : VK_TRUE;
-                variant.depthStencil.depthWriteEnable = state.depthWriteEnabled && !config.decal && config.layerPass == 0 ? VK_TRUE : VK_FALSE;
-                variant.depthStencil.depthCompareOp = config.depthLessOrEqual ? kReverseDepthNearerOrEqual : kReverseDepthNearer;
-                variant.depthStencil.depthBoundsTestEnable = VK_FALSE;
-                variant.depthStencil.stencilTestEnable = VK_FALSE;
-
-                // Vulkan requires valid alpha blend enums whenever blending is enabled. Whether
-                // alpha is written at all is the config's call: the forward set keeps the HDR
-                // target's clear alpha, the geometry set writes every G-buffer channel.
-                VkColorComponentFlags writeMask =
-                    VK_COLOR_COMPONENT_R_BIT |
-                    VK_COLOR_COMPONENT_G_BIT |
-                    VK_COLOR_COMPONENT_B_BIT;
-                if (config.writeAlpha)
+                nvrhi::BlendState::RenderTarget& blend = desc.renderState.blendState.targets[attachment];
+                blend.setBlendEnable(state.blendEnabled && config.allowBlending)
+                    .setSrcBlend(nvrhi::BlendFactor::SrcAlpha)
+                    .setDestBlend(nvrhi::BlendFactor::InvSrcAlpha)
+                    .setBlendOp(nvrhi::BlendOp::Add)
+                    .setSrcBlendAlpha(nvrhi::BlendFactor::One)
+                    .setDestBlendAlpha(nvrhi::BlendFactor::InvSrcAlpha)
+                    .setBlendOpAlpha(nvrhi::BlendOp::Add)
+                    .setColorWriteMask(writeMask);
+                if (config.decal)
                 {
-                    writeMask |= VK_COLOR_COMPONENT_A_BIT;
+                    // Geometry pass order (VulkanGeometryPass::kAttachments): albedo, normal, surface,
+                    // emissive, then the rest, which a decal leaves as the surface under it wrote them.
+                    const nvrhi::ColorMask kRgb = nvrhi::ColorMask(nvrhi::ColorMask::Red | nvrhi::ColorMask::Green | nvrhi::ColorMask::Blue);
+                    const std::array<nvrhi::ColorMask, 4> decalMasks = {
+                        kRgb, nvrhi::ColorMask(0), nvrhi::ColorMask(nvrhi::ColorMask::Red | nvrhi::ColorMask::Green), kRgb};
+                    blend.setColorWriteMask(attachment < decalMasks.size() ? decalMasks[attachment] : nvrhi::ColorMask(0));
+                    blend.setBlendEnable(blend.colorWriteMask != nvrhi::ColorMask(0));
                 }
-
-                for (uint32_t attachment = 0; attachment < config.colorAttachmentCount; ++attachment)
+                if (config.layerPass == 1)
                 {
-                    VkPipelineColorBlendAttachmentState& blend = variant.colorBlendAttachments[attachment];
-                    blend.blendEnable = (state.blendEnabled && config.allowBlending) ? VK_TRUE : VK_FALSE;
-                    blend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-                    blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-                    blend.colorBlendOp = VK_BLEND_OP_ADD;
-                    blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-                    blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-                    blend.alphaBlendOp = VK_BLEND_OP_ADD;
-                    blend.colorWriteMask = writeMask;
-                    if (config.decal)
-                    {
-                        // Geometry pass order (VulkanGeometryPass::kAttachments): albedo, normal,
-                        // surface, emissive, then the rest, which a decal leaves as the surface under
-                        // it wrote them.
-                        constexpr VkColorComponentFlags kRgb = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
-                        constexpr std::array<VkColorComponentFlags, 4> kDecalMasks = {
-                            kRgb,
-                            0u,
-                            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT,
-                            kRgb};
-                        blend.colorWriteMask = attachment < kDecalMasks.size() ? kDecalMasks[attachment] : 0u;
-                        blend.blendEnable = blend.colorWriteMask != 0u ? VK_TRUE : VK_FALSE;
-                    }
-                    if (config.layerPass == 1)
-                    {
-                        // The nearest fragment's depth (reverse-Z: the greatest).
-                        blend.blendEnable = VK_TRUE;
-                        blend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-                        blend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-                        blend.colorBlendOp = VK_BLEND_OP_MAX;
-                        blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-                        blend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-                        blend.alphaBlendOp = VK_BLEND_OP_MAX;
-                        blend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
-                    }
+                    // The nearest fragment's depth (reverse-Z: the greatest).
+                    blend.setBlendEnable(true)
+                        .setSrcBlend(nvrhi::BlendFactor::One)
+                        .setDestBlend(nvrhi::BlendFactor::One)
+                        .setBlendOp(nvrhi::BlendOp::Max)
+                        .setSrcBlendAlpha(nvrhi::BlendFactor::One)
+                        .setDestBlendAlpha(nvrhi::BlendFactor::One)
+                        .setBlendOpAlpha(nvrhi::BlendOp::Max)
+                        .setColorWriteMask(nvrhi::ColorMask::Red);
                 }
+            }
 
-                variant.colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-                variant.colorBlending.attachmentCount = config.colorAttachmentCount;
-                variant.colorBlending.pAttachments = variant.colorBlendAttachments.data();
-
-                VkGraphicsPipelineCreateInfo& pipelineInfo = pipelineInfos[index];
-                pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-                pipelineInfo.stageCount = static_cast<uint32_t>(variant.stages.size());
-                pipelineInfo.pStages = variant.stages.data();
-                pipelineInfo.pVertexInputState = &vertexInputInfo;
-                pipelineInfo.pInputAssemblyState = &inputAssembly;
-                pipelineInfo.pViewportState = &viewportState;
-                pipelineInfo.pRasterizationState = &variant.rasterizer;
-                pipelineInfo.pMultisampleState = &multisampling;
-                pipelineInfo.pDepthStencilState = &variant.depthStencil;
-                pipelineInfo.pColorBlendState = &variant.colorBlending;
-                pipelineInfo.pDynamicState = &dynamicState;
-                pipelineInfo.layout = m_layout;
-                pipelineInfo.renderPass = renderPass;
-                pipelineInfo.subpass = 0;
+            m_pipelines[index] = device->createGraphicsPipeline(desc, framebuffer);
+            if (!m_pipelines[index])
+            {
+                throw std::runtime_error(std::string("Failed to create a material pipeline for ") + config.fragmentShader);
             }
         }
-
-        CheckVulkan(
-            vkCreateGraphicsPipelines(
-                m_device,
-                pipelineCache,
-                static_cast<uint32_t>(pipelineInfos.size()),
-                pipelineInfos.data(),
-                nullptr,
-                m_pipelines.data()),
-            "Failed to create graphics pipelines");
-        LOG_INFO("Created {} material pipeline variants for {}", m_pipelines.size(), config.fragmentShader);
     }
-    catch (...)
-    {
-        // vkCreateGraphicsPipelines may have written valid handles for the variants that did
-        // succeed before it failed, so clean up whatever ended up non-null.
-        DestroyHandles();
-        throw;
-    }
+    LOG_INFO("Created {} material pipeline variants for {}", m_pipelines.size(), config.fragmentShader);
 }
 
-VulkanPipelineSet::~VulkanPipelineSet()
-{
-    DestroyHandles();
-}
+VulkanPipelineSet::~VulkanPipelineSet() = default;
 
-VkPipeline VulkanPipelineSet::Get(MaterialPipelineKey key) const
+nvrhi::IGraphicsPipeline* VulkanPipelineSet::Get(MaterialPipelineKey key) const
 {
     return m_pipelines.at(GetMaterialPipelineIndex(key));
-}
-
-VkPipelineLayout VulkanPipelineSet::GetLayout() const
-{
-    return m_layout;
-}
-
-void VulkanPipelineSet::DestroyHandles()
-{
-    for (VkPipeline& pipeline : m_pipelines)
-    {
-        if (pipeline != VK_NULL_HANDLE)
-        {
-            vkDestroyPipeline(m_device, pipeline, nullptr);
-            pipeline = VK_NULL_HANDLE;
-        }
-    }
-    if (m_layout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_layout, nullptr);
-        m_layout = VK_NULL_HANDLE;
-    }
 }
 }

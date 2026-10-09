@@ -170,7 +170,7 @@ void VulkanBuffer::DestroyHandles()
     {
         buffer->handle = nullptr;
         buffer->native = VK_NULL_HANDLE;
-        VulkanMemoryPool::Free(m_device, buffer->memory);
+        VulkanMemoryPool::Free(buffer->memory);
     }
 }
 
@@ -209,46 +209,6 @@ VkDeviceAddress VulkanBuffer::GetIndexAddress() const
     return m_indexAddress;
 }
 
-void VulkanBuffer::CreateBuffer(
-    VkDeviceSize size,
-    VkBufferUsageFlags usage,
-    VkMemoryPropertyFlags properties,
-    VkBuffer& buffer,
-    VkDeviceMemory& memory)
-{
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = size;
-    bufferInfo.usage = usage;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create Vulkan buffer");
-
-    // Either both handles come back valid or neither does, so no caller has to clean up after a
-    // half-built buffer: running out of memory here is expected on large scenes.
-    try
-    {
-        VkMemoryRequirements memoryRequirements{};
-        vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
-
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = memoryRequirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(memoryRequirements.memoryTypeBits, properties);
-
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate Vulkan buffer memory");
-        CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind Vulkan buffer memory");
-    }
-    catch (...)
-    {
-        vkFreeMemory(m_device, memory, nullptr);
-        memory = VK_NULL_HANDLE;
-        vkDestroyBuffer(m_device, buffer, nullptr);
-        buffer = VK_NULL_HANDLE;
-        throw;
-    }
-}
-
 void VulkanBuffer::CreateDeviceLocalBuffer(
     VkDeviceSize size,
     VkBufferUsageFlags usage,
@@ -270,27 +230,39 @@ void VulkanBuffer::CreateDeviceLocalBuffer(
     desc.isAccelStructBuildInput = (usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR) != 0;
     desc.isVirtual = true;
     desc.debugName = "Mesh buffer";
+    // At rest every reader's state at once: vertex input, the hit shading's and the skinning's reads,
+    // the ray tracing builds. Only the upload and the skinning's writes move it out (and back).
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    if (desc.isVertexBuffer)
+    {
+        desc.initialState = desc.initialState | nvrhi::ResourceStates::VertexBuffer;
+    }
+    if (desc.isIndexBuffer)
+    {
+        desc.initialState = desc.initialState | nvrhi::ResourceStates::IndexBuffer;
+    }
+    if (desc.isAccelStructBuildInput)
+    {
+        desc.initialState = desc.initialState | nvrhi::ResourceStates::AccelStructBuildInput;
+    }
+    desc.keepInitialState = true;
     buffer.handle = m_nvrhiDevice->createBuffer(desc);
     if (!buffer.handle)
     {
-        throw std::runtime_error("Failed to create Vulkan buffer");
+        throw std::runtime_error("Failed to create a mesh buffer");
     }
     buffer.native = ToNative<VkBuffer>(buffer.handle->getNativeObject(nvrhi::ObjectTypes::VK_Buffer));
 
-    // As CreateBuffer: the buffer comes back whole or not at all.
+    // The buffer comes back whole or not at all.
     try
     {
-        VkMemoryRequirements memoryRequirements{};
-        vkGetBufferMemoryRequirements(m_device, buffer.native, &memoryRequirements);
-        buffer.memory = VulkanMemoryPool::Allocate(
-            m_physicalDevice,
-            m_device,
-            memoryRequirements,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        buffer.memory = VulkanMemoryPool::AllocateFor(
+            m_nvrhiDevice,
+            buffer.handle,
             address != nullptr ? VulkanMemoryPool::Resource::AddressableBuffer : VulkanMemoryPool::Resource::Buffer);
         if (!m_nvrhiDevice->bindBufferMemory(buffer.handle, buffer.memory.heap, buffer.memory.offset))
         {
-            throw std::runtime_error("Failed to bind Vulkan buffer memory");
+            throw std::runtime_error("Failed to bind mesh buffer memory");
         }
         if (address != nullptr)
         {
@@ -301,28 +273,11 @@ void VulkanBuffer::CreateDeviceLocalBuffer(
     {
         buffer.handle = nullptr;
         buffer.native = VK_NULL_HANDLE;
-        VulkanMemoryPool::Free(m_device, buffer.memory);
+        VulkanMemoryPool::Free(buffer.memory);
         throw;
     }
 }
 
-uint32_t VulkanBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
-{
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memoryProperties);
-
-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
-    {
-        const bool typeMatches = (typeFilter & (1u << i)) != 0;
-        const bool propertiesMatch = (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties;
-        if (typeMatches && propertiesMatch)
-        {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("Failed to find suitable vertex buffer memory type");
-}
 
 void VulkanBuffer::UploadDeviceLocal(
     const void* source,
@@ -332,36 +287,8 @@ void VulkanBuffer::UploadDeviceLocal(
     DeviceBuffer& buffer,
     VkDeviceAddress* address)
 {
-    VkBufferCopy copyRegion{};
-    copyRegion.size = size;
-    VkBuffer stagingBuffer = VK_NULL_HANDLE;
-    if (uploadBatch.CanStage())
-    {
-        // The batch's shared staging chunks: one allocation per resource cost a scene of tens of
-        // thousands of submeshes a third of a millisecond each.
-        const VulkanUploadBatch::StagingSlice slice = uploadBatch.Stage(source, size);
-        stagingBuffer = slice.buffer;
-        copyRegion.srcOffset = slice.offset;
-    }
-    else
-    {
-        VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-        CreateBuffer(
-            size,
-            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            stagingBuffer,
-            stagingMemory);
-        uploadBatch.TrackStagingResource(stagingBuffer, stagingMemory);
-
-        void* data = nullptr;
-        CheckVulkan(vkMapMemory(m_device, stagingMemory, 0, size, 0, &data), "Failed to map staging buffer memory");
-        std::memcpy(data, source, static_cast<size_t>(size));
-        vkUnmapMemory(m_device, stagingMemory);
-    }
-
     CreateDeviceLocalBuffer(size, usage, buffer, address);
-    vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, buffer.native, 1, &copyRegion);
+    uploadBatch.WriteBuffer(buffer.handle, source, size);
 }
 
 void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch)

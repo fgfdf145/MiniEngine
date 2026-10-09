@@ -150,6 +150,7 @@ FragmentOutput main(FragmentInput input)
 {
     FragmentOutput output;
     ToonMaterial material = toonMaterials[input.fragToonIndex];
+    LoadMaterialSamplers(material.samplerIndices);
 
     // The stencil the shader tests, from the eye mask: the front hair stays off the eyes, its redraw
     // keeps to them.

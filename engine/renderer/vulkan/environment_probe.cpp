@@ -67,7 +67,8 @@ VulkanEnvironmentProbe::VulkanEnvironmentProbe(
     nvrhi::IBindingLayout* frameSetLayout)
     : m_physicalDevice(physicalDevice),
       m_device(device),
-      m_nvrhiDevice(nvrhiDevice)
+      m_nvrhiDevice(nvrhiDevice),
+      m_downsample(nvrhiDevice)
 {
     try
     {
@@ -84,6 +85,7 @@ VulkanEnvironmentProbe::VulkanEnvironmentProbe(
         m_sampler = CreateNvrhiSampler(nvrhiDevice, samplerDesc, "Failed to create the environment probe sampler");
 
         CreateBindings(frameSetLayout);
+        m_radianceMipSets = m_downsample.CreateBindingSets(m_radiance.texture, 1);
     }
     catch (...)
     {
@@ -166,7 +168,8 @@ void VulkanEnvironmentProbe::Record(
     commandList->setPushConstants(&noConstants, sizeof(noConstants));
     commandList->dispatch(GroupCount(kCubeSize), GroupCount(kCubeSize), 6);
 
-    RecordMipChain(commandBuffer, commandList);
+    // The radiance cube's mips, each from the one above, which the prefilter samples.
+    m_downsample.Record(commandList, radiance, 1, m_radianceMipSets);
 
     commandList->setTextureState(radiance, nvrhi::AllSubresources, States::ShaderResource);
     commandList->setTextureState(prefiltered, nvrhi::AllSubresources, States::UnorderedAccess);
@@ -181,35 +184,6 @@ void VulkanEnvironmentProbe::Record(
         constants.size = kCubeSize >> mip;
         commandList->setPushConstants(&constants, sizeof(constants));
         commandList->dispatch(GroupCount(constants.size), GroupCount(constants.size), 6);
-    }
-}
-
-void VulkanEnvironmentProbe::RecordMipChain(VkCommandBuffer commandBuffer, nvrhi::ICommandList* commandList) const
-{
-    // NVRHI has no blit: it moves each pair of levels into the copy states (the barrier after the
-    // capture, then after each level's write), and the blit itself is native.
-    nvrhi::ITexture* radiance = m_radiance.texture;
-    for (uint32_t mip = 1; mip < kRadianceMipCount; ++mip)
-    {
-        commandList->setTextureState(radiance, nvrhi::TextureSubresourceSet(mip - 1, 1, 0, 6), nvrhi::ResourceStates::CopySource);
-        commandList->setTextureState(radiance, nvrhi::TextureSubresourceSet(mip, 1, 0, 6), nvrhi::ResourceStates::CopyDest);
-        commandList->commitBarriers();
-        const int32_t sourceSize = static_cast<int32_t>(kCubeSize >> (mip - 1));
-        const int32_t targetSize = static_cast<int32_t>(kCubeSize >> mip);
-        VkImageBlit blit{};
-        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip - 1, 0, 6};
-        blit.srcOffsets[1] = {sourceSize, sourceSize, 1};
-        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 6};
-        blit.dstOffsets[1] = {targetSize, targetSize, 1};
-        vkCmdBlitImage(
-            commandBuffer,
-            m_radiance.image,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            m_radiance.image,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            1,
-            &blit,
-            VK_FILTER_LINEAR);
     }
 }
 

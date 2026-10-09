@@ -1,10 +1,12 @@
 #pragma once
 
 #include "common.h"
+#include "compute_pass_util.h"
 #include "nvrhi_native.h"
 #include "uniform_buffer.h"
 
 #include <array>
+#include <vector>
 
 namespace me
 {
@@ -30,9 +32,7 @@ class VulkanEnvironmentProbe
     VulkanEnvironmentProbe& operator=(const VulkanEnvironmentProbe&) = delete;
 
     // physicalSky is false in EnvironmentMode::None, when nothing is captured. environment is what
-    // this frame's uniform block holds; an unchanged one reuses the last capture. Records through
-    // NVRHI (NvrhiPassScope) but for the mip chain's blits, which NVRHI does not have: they stay
-    // native, between the states NVRHI sets.
+    // this frame's uniform block holds; an unchanged one reuses the last capture.
     void Record(
         VkCommandBuffer commandBuffer,
         nvrhi::ICommandList* commandList,
@@ -59,7 +59,6 @@ class VulkanEnvironmentProbe
 
     CubeImage CreateCube(uint32_t mipCount, VkImageUsageFlags usage) const;
     void CreateBindings(nvrhi::IBindingLayout* frameSetLayout);
-    void RecordMipChain(VkCommandBuffer commandBuffer, nvrhi::ICommandList* commandList) const;
     void DestroyHandles();
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
@@ -71,6 +70,9 @@ class VulkanEnvironmentProbe
     nvrhi::BindingLayoutHandle m_setLayout;
     // One per prefiltered mip; set 0 also serves the capture.
     std::array<nvrhi::BindingSetHandle, kPrefilterMipCount> m_bindingSets{};
+    // The radiance cube's mip chain, each level from the one above.
+    MipDownsample m_downsample;
+    std::vector<nvrhi::BindingSetHandle> m_radianceMipSets;
     nvrhi::ComputePipelineHandle m_capturePipeline;
     nvrhi::ComputePipelineHandle m_prefilterPipeline;
     bool m_imagesInitialized = false;

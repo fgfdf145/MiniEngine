@@ -268,7 +268,6 @@ void VulkanAoResolvePass::Record(
 {
     // Runs even with AO off: SceneAo must hold something. Both history images go to GENERAL first
     // (discarded when the history is invalid), where they rest between frames.
-    m_history.RecordBarrier(commandBuffer, frame.aoHistory.valid);
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneAo, frame.imageIndex, frame.frameSlot);
     nvrhi::ITexture* historyRead = m_history.GetTexture(frame.aoHistory.readIndex);

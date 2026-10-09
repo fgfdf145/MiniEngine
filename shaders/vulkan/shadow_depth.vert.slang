@@ -1,13 +1,13 @@
-// Depth only, for opaque casters: shadow.vert without the UVs the alpha test needs, reading the
-// position-only stream (VulkanBuffer::GetPositionHandle). The block is shadow.vert's; only its first
-// member is read.
+// Depth only, no alpha test: renders an opaque caster from its position-only stream. The push
+// constant block is ShadowPushConstants in engine/renderer/vulkan/shadow_pass.h.
 struct ShadowConstants
 {
     float4x4 lightModelViewProjection;
+    uint drawSlot;
 };
 #include "d3d_register.slang"
 
-[[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData D3D_PUSH_CONSTANTS(0);
+[[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData D3D_PUSH_CONSTANTS(2);
 
 [shader("vertex")]
 float4 main([[vk::location(0)]] float3 inPosition : POSITION) : SV_Position

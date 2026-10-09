@@ -119,20 +119,6 @@ nvrhi::ITexture* VulkanTransmissionImage::GetTexture() const
     return m_texture;
 }
 
-void VulkanTransmissionImage::RecordInitialTransition(VkCommandBuffer commandBuffer) const
-{
-    if (m_initialized)
-    {
-        return;
-    }
-    RecordBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        LevelBarrier(m_image, 0, kMipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, VK_ACCESS_SHADER_READ_BIT));
-    m_initialized = true;
-}
-
 void VulkanTransmissionImage::Destroy()
 {
     m_sampler = nullptr;
@@ -152,8 +138,10 @@ VulkanTransmissionCopyPass::VulkanTransmissionCopyPass(
     nvrhi::IBindingLayout* frameSetLayout,
     const VulkanTransmissionImage& image)
     : m_nvrhiDevice(nvrhiDevice),
-      m_image(image)
+      m_image(image),
+      m_downsample(nvrhiDevice)
 {
+    m_mipSets = m_downsample.CreateBindingSets(image.GetTexture(), 1);
     m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
     nvrhi::BindingLayoutDesc desc;
     desc.visibility = nvrhi::ShaderType::Compute;
@@ -192,15 +180,15 @@ void VulkanTransmissionCopyPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    m_image.RecordInitialTransition(commandBuffer);
+    (void)commandBuffer;
     if (frame.TransmissiveDrawItems().empty())
     {
         return;
     }
 
-    // The copy rests in SHADER_READ_ONLY_OPTIMAL, where the forward pipelines sample it; the states
-    // below order this frame's writes after last frame's reads, and the scope's last one its reads
-    // after them.
+    // The copy rests as a shader resource, where the forward pipelines sample it; the states below
+    // order this frame's writes after last frame's reads, and the scope's last one its reads after
+    // them.
     nvrhi::ITexture* copy = m_image.GetTexture();
     nvrhi::ICommandList* commandList = frame.commandList;
     const NvrhiPassScope scope(commandList, {{copy, nvrhi::ResourceStates::ShaderResource}});
@@ -217,32 +205,8 @@ void VulkanTransmissionCopyPass::Record(
     constexpr uint32_t kGroups = (VulkanTransmissionImage::kSize + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize;
     commandList->dispatch(kGroups, kGroups);
 
-    // Each level is blitted from the one above: NVRHI has no blit, so it moves the two levels into
-    // the copy states and the blit is native.
-    const VkImage image = m_image.GetImage();
-    int32_t size = static_cast<int32_t>(VulkanTransmissionImage::kSize);
-    for (uint32_t level = 1; level < VulkanTransmissionImage::kMipLevels; ++level)
-    {
-        commandList->setTextureState(copy, nvrhi::TextureSubresourceSet(level - 1, 1, 0, 1), nvrhi::ResourceStates::CopySource);
-        commandList->setTextureState(copy, nvrhi::TextureSubresourceSet(level, 1, 0, 1), nvrhi::ResourceStates::CopyDest);
-        commandList->commitBarriers();
-        const int32_t next = std::max(size / 2, 1);
-        VkImageBlit blit{};
-        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1};
-        blit.srcOffsets[1] = {size, size, 1};
-        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
-        blit.dstOffsets[1] = {next, next, 1};
-        vkCmdBlitImage(
-            commandBuffer,
-            image,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            image,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            1,
-            &blit,
-            VK_FILTER_LINEAR);
-        size = next;
-    }
+    // Each level from the one above.
+    m_downsample.Record(commandList, copy, 1, m_mipSets);
 }
 
 void VulkanTransmissionCopyPass::OnTargetsRebuilt(const SceneRenderTargets& targets)

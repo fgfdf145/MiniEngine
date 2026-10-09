@@ -316,6 +316,8 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(nvrhi::IDevice* d
     {
         texture(binding);
     }
+    // Every material sampler, which the material shaders pick by index.
+    desc.bindings.push_back(nvrhi::BindingLayoutItem::Sampler(kMaterialSamplerTableBinding).setSize(kMaterialSamplerCount));
 
     m_layout = device->createBindingLayout(desc);
     if (!m_layout)
@@ -343,11 +345,10 @@ VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(nvrhi::IDev
     desc.registerSpaceIsDescriptorSet = true;
     desc.bindingOffsets = ShaderBindingOffsets();
     desc.descriptorSetsPerPool = kMaterialSetsPerPool;
-    // Each texture (binding b) and its sampler (b + kMaterialSamplerBindingOffset).
+    // The textures alone: their samplers are set 0's (kMaterialSamplerTableBinding).
     for (uint32_t binding = 0; binding < kMaterialTextureBindingCount; ++binding)
     {
         desc.bindings.push_back(nvrhi::BindingLayoutItem::Texture_SRV(binding));
-        desc.bindings.push_back(nvrhi::BindingLayoutItem::Sampler(binding + kMaterialSamplerBindingOffset));
     }
     m_layout = CreateNvrhiBindingLayout(device, desc, "Failed to create the material binding layout");
 }
@@ -512,6 +513,15 @@ void VulkanUniformBuffer::BuildFrameBindingSets()
         texture(29, m_environment.pathTraceLayerDepth);
         texture(30, m_environment.pathTraceLayerDiffuse);
         texture(31, m_environment.pathTraceLayerSpecular);
+        if (m_environment.materialSamplers.size() != kMaterialSamplerCount)
+        {
+            throw std::runtime_error("Set 0's material sampler table is incomplete");
+        }
+        for (uint32_t index = 0; index < kMaterialSamplerCount; ++index)
+        {
+            desc.bindings.push_back(
+                nvrhi::BindingSetItem::Sampler(kMaterialSamplerTableBinding, m_environment.materialSamplers[index]).setArrayElement(index));
+        }
 
         sets[i] = m_nvrhiDevice->createBindingSet(desc, m_frameSetLayout);
         if (!sets[i])

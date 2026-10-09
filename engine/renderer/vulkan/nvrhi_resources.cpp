@@ -1,5 +1,7 @@
 #include "nvrhi_resources.h"
 
+#include "nvrhi_pass.h"
+
 #include <string>
 
 namespace me
@@ -82,6 +84,27 @@ nvrhi::TextureHandle CreateNvrhiImage(nvrhi::IDevice* device, const VkImageCreat
     // MUTABLE_FORMAT, and EXTENDED_USAGE with it: a view in a format the image's usage does not allow.
     desc.isTypeless = (info.flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) != 0;
     desc.debugName = DebugName(failureMessage);
+    // Between command lists it rests where its readers want it: sampled images as shader resources,
+    // storage-only ones for unordered access, attachments as targets. NVRHI moves it back there at
+    // the end of every command list that moved it.
+    const nvrhi::FormatInfo& formatInfo = nvrhi::getFormatInfo(desc.format);
+    if (desc.isShaderResource)
+    {
+        desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    }
+    else if (desc.isUAV)
+    {
+        desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    }
+    else if (desc.isRenderTarget)
+    {
+        desc.initialState = formatInfo.hasDepth ? nvrhi::ResourceStates::DepthWrite : nvrhi::ResourceStates::RenderTarget;
+    }
+    else
+    {
+        desc.initialState = nvrhi::ResourceStates::CopyDest;
+    }
+    desc.keepInitialState = true;
 
     nvrhi::TextureHandle texture = device->createTexture(desc);
     if (!texture)
@@ -89,6 +112,10 @@ nvrhi::TextureHandle CreateNvrhiImage(nvrhi::IDevice* device, const VkImageCreat
         // NVRHI logs the VkResult. Running out of memory is what it is in practice, and the failure
         // callers of these images recover from.
         throw VulkanError(VK_ERROR_OUT_OF_DEVICE_MEMORY, failureMessage);
+    }
+    if (device->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN)
+    {
+        RegisterInitialTransition(texture);
     }
     image = ToNative<VkImage>(texture->getNativeObject(nvrhi::ObjectTypes::VK_Image));
     return texture;
@@ -142,6 +169,49 @@ nvrhi::BufferHandle CreateNvrhiBuffer(
         throw std::runtime_error(std::string(failureMessage) + ": a memory kind NVRHI cannot allocate");
     }
     desc.debugName = DebugName(failureMessage);
+    // A device-local buffer rests where its readers want it between command lists (NVRHI moves it
+    // back there at the end of each); a host-visible one never changes state.
+    if (desc.cpuAccess == nvrhi::CpuAccessMode::None)
+    {
+        nvrhi::ResourceStates rest = nvrhi::ResourceStates::Unknown;
+        if (desc.isAccelStructStorage)
+        {
+            rest = nvrhi::ResourceStates::AccelStructRead;
+        }
+        else
+        {
+            if (desc.canHaveUAVs || desc.isShaderBindingTable)
+            {
+                rest = rest | nvrhi::ResourceStates::ShaderResource;
+            }
+            if (desc.isVertexBuffer)
+            {
+                rest = rest | nvrhi::ResourceStates::VertexBuffer;
+            }
+            if (desc.isIndexBuffer)
+            {
+                rest = rest | nvrhi::ResourceStates::IndexBuffer;
+            }
+            if (desc.isConstantBuffer)
+            {
+                rest = rest | nvrhi::ResourceStates::ConstantBuffer;
+            }
+            if (desc.isDrawIndirectArgs)
+            {
+                rest = rest | nvrhi::ResourceStates::IndirectArgument;
+            }
+            if (desc.isAccelStructBuildInput)
+            {
+                rest = rest | nvrhi::ResourceStates::AccelStructBuildInput;
+            }
+            if (rest == nvrhi::ResourceStates::Unknown)
+            {
+                rest = nvrhi::ResourceStates::CopyDest;
+            }
+        }
+        desc.initialState = rest;
+        desc.keepInitialState = true;
+    }
 
     nvrhi::BufferHandle handle = device->createBuffer(desc);
     if (!handle)

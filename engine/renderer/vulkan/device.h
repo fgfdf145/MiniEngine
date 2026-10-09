@@ -50,6 +50,9 @@ class VulkanDevice
     // With hardware ray tracing: whether descriptorBindingUpdateUnusedWhilePending is enabled, so the
     // ray scene's texture table can take a new draw's textures while frames in flight use the table.
     bool SupportsUpdateUnusedWhilePending() const;
+    // Whether the device has video memory the CPU can write that is more than a 256 MiB window
+    // (resizable BAR): the ray scene's small buffers every hit reads go there.
+    bool HasLargeHostVisibleDeviceMemory() const;
 
     // The device-local heaps' usage and budget summed, in bytes. With VK_EXT_memory_budget they are the
     // driver's (the budget shrinks as other processes take memory); without it the budget is 80 % of

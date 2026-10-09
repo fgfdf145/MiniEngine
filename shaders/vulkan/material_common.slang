@@ -2,7 +2,7 @@
 #define MATERIAL_COMMON_SLANG
 
 // One draw's material: GpuMaterialData in engine/renderer/material.h, member for member (std430,
-// 18 x float4). triangle.frag and gbuffer.frag index it with the draw slot triangle.vert forwards.
+// 20 x float4). triangle.frag and gbuffer.frag index it with the draw slot triangle.vert forwards.
 struct MaterialData
 {
     float4 baseColorFactor;
@@ -23,6 +23,7 @@ struct MaterialData
     float4 volumeScatter;       // rgb multi-scatter colour, a anisotropy (KHR_materials_volume_scatter); with volumeScale.w
     float4 detailLayerScales[2]; // (x, y) scale of detail layers R, G, then B, A; read when shadingModel.z is not 0
     float4 detailLayerParams;   // x the detail layers' intensity
+    uint4 samplerIndices[2];    // each material texture's sampler in the frame set's table, a byte each (MaterialSampler)
 };
 
 [[vk::binding(12, 0)]] StructuredBuffer<MaterialData> materials : register(t12, space0);

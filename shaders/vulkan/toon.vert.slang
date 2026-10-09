@@ -49,6 +49,7 @@ VertexOutput main(VertexInput input)
 {
     VertexOutput output;
     ToonMaterial material = toonMaterials[drawData.toonIndex];
+    LoadMaterialSamplers(material.samplerIndices);
     float4 worldPosition = mul(drawData.model, float4(input.inPosition, 1.0));
 
     // As triangle.vert: the normal matrix of a TRS model is each column over its squared length.
