@@ -10,9 +10,13 @@
 namespace me
 {
 
-NvrhiPassScope::NvrhiPassScope(nvrhi::ICommandList* commandList, std::initializer_list<NvrhiSharedTexture> shared)
+NvrhiPassScope::NvrhiPassScope(
+    nvrhi::ICommandList* commandList,
+    std::initializer_list<NvrhiSharedTexture> shared,
+    std::initializer_list<NvrhiSharedBuffer> sharedBuffers)
     : m_commandList(commandList),
-      m_shared(shared)
+      m_shared(shared),
+      m_sharedBuffers(sharedBuffers)
 {
     if (m_commandList == nullptr)
     {
@@ -22,6 +26,10 @@ NvrhiPassScope::NvrhiPassScope(nvrhi::ICommandList* commandList, std::initialize
     for (const NvrhiSharedTexture& texture : m_shared)
     {
         m_commandList->beginTrackingTextureState(texture.texture, nvrhi::AllSubresources, texture.state);
+    }
+    for (const NvrhiSharedBuffer& buffer : m_sharedBuffers)
+    {
+        m_commandList->beginTrackingBufferState(buffer.buffer, buffer.state);
     }
 }
 
@@ -33,6 +41,10 @@ NvrhiPassScope::~NvrhiPassScope()
     {
         const nvrhi::ResourceStates exit = texture.exitState != nvrhi::ResourceStates::Unknown ? texture.exitState : texture.state;
         m_commandList->setTextureState(texture.texture, nvrhi::AllSubresources, exit);
+    }
+    for (const NvrhiSharedBuffer& buffer : m_sharedBuffers)
+    {
+        m_commandList->setBufferState(buffer.buffer, buffer.exitState != nvrhi::ResourceStates::Unknown ? buffer.exitState : buffer.state);
     }
     m_commandList->commitBarriers();
     m_commandList->clearState();

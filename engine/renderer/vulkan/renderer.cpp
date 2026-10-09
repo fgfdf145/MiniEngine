@@ -1440,7 +1440,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               // VulkanAtmosphere).
                                               m_atmosphere->Record(
                                                   commandBuffer,
-                                                  frame.frameDescriptorSet,
+                                                  frame.commandList,
+                                                  frame.frameBindingSet,
                                                   environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr,
                                                   frame.frameSlot,
                                                   environmentData.cloudLayer.w > 0.0f ? &environmentData.cloudLife : nullptr);
@@ -1451,7 +1452,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               m_atmosphere->RecordView(
                                                   commandBuffer,
                                                   *m_view.atmosphere,
-                                                  frame.frameDescriptorSet,
+                                                  frame.commandList,
+                                                  frame.frameBindingSet,
                                                   environmentMode == EnvironmentMode::Atmosphere,
                                                   m_gpuTimer.get());
                                               m_gpuTimer->Mark(commandBuffer, "CloudResolve");
@@ -1497,7 +1499,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   m_atmosphere->RecordView(
                                                       commandBuffer,
                                                       *view.atmosphere,
-                                                      prepared->frame.frameDescriptorSet,
+                                                      prepared->frame.commandList,
+                                                      prepared->frame.frameBindingSet,
                                                       environmentMode == EnvironmentMode::Atmosphere);
                                                   RecordScenePasses(commandBuffer, view, prepared->frame, prepared->passOrder, nullptr);
                                                   static constexpr std::array<RenderTargetId, 1> kCaptureReads = {RenderTargetId::SceneLdr};
@@ -2288,12 +2291,7 @@ void VulkanRenderer::CreateDeviceResources()
         m_materialSetLayout->GetHandle());
     m_transmissionImage = std::make_unique<VulkanTransmissionImage>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get());
 
-    m_atmosphere = std::make_unique<VulkanAtmosphere>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        m_frameSetLayout->GetHandle());
+    m_atmosphere = std::make_unique<VulkanAtmosphere>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), m_frameSetLayout->Get());
     m_view.atmosphere = m_atmosphere->CreateView();
     // The scene as the DDGI probe rays trace it, one instance buffer per frame in flight. With
     // hardware ray tracing its texture table names a white texture where no material's is.

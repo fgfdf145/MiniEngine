@@ -2,12 +2,9 @@
 
 #include "command.h"
 #include "compute_pass_util.h"
+#include "nvrhi_pass.h"
 #include "nvrhi_resources.h"
 #include "sampler_settings.h"
-
-#include "pipeline.h"
-
-#include <engine/core/paths/engine_paths.h>
 #include <engine/renderer/volumetric_clouds.h>
 
 #include <cstring>
@@ -54,47 +51,36 @@ VkExtent2D CloudMarchExtent(VkExtent2D sceneExtent)
     return VkExtent2D{std::max((sceneExtent.width + 1) / 2, 1u), std::max((sceneExtent.height + 1) / 2, 1u)};
 }
 
-// The set 1 bindings a view holds its own images in: the aerial perspective volume (storage), the
-// march's samples and the resolved clouds (storage), and the clouds' history (sampled).
+// Set 1, an NVRHI binding layout (VulkanAtmosphere::CreateBindingLayout): 0-3 the LUTs as storage
+// images, 4-5 the transmittance and multiple-scattering LUTs sampled, 6 the SH buffer, 7-8 the
+// clouds' billow volumes, 9 their shadow map, 10 their plume map, 11 the march's samples and 12 the
+// resolved clouds as storage images, 13 the clouds' history sampled, 14 their plume table; each
+// sampled texture's sampler at its binding + 64. A view's own images: the aerial perspective volume
+// (3) and the clouds (11 to 13).
+constexpr uint32_t kSamplerBindingOffset = 64;
 constexpr uint32_t kAerialPerspectiveBinding = 3;
+constexpr uint32_t kTransmittanceSampledBinding = 4;
+constexpr uint32_t kMultiScatteringSampledBinding = 5;
+constexpr uint32_t kIrradianceBinding = 6;
 constexpr uint32_t kCloudTargetBinding = 11;
 constexpr uint32_t kCloudResolvedBinding = 12;
 constexpr uint32_t kCloudHistoryBinding = 13;
-constexpr uint32_t kAtmosphereBindingCount = 15;
-
-VkDescriptorType AtmosphereBindingType(uint32_t binding)
-{
-    return (binding < 4 || (binding >= 7 && binding < 13)) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
-           : binding == 6 || binding == 14                 ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
-                                                           : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-}
+constexpr uint32_t kPlumeBinding = 14;
+// The cloud passes' frame constants (cloud_reconstruction.slang); the other passes ignore them.
+constexpr uint32_t kPushConstantBytes = 4 * sizeof(uint32_t);
 
 uint32_t GroupCount(uint32_t size, uint32_t groupSize)
 {
     return (size + groupSize - 1) / groupSize;
 }
 
-void GlobalBarrier(
-    VkCommandBuffer commandBuffer,
-    VkPipelineStageFlags srcStage,
-    VkAccessFlags srcAccess,
-    VkPipelineStageFlags dstStage,
-    VkAccessFlags dstAccess)
-{
-    VkMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = srcAccess;
-    barrier.dstAccessMask = dstAccess;
-    vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, 1, &barrier, 0, nullptr, 0, nullptr);
-}
 }
 
 VulkanAtmosphere::VulkanAtmosphere(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
     nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
-    VkDescriptorSetLayout frameSetLayout)
+    nvrhi::IBindingLayout* frameSetLayout)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_nvrhiDevice(nvrhiDevice)
@@ -107,10 +93,10 @@ VulkanAtmosphere::VulkanAtmosphere(
         m_cloudSampler = CreateNvrhiSampler(nvrhiDevice, cloudSamplerDesc, "Failed to create the cloud noise sampler");
         m_sampler = CreateNvrhiSampler(nvrhiDevice, BuildClampSamplerDesc(true), "Failed to create the atmosphere sampler");
         CreateImages();
-        CreateDescriptors();
+        CreateBindingLayout();
         // The set Record's shared passes bind, whose view images are 1 x 1 and never read.
         m_placeholderView = CreateView();
-        CreatePipelines(pipelineCache, frameSetLayout);
+        CreatePipelines(frameSetLayout);
     }
     catch (...)
     {
@@ -176,10 +162,7 @@ VulkanAtmosphere::View::View(VkDevice device)
 
 VulkanAtmosphere::View::~View()
 {
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-    }
+    m_bindingSet = nullptr;
     for (LutImage* image : {&m_aerialPerspective, &m_cloudTarget, &m_cloudResolved, &m_cloudHistory})
     {
         DestroyImage(m_device, *image);
@@ -207,26 +190,9 @@ std::unique_ptr<VulkanAtmosphere::View> VulkanAtmosphere::CreateView()
     std::unique_ptr<View> view(new View(m_device));
     CreateLutImage(view->m_aerialPerspective, kLutExtents[kAerialPerspective]);
     // Placeholders until the renderer names the scene's extent (EnsureCloudTarget), so the
-    // descriptors are valid from the start.
+    // binding set is valid from the start.
     CreateCloudTargets(*view, VkExtent2D{1, 1});
-
-    const std::array<VkDescriptorPoolSize, 3> poolSizes = {
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 10},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3},
-        VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}};
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets = 1;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-    poolInfo.pPoolSizes = poolSizes.data();
-    CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &view->m_descriptorPool), "Failed to create an atmosphere view's descriptor pool");
-    VkDescriptorSetAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocateInfo.descriptorPool = view->m_descriptorPool;
-    allocateInfo.descriptorSetCount = 1;
-    allocateInfo.pSetLayouts = &m_setLayout;
-    CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, &view->m_descriptorSet), "Failed to allocate an atmosphere view's descriptor set");
-    WriteViewDescriptors(*view);
+    CreateViewBindingSet(*view);
     return view;
 }
 
@@ -241,143 +207,120 @@ bool VulkanAtmosphere::EnsureCloudTarget(View& view, VkExtent2D sceneExtent)
     {
         DestroyImage(m_device, *image);
     }
+    view.m_bindingSet = nullptr;
     CreateCloudTargets(view, extent);
-    WriteViewDescriptors(view);
+    CreateViewBindingSet(view);
     return true;
 }
 
-void VulkanAtmosphere::InitializeView(VkCommandBuffer commandBuffer, View& view)
+void VulkanAtmosphere::InitializeView(nvrhi::ICommandList* commandList, View& view)
 {
     if (view.m_initialized)
     {
         return;
     }
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = view.m_aerialPerspective.image;
-    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
-    const VkClearColorValue black{};
-    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    vkCmdClearColorImage(commandBuffer, view.m_aerialPerspective.image, VK_IMAGE_LAYOUT_GENERAL, &black, 1, &range);
-    // Set 0 samples it.
-    EndFrameImageWrites(commandBuffer, std::span(&view.m_aerialPerspective.image, 1), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    // Inside a scope that brings the volume out of UNDEFINED (Common) and leaves it where set 0
+    // samples it.
+    nvrhi::ITexture* volume = view.m_aerialPerspective.texture;
+    commandList->setTextureState(volume, nvrhi::AllSubresources, nvrhi::ResourceStates::CopyDest);
+    commandList->commitBarriers();
+    commandList->clearTextureFloat(volume, nvrhi::AllSubresources, nvrhi::Color(0.0f));
+    commandList->setTextureState(volume, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
     view.m_initialized = true;
 }
 
 void VulkanAtmosphere::RecordView(
     VkCommandBuffer commandBuffer,
     View& view,
-    VkDescriptorSet frameDescriptorSet,
+    nvrhi::ICommandList* commandList,
+    nvrhi::IBindingSet* frameBindingSet,
     bool atmosphere,
     VulkanGpuTimer* timer)
 {
-    InitializeView(commandBuffer, view);
+    // The view's images rest where the native passes and set 0 read them: the aerial perspective
+    // volume and the resolved clouds in SHADER_READ_ONLY_OPTIMAL, the march's samples in GENERAL, the
+    // history (read here alone) as a shader resource; new ones come out of UNDEFINED. The shared
+    // multiple-scattering LUT, which the volume samples, rests in GENERAL (Record).
+    using States = nvrhi::ResourceStates;
+    const bool fresh = view.m_cloudTargetFresh;
+    nvrhi::ITexture* multiScattering = m_images[kMultiScattering].texture;
+    const NvrhiPassScope scope(
+        commandList,
+        {{multiScattering, States::UnorderedAccess},
+         {view.m_aerialPerspective.texture, view.m_initialized ? States::ShaderResource : States::Common, States::ShaderResource},
+         {view.m_cloudTarget.texture, fresh ? States::Common : States::UnorderedAccess, States::UnorderedAccess},
+         {view.m_cloudResolved.texture, fresh ? States::Common : States::ShaderResource, States::ShaderResource},
+         {view.m_cloudHistory.texture, fresh ? States::Common : States::ShaderResource, States::ShaderResource}});
+    InitializeView(commandList, view);
     if (atmosphere)
     {
-        // The volume follows the view's frustum, so it is rebuilt every frame. The previous frame's
-        // reads of it came before Record's opening barrier.
-        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, view.m_descriptorSet};
-        vkCmdBindDescriptorSets(
-            commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
-        BeginFrameImageWrites(commandBuffer, std::span(&view.m_aerialPerspective.image, 1));
-        Dispatch(commandBuffer, kAerialPerspective, GroupCount(32, 8), GroupCount(32, 8), 32);
-        EndFrameImageWrites(commandBuffer, std::span(&view.m_aerialPerspective.image, 1));
+        // The volume follows the view's frustum, so it is rebuilt every frame.
+        commandList->setTextureState(view.m_aerialPerspective.texture, nvrhi::AllSubresources, States::UnorderedAccess);
+        commandList->setTextureState(multiScattering, nvrhi::AllSubresources, States::ShaderResource);
+        commandList->commitBarriers();
+        Dispatch(commandList, kAerialPerspective, frameBindingSet, view.m_bindingSet, GroupCount(32, 8), GroupCount(32, 8), 32);
+        commandList->setTextureState(view.m_aerialPerspective.texture, nvrhi::AllSubresources, States::ShaderResource);
     }
-    RecordClouds(commandBuffer, view, frameDescriptorSet, timer);
+    RecordClouds(commandBuffer, view, commandList, frameBindingSet, timer);
 }
 
-void VulkanAtmosphere::RecordClouds(VkCommandBuffer commandBuffer, View& view, VkDescriptorSet frameDescriptorSet, VulkanGpuTimer* timer)
+void VulkanAtmosphere::RecordClouds(
+    VkCommandBuffer commandBuffer,
+    View& view,
+    nvrhi::ICommandList* commandList,
+    nvrhi::IBindingSet* frameBindingSet,
+    VulkanGpuTimer* timer)
 {
+    using States = nvrhi::ResourceStates;
     const bool historyValid = !view.m_cloudTargetFresh && !view.m_cloudHistoryRestart;
     view.m_cloudHistoryRestart = false;
-    if (view.m_cloudTargetFresh)
-    {
-        std::array<VkImageMemoryBarrier, 3> barriers{};
-        const std::array<VkImage, 3> images = {view.m_cloudTarget.image, view.m_cloudResolved.image, view.m_cloudHistory.image};
-        for (size_t index = 0; index < barriers.size(); ++index)
-        {
-            VkImageMemoryBarrier& barrier = barriers[index];
-            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.image = images[index];
-            barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        }
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            0,
-            0,
-            nullptr,
-            0,
-            nullptr,
-            static_cast<uint32_t>(barriers.size()),
-            barriers.data());
-        view.m_cloudTargetFresh = false;
-    }
-    else
-    {
-        // The previous frame's sky reads of the resolved clouds and its copy into the history
-        // before this frame's writes and reads.
-        GlobalBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-        // The resolved clouds rest where set 0 samples them.
-        BeginFrameImageWrites(commandBuffer, std::span(&view.m_cloudResolved.image, 1));
-    }
+    view.m_cloudTargetFresh = false;
 
     const VkExtent2D sceneExtent = view.m_cloudSceneExtent;
-    // Must match CloudReconstruction in shaders/vulkan/cloud_reconstruction.glsl.
+    // Must match CloudReconstruction in shaders/vulkan/cloud_reconstruction.slang.
     const std::array<uint32_t, 4> constants = {
         view.m_cloudFrame++ & 3u, historyValid ? 1u : 0u, sceneExtent.width, sceneExtent.height};
-    const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, view.m_descriptorSet};
-    vkCmdBindDescriptorSets(
-        commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
-    vkCmdPushConstants(
-        commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, static_cast<uint32_t>(sizeof(constants)), constants.data());
+    nvrhi::ITexture* samples = view.m_cloudTarget.texture;
+    nvrhi::ITexture* resolved = view.m_cloudResolved.texture;
+    nvrhi::ITexture* history = view.m_cloudHistory.texture;
+    // The previous frame's reads of each image come before this frame's writes (the states' barriers).
+    commandList->setTextureState(samples, nvrhi::AllSubresources, States::UnorderedAccess);
+    commandList->commitBarriers();
     const VkExtent2D marchExtent = CloudMarchExtent(sceneExtent);
-    Dispatch(commandBuffer, kCloudMarchPipeline, GroupCount(marchExtent.width, 8), GroupCount(marchExtent.height, 8), 1);
+    Dispatch(
+        commandList,
+        kCloudMarchPipeline,
+        frameBindingSet,
+        view.m_bindingSet,
+        GroupCount(marchExtent.width, 8),
+        GroupCount(marchExtent.height, 8),
+        1,
+        constants.data());
     if (timer != nullptr)
     {
         timer->Mark(commandBuffer, "CloudMarch");
     }
-    GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
-    Dispatch(commandBuffer, kCloudResolvePipeline, GroupCount(sceneExtent.width, 8), GroupCount(sceneExtent.height, 8), 1);
+    // The resolve reads the samples as storage too: the second UnorderedAccess is NVRHI's UAV barrier.
+    commandList->setTextureState(samples, nvrhi::AllSubresources, States::UnorderedAccess);
+    commandList->setTextureState(resolved, nvrhi::AllSubresources, States::UnorderedAccess);
+    commandList->setTextureState(history, nvrhi::AllSubresources, States::ShaderResource);
+    commandList->commitBarriers();
+    Dispatch(
+        commandList,
+        kCloudResolvePipeline,
+        frameBindingSet,
+        view.m_bindingSet,
+        GroupCount(sceneExtent.width, 8),
+        GroupCount(sceneExtent.height, 8),
+        1,
+        constants.data());
 
-    // The resolved clouds become next frame's history; the resolve's reads of the old one come
-    // first.
-    GlobalBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
-    VkImageCopy copy{};
-    copy.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.extent = VkExtent3D{sceneExtent.width, sceneExtent.height, 1};
-    vkCmdCopyImage(commandBuffer, view.m_cloudResolved.image, VK_IMAGE_LAYOUT_GENERAL, view.m_cloudHistory.image, VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
-    GlobalBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_ACCESS_SHADER_READ_BIT);
-    EndFrameImageWrites(
-        commandBuffer, std::span(&view.m_cloudResolved.image, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT);
+    // The resolved clouds become next frame's history; the resolve's reads of the old one come first.
+    commandList->setTextureState(resolved, nvrhi::AllSubresources, States::CopySource);
+    commandList->setTextureState(history, nvrhi::AllSubresources, States::CopyDest);
+    commandList->commitBarriers();
+    commandList->copyTexture(history, nvrhi::TextureSlice(), resolved, nvrhi::TextureSlice());
+    // The scope leaves both where the sky pass and next frame's resolve read them.
 }
 
 void VulkanAtmosphere::CreateCloudImage(LutImage& image, VkExtent2D extent, VkImageUsageFlags usage, const char* name)
@@ -418,44 +361,31 @@ void VulkanAtmosphere::CreateCloudTargets(View& view, VkExtent2D sceneExtent)
     view.m_cloudTargetFresh = true;
 }
 
-void VulkanAtmosphere::WriteViewDescriptors(const View& view)
+void VulkanAtmosphere::CreateViewBindingSet(View& view)
 {
-    std::array<VkDescriptorImageInfo, kAtmosphereBindingCount> infos{};
-    for (size_t lut = 0; lut < kLutCount; ++lut)
-    {
-        infos[lut] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_images[lut].view, VK_IMAGE_LAYOUT_GENERAL};
-    }
-    infos[kAerialPerspectiveBinding] = VkDescriptorImageInfo{VK_NULL_HANDLE, view.m_aerialPerspective.view, VK_IMAGE_LAYOUT_GENERAL};
-    // Set 0 samples the transmittance too, so it rests in SHADER_READ_ONLY_OPTIMAL between its writes.
-    infos[4] = VkDescriptorImageInfo{NativeSampler(m_sampler), m_images[kTransmittance].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    infos[5] = VkDescriptorImageInfo{NativeSampler(m_sampler), m_images[kMultiScattering].view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[7] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudShape].view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[8] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudDetail].view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[9] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudShadow.view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[10] = VkDescriptorImageInfo{VK_NULL_HANDLE, m_cloudNoise[kCloudWeather].view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[kCloudTargetBinding] = VkDescriptorImageInfo{VK_NULL_HANDLE, view.m_cloudTarget.view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[kCloudResolvedBinding] = VkDescriptorImageInfo{VK_NULL_HANDLE, view.m_cloudResolved.view, VK_IMAGE_LAYOUT_GENERAL};
-    infos[kCloudHistoryBinding] = VkDescriptorImageInfo{NativeSampler(m_sampler), view.m_cloudHistory.view, VK_IMAGE_LAYOUT_GENERAL};
-    const VkDescriptorBufferInfo irradianceInfo{m_irradianceBuffer, 0, VK_WHOLE_SIZE};
-    const VkDescriptorBufferInfo plumeInfo{m_plumeBuffer, 0, VK_WHOLE_SIZE};
-    std::array<VkWriteDescriptorSet, kAtmosphereBindingCount> writes{};
-    for (uint32_t binding = 0; binding < writes.size(); ++binding)
-    {
-        writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[binding].dstSet = view.m_descriptorSet;
-        writes[binding].dstBinding = binding;
-        writes[binding].descriptorCount = 1;
-        writes[binding].descriptorType = AtmosphereBindingType(binding);
-        if (binding == 6 || binding == 14)
-        {
-            writes[binding].pBufferInfo = binding == 6 ? &irradianceInfo : &plumeInfo;
-        }
-        else
-        {
-            writes[binding].pImageInfo = &infos[binding];
-        }
-    }
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    using Item = nvrhi::BindingSetItem;
+    nvrhi::BindingSetDesc desc;
+    desc.bindings = {
+        Item::Texture_UAV(kTransmittance, m_images[kTransmittance].texture),
+        Item::Texture_UAV(kMultiScattering, m_images[kMultiScattering].texture),
+        Item::Texture_UAV(kSkyView, m_images[kSkyView].texture),
+        Item::Texture_UAV(kAerialPerspectiveBinding, view.m_aerialPerspective.texture),
+        Item::Texture_SRV(kTransmittanceSampledBinding, m_images[kTransmittance].texture),
+        Item::Sampler(kTransmittanceSampledBinding + kSamplerBindingOffset, m_sampler),
+        Item::Texture_SRV(kMultiScatteringSampledBinding, m_images[kMultiScattering].texture),
+        Item::Sampler(kMultiScatteringSampledBinding + kSamplerBindingOffset, m_sampler),
+        Item::RawBuffer_UAV(kIrradianceBinding, m_irradianceHandle),
+        Item::Texture_UAV(7, m_cloudNoise[kCloudShape].texture),
+        Item::Texture_UAV(8, m_cloudNoise[kCloudDetail].texture),
+        Item::Texture_UAV(9, m_cloudShadow.texture),
+        Item::Texture_UAV(10, m_cloudNoise[kCloudWeather].texture),
+        Item::Texture_UAV(kCloudTargetBinding, view.m_cloudTarget.texture),
+        Item::Texture_UAV(kCloudResolvedBinding, view.m_cloudResolved.texture),
+        Item::Texture_SRV(kCloudHistoryBinding, view.m_cloudHistory.texture),
+        Item::Sampler(kCloudHistoryBinding + kSamplerBindingOffset, m_sampler),
+        Item::RawBuffer_SRV(kPlumeBinding, m_plumeHandle),
+        Item::PushConstants(0, kPushConstantBytes)};
+    view.m_bindingSet = CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create an atmosphere view's binding set");
 }
 
 std::optional<glm::vec3> VulkanAtmosphere::GetSkyAverageRadiance(uint32_t frameSlot) const
@@ -477,202 +407,183 @@ nvrhi::IBuffer* VulkanAtmosphere::GetIrradianceBuffer() const
 
 void VulkanAtmosphere::Record(
     VkCommandBuffer commandBuffer,
-    VkDescriptorSet frameDescriptorSet,
+    nvrhi::ICommandList* commandList,
+    nvrhi::IBindingSet* frameBindingSet,
     const AtmosphereParameters* parameters,
     uint32_t frameSlot,
     const glm::vec4* cloudLife)
 {
-    if (!m_imagesInitialized)
+    // What set 0 samples rests in SHADER_READ_ONLY_OPTIMAL, the multiple-scattering LUT (which the
+    // path tracer reads through its own set) in GENERAL, the SH buffer as a shader resource; before
+    // the first Record everything is UNDEFINED. The states set below order each write after the
+    // previous frame's reads, and the scope's closing ones each read after this frame's writes.
+    using States = nvrhi::ResourceStates;
+    const bool initializing = !m_imagesInitialized;
+    const States sampled = initializing ? States::Common : States::ShaderResource;
+    nvrhi::ITexture* transmittance = m_images[kTransmittance].texture;
+    nvrhi::ITexture* multiScattering = m_images[kMultiScattering].texture;
+    nvrhi::ITexture* skyView = m_images[kSkyView].texture;
+    nvrhi::ITexture* shape = m_cloudNoise[kCloudShape].texture;
+    nvrhi::ITexture* detail = m_cloudNoise[kCloudDetail].texture;
+    nvrhi::ITexture* weather = m_cloudNoise[kCloudWeather].texture;
+    nvrhi::ITexture* shadow = m_cloudShadow.texture;
+    nvrhi::ITexture* placeholderVolume = m_placeholderView->m_aerialPerspective.texture;
+    Readback& readback = m_readbacks.at(frameSlot);
+    const NvrhiPassScope scope(
+        commandList,
+        {{transmittance, sampled, States::ShaderResource},
+         {multiScattering, initializing ? States::Common : States::UnorderedAccess, States::UnorderedAccess},
+         {skyView, sampled, States::ShaderResource},
+         {shape, sampled, States::ShaderResource},
+         {detail, sampled, States::ShaderResource},
+         {weather, sampled, States::ShaderResource},
+         {shadow, sampled, States::ShaderResource},
+         {placeholderVolume, m_placeholderView->m_initialized ? States::ShaderResource : States::Common, States::ShaderResource}},
+        {{m_irradianceHandle, initializing ? States::Common : States::ShaderResource, States::ShaderResource},
+         {m_plumeHandle, initializing ? States::Common : States::ShaderResource, States::ShaderResource},
+         {readback.handle, States::CopyDest}});
+    if (initializing)
     {
         // The LUTs (the aerial perspective volume is each view's), the noise and the shadow map.
-        std::vector<VkImage> images;
+        std::vector<nvrhi::ITexture*> images;
         for (const LutImage& image : m_images)
         {
-            if (image.image != VK_NULL_HANDLE)
+            if (image.texture)
             {
-                images.push_back(image.image);
+                images.push_back(image.texture);
             }
         }
         for (const LutImage& image : m_cloudNoise)
         {
-            images.push_back(image.image);
+            images.push_back(image.texture);
         }
-        images.push_back(m_cloudShadow.image);
-        std::vector<VkImageMemoryBarrier> barriers(images.size());
-        for (size_t index = 0; index < barriers.size(); ++index)
+        for (nvrhi::ITexture* image : images)
         {
-            VkImageMemoryBarrier& barrier = barriers[index];
-            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.image = images[index];
-            barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            commandList->setTextureState(image, nvrhi::AllSubresources, States::CopyDest);
         }
-        vkCmdPipelineBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            0,
-            0,
-            nullptr,
-            0,
-            nullptr,
-            static_cast<uint32_t>(barriers.size()),
-            barriers.data());
-        const VkClearColorValue black{};
-        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        for (const LutImage& image : m_images)
+        commandList->setTextureState(shadow, nvrhi::AllSubresources, States::CopyDest);
+        commandList->setBufferState(m_irradianceHandle, States::CopyDest);
+        commandList->setBufferState(m_plumeHandle, States::CopyDest);
+        commandList->setBufferState(m_plumeStagingHandle, States::CopySource);
+        commandList->commitBarriers();
+        for (nvrhi::ITexture* image : images)
         {
-            if (image.image == VK_NULL_HANDLE)
-            {
-                continue;
-            }
-            vkCmdClearColorImage(commandBuffer, image.image, VK_IMAGE_LAYOUT_GENERAL, &black, 1, &range);
-        }
-        for (const LutImage& image : m_cloudNoise)
-        {
-            vkCmdClearColorImage(commandBuffer, image.image, VK_IMAGE_LAYOUT_GENERAL, &black, 1, &range);
+            commandList->clearTextureFloat(image, nvrhi::AllSubresources, nvrhi::Color(0.0f));
         }
         // No clouds, no shadow: the map starts fully lit.
-        const VkClearColorValue lit{{1.0f, 1.0f, 1.0f, 1.0f}};
-        vkCmdClearColorImage(commandBuffer, m_cloudShadow.image, VK_IMAGE_LAYOUT_GENERAL, &lit, 1, &range);
-        vkCmdFillBuffer(commandBuffer, m_irradianceBuffer, 0, VK_WHOLE_SIZE, 0);
+        commandList->clearTextureFloat(shadow, nvrhi::AllSubresources, nvrhi::Color(1.0f));
+        commandList->clearBufferUInt(m_irradianceHandle, 0);
         // The plume table, before the plume map is first built below.
-        const VkBufferCopy plumes{0, 0, static_cast<VkDeviceSize>(kCloudPlumeTableSize) * sizeof(CloudPlumeCell)};
-        vkCmdCopyBuffer(commandBuffer, m_plumeStaging, m_plumeBuffer, 1, &plumes);
-        EndFrameImageWrites(commandBuffer, FrameSampledImages(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-        InitializeView(commandBuffer, *m_placeholderView);
+        commandList->copyBuffer(m_plumeHandle, 0, m_plumeStagingHandle, 0, static_cast<uint64_t>(kCloudPlumeTableSize) * sizeof(CloudPlumeCell));
+        for (nvrhi::ITexture* image : images)
+        {
+            commandList->setTextureState(image, nvrhi::AllSubresources, image == multiScattering ? States::UnorderedAccess : States::ShaderResource);
+        }
+        commandList->setTextureState(shadow, nvrhi::AllSubresources, States::ShaderResource);
+        commandList->setBufferState(m_irradianceHandle, States::ShaderResource);
+        commandList->setBufferState(m_plumeHandle, States::ShaderResource);
+        InitializeView(commandList, *m_placeholderView);
         m_imagesInitialized = true;
     }
-    else if (m_plumeStaging != VK_NULL_HANDLE && ++m_plumeStagingAge > VulkanCommandContext::kMaxFramesInFlight)
+    else if (m_plumeStagingHandle && ++m_plumeStagingAge > VulkanCommandContext::kMaxFramesInFlight)
     {
         // Recording this frame waited for the one that copied the table.
         DestroyPlumeStaging();
     }
 
-    // The previous frame's fragment reads (and this frame's clear) before this frame's writes.
-    GlobalBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
-
+    nvrhi::IBindingSet* set = m_placeholderView->m_bindingSet;
     if (!m_cloudNoiseBuilt)
     {
-        // The noise depends on nothing, so it is built once, whatever the mode; the barrier at the
-        // end makes it visible to the sky and the probe.
-        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_placeholderView->m_descriptorSet};
-        vkCmdBindDescriptorSets(
-            commandBuffer,
-            VK_PIPELINE_BIND_POINT_COMPUTE,
-            m_pipelineLayout,
-            0,
-            static_cast<uint32_t>(sets.size()),
-            sets.data(),
-            0,
-            nullptr);
-        const std::array<VkImage, kCloudNoiseCount> noise = {
-            m_cloudNoise[kCloudShape].image, m_cloudNoise[kCloudDetail].image, m_cloudNoise[kCloudWeather].image};
-        BeginFrameImageWrites(commandBuffer, noise);
+        // The noise depends on nothing, so it is built once, whatever the mode; the shadow map below
+        // and the sky and the probe read it.
+        for (nvrhi::ITexture* image : {shape, detail, weather})
+        {
+            commandList->setTextureState(image, nvrhi::AllSubresources, States::UnorderedAccess);
+        }
+        commandList->commitBarriers();
         const uint32_t groups = GroupCount(kCloudNoiseSizes[kCloudShape], 4);
-        Dispatch(commandBuffer, kCloudNoisePipeline, groups, groups, groups);
+        Dispatch(commandList, kCloudNoisePipeline, frameBindingSet, set, groups, groups, groups);
         const uint32_t weatherGroups = GroupCount(kCloudNoiseSizes[kCloudWeather], 8);
-        Dispatch(commandBuffer, kCloudWeatherPipeline, weatherGroups, weatherGroups, 1);
-        // The shadow map below reads the noise.
-        EndFrameImageWrites(commandBuffer, noise);
+        Dispatch(commandList, kCloudWeatherPipeline, frameBindingSet, set, weatherGroups, weatherGroups, 1);
+        for (nvrhi::ITexture* image : {shape, detail, weather})
+        {
+            commandList->setTextureState(image, nvrhi::AllSubresources, States::ShaderResource);
+        }
         m_cloudNoiseBuilt = true;
         m_cloudWeatherLife = cloudLife != nullptr ? *cloudLife : glm::vec4(-1.0f);
     }
     else if (cloudLife != nullptr && *cloudLife != m_cloudWeatherLife)
     {
         // The plumes have moved on in their lives (cloud_weather.comp reads the phases from the
-        // frame's uniforms); the barrier above ordered last frame's reads of the map before this.
-        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_placeholderView->m_descriptorSet};
-        vkCmdBindDescriptorSets(
-            commandBuffer,
-            VK_PIPELINE_BIND_POINT_COMPUTE,
-            m_pipelineLayout,
-            0,
-            static_cast<uint32_t>(sets.size()),
-            sets.data(),
-            0,
-            nullptr);
-        BeginFrameImageWrites(commandBuffer, std::span(&m_cloudNoise[kCloudWeather].image, 1));
+        // frame's uniforms).
+        commandList->setTextureState(weather, nvrhi::AllSubresources, States::UnorderedAccess);
+        commandList->commitBarriers();
         const uint32_t weatherGroups = GroupCount(kCloudNoiseSizes[kCloudWeather], 8);
-        Dispatch(commandBuffer, kCloudWeatherPipeline, weatherGroups, weatherGroups, 1);
-        EndFrameImageWrites(commandBuffer, std::span(&m_cloudNoise[kCloudWeather].image, 1));
+        Dispatch(commandList, kCloudWeatherPipeline, frameBindingSet, set, weatherGroups, weatherGroups, 1);
+        commandList->setTextureState(weather, nvrhi::AllSubresources, States::ShaderResource);
         m_cloudWeatherLife = *cloudLife;
     }
 
     if (parameters != nullptr)
     {
-        const std::array<VkDescriptorSet, 2> sets = {frameDescriptorSet, m_placeholderView->m_descriptorSet};
-        vkCmdBindDescriptorSets(
-            commandBuffer,
-            VK_PIPELINE_BIND_POINT_COMPUTE,
-            m_pipelineLayout,
-            0,
-            static_cast<uint32_t>(sets.size()),
-            sets.data(),
-            0,
-            nullptr);
-
         if (!m_staticLutParameters.has_value() || !(*m_staticLutParameters == *parameters))
         {
-            BeginFrameImageWrites(commandBuffer, std::span(&m_images[kTransmittance].image, 1));
-            Dispatch(commandBuffer, kTransmittance, GroupCount(256, 8), GroupCount(64, 8), 1);
-            EndFrameImageWrites(commandBuffer, std::span(&m_images[kTransmittance].image, 1));
-            Dispatch(commandBuffer, kMultiScattering, 32, 32, 1);
-            GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+            commandList->setTextureState(transmittance, nvrhi::AllSubresources, States::UnorderedAccess);
+            commandList->commitBarriers();
+            Dispatch(commandList, kTransmittance, frameBindingSet, set, GroupCount(256, 8), GroupCount(64, 8), 1);
+            commandList->setTextureState(transmittance, nvrhi::AllSubresources, States::ShaderResource);
+            commandList->setTextureState(multiScattering, nvrhi::AllSubresources, States::UnorderedAccess);
+            commandList->commitBarriers();
+            Dispatch(commandList, kMultiScattering, frameBindingSet, set, 32, 32, 1);
             m_staticLutParameters = *parameters;
         }
-        const std::array<VkImage, 2> skyAndShadow = {m_images[kSkyView].image, m_cloudShadow.image};
-        BeginFrameImageWrites(commandBuffer, skyAndShadow);
-        Dispatch(commandBuffer, kSkyView, GroupCount(192, 8), GroupCount(108, 8), 1);
+        // The sky view samples the multiple scattering.
+        commandList->setTextureState(multiScattering, nvrhi::AllSubresources, States::ShaderResource);
+        commandList->setTextureState(skyView, nvrhi::AllSubresources, States::UnorderedAccess);
+        commandList->setTextureState(shadow, nvrhi::AllSubresources, States::UnorderedAccess);
+        commandList->commitBarriers();
+        Dispatch(commandList, kSkyView, frameBindingSet, set, GroupCount(192, 8), GroupCount(108, 8), 1);
         // Every frame, as the map follows the camera; all ones when the clouds are off.
-        Dispatch(commandBuffer, kCloudShadowPipeline, GroupCount(kCloudShadowSize, 8), GroupCount(kCloudShadowSize, 8), 1);
+        Dispatch(commandList, kCloudShadowPipeline, frameBindingSet, set, GroupCount(kCloudShadowSize, 8), GroupCount(kCloudShadowSize, 8), 1);
         // The SH projection samples the sky-view LUT written above.
-        EndFrameImageWrites(commandBuffer, skyAndShadow);
-        Dispatch(commandBuffer, kIrradiancePipeline, 1, 1, 1);
+        commandList->setTextureState(skyView, nvrhi::AllSubresources, States::ShaderResource);
+        commandList->setTextureState(shadow, nvrhi::AllSubresources, States::ShaderResource);
+        commandList->setBufferState(m_irradianceHandle, States::UnorderedAccess);
+        commandList->commitBarriers();
+        Dispatch(commandList, kIrradiancePipeline, frameBindingSet, set, 1, 1, 1);
 
-        // A copy for the CPU, read once this slot's fence has signaled.
-        GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-        Readback& readback = m_readbacks.at(frameSlot);
-        const VkBufferCopy copy{0, 0, kIrradianceBytes};
-        vkCmdCopyBuffer(commandBuffer, m_irradianceBuffer, readback.buffer, 1, &copy);
-        GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
+        // A copy for the CPU, read once this slot's fence has signaled; NVRHI has no state for the
+        // host's read, so that barrier is native.
+        commandList->setBufferState(m_irradianceHandle, States::CopySource);
+        commandList->commitBarriers();
+        commandList->copyBuffer(readback.handle, 0, m_irradianceHandle, 0, kIrradianceBytes);
+        VkMemoryBarrier toHost{};
+        toHost.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        toHost.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toHost.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &toHost, 0, nullptr, 0, nullptr);
     }
-    m_readbacks.at(frameSlot).written = parameters != nullptr;
-
-    // This frame's writes before its fragment shaders sample them.
-    GlobalBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_ACCESS_SHADER_READ_BIT);
+    readback.written = parameters != nullptr;
 }
 
-std::array<VkImage, 6> VulkanAtmosphere::FrameSampledImages() const
+void VulkanAtmosphere::Dispatch(
+    nvrhi::ICommandList* commandList,
+    size_t pipeline,
+    nvrhi::IBindingSet* frameBindingSet,
+    nvrhi::IBindingSet* set,
+    uint32_t x,
+    uint32_t y,
+    uint32_t z,
+    const uint32_t* constants) const
 {
-    return {
-        m_images[kTransmittance].image,
-        m_images[kSkyView].image,
-        m_cloudNoise[kCloudShape].image,
-        m_cloudNoise[kCloudDetail].image,
-        m_cloudNoise[kCloudWeather].image,
-        m_cloudShadow.image};
-}
-
-void VulkanAtmosphere::Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, uint32_t x, uint32_t y, uint32_t z) const
-{
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelines[pipeline]);
-    vkCmdDispatch(commandBuffer, x, y, z);
+    nvrhi::ComputeState state;
+    state.pipeline = m_pipelines[pipeline];
+    state.bindings = {frameBindingSet, set};
+    commandList->setComputeState(state);
+    // Every pipeline's layout has the push constants; NVRHI's validation drops a dispatch without them.
+    static constexpr std::array<uint32_t, 4> kNoConstants{};
+    commandList->setPushConstants(constants != nullptr ? constants : kNoConstants.data(), kPushConstantBytes);
+    commandList->dispatch(x, y, z);
 }
 
 void VulkanAtmosphere::CreateLutImage(LutImage& image, VkExtent3D extent)
@@ -829,78 +740,50 @@ void VulkanAtmosphere::DestroyPlumeStaging()
     m_plumeStaging = VK_NULL_HANDLE;
 }
 
-void VulkanAtmosphere::CreateDescriptors()
+void VulkanAtmosphere::CreateBindingLayout()
 {
-    // 0-3 the LUTs as storage images, 4-5 the transmittance and multiple-scattering LUTs sampled,
-    // 6 the SH buffer, 7-8 the clouds' billow volumes, 9 their shadow map, 10 their plume map, 11
-    // the march's samples and 12 the resolved clouds as storage images, 13 the clouds' history
-    // sampled, and 14 their plume table.
-    std::array<VkDescriptorSetLayoutBinding, kAtmosphereBindingCount> bindings{};
-    for (uint32_t binding = 0; binding < bindings.size(); ++binding)
-    {
-        bindings[binding].binding = binding;
-        bindings[binding].descriptorType = AtmosphereBindingType(binding);
-        bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    }
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-    layoutInfo.pBindings = bindings.data();
-    CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_setLayout), "Failed to create the atmosphere set layout");
-
+    using Item = nvrhi::BindingLayoutItem;
+    nvrhi::BindingLayoutDesc desc;
+    desc.visibility = nvrhi::ShaderType::Compute;
+    desc.registerSpace = 1;
+    desc.registerSpaceIsDescriptorSet = true;
+    desc.bindingOffsets = ShaderBindingOffsets();
+    desc.bindings = {
+        Item::Texture_UAV(kTransmittance),
+        Item::Texture_UAV(kMultiScattering),
+        Item::Texture_UAV(kSkyView),
+        Item::Texture_UAV(kAerialPerspectiveBinding),
+        Item::Texture_SRV(kTransmittanceSampledBinding),
+        Item::Sampler(kTransmittanceSampledBinding + kSamplerBindingOffset),
+        Item::Texture_SRV(kMultiScatteringSampledBinding),
+        Item::Sampler(kMultiScatteringSampledBinding + kSamplerBindingOffset),
+        Item::RawBuffer_UAV(kIrradianceBinding),
+        Item::Texture_UAV(7),
+        Item::Texture_UAV(8),
+        Item::Texture_UAV(9),
+        Item::Texture_UAV(10),
+        Item::Texture_UAV(kCloudTargetBinding),
+        Item::Texture_UAV(kCloudResolvedBinding),
+        Item::Texture_SRV(kCloudHistoryBinding),
+        Item::Sampler(kCloudHistoryBinding + kSamplerBindingOffset),
+        Item::RawBuffer_SRV(kPlumeBinding),
+        Item::PushConstants(0, kPushConstantBytes)};
+    m_setLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, desc, "Failed to create the atmosphere binding layout");
 }
 
-void VulkanAtmosphere::CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout)
+void VulkanAtmosphere::CreatePipelines(nvrhi::IBindingLayout* frameSetLayout)
 {
-    const std::array<VkDescriptorSetLayout, 2> setLayouts = {frameSetLayout, m_setLayout};
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
-    pipelineLayoutInfo.pSetLayouts = setLayouts.data();
-    // The cloud passes' frame constants (cloud_reconstruction.glsl); the other passes ignore them.
-    const VkPushConstantRange pushConstants{VK_SHADER_STAGE_COMPUTE_BIT, 0, 4 * sizeof(uint32_t)};
-    pipelineLayoutInfo.pushConstantRangeCount = 1;
-    pipelineLayoutInfo.pPushConstantRanges = &pushConstants;
-    CheckVulkan(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout), "Failed to create the atmosphere pipeline layout");
-
     for (size_t pipeline = 0; pipeline < kPipelineCount; ++pipeline)
     {
-        const VulkanShaderModule shader(m_device, EnginePaths::ShaderRoot() / kShaderNames[pipeline]);
-        VkComputePipelineCreateInfo pipelineInfo{};
-        pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        pipelineInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-        pipelineInfo.stage.module = shader.GetHandle();
-        pipelineInfo.stage.pName = "main";
-        pipelineInfo.layout = m_pipelineLayout;
-        CheckVulkan(
-            vkCreateComputePipelines(m_device, pipelineCache, 1, &pipelineInfo, nullptr, &m_pipelines[pipeline]),
-            "Failed to create an atmosphere pipeline");
+        m_pipelines[pipeline] = CreateNvrhiComputePipeline(m_nvrhiDevice, kShaderNames[pipeline], {frameSetLayout, m_setLayout});
     }
 }
 
 void VulkanAtmosphere::DestroyHandles()
 {
-    for (VkPipeline& pipeline : m_pipelines)
-    {
-        if (pipeline != VK_NULL_HANDLE)
-        {
-            vkDestroyPipeline(m_device, pipeline, nullptr);
-            pipeline = VK_NULL_HANDLE;
-        }
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
+    m_pipelines = {};
     m_placeholderView.reset();
-    if (m_setLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
-    }
+    m_setLayout = nullptr;
     m_sampler = nullptr;
     m_cloudSampler = nullptr;
     // The buffers and their memory (unmapped as it is freed) go with the handles.

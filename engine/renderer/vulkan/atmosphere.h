@@ -31,12 +31,7 @@ namespace me
 class VulkanAtmosphere
 {
   public:
-    VulkanAtmosphere(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
-        nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
-        VkDescriptorSetLayout frameSetLayout);
+    VulkanAtmosphere(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, nvrhi::IBindingLayout* frameSetLayout);
     ~VulkanAtmosphere();
 
     VulkanAtmosphere(const VulkanAtmosphere&) = delete;
@@ -50,9 +45,11 @@ class VulkanAtmosphere
     // GetSkyAverageRadiance).
     // cloudLife is the plumes' phases of life the frame's uniforms carry (EnvironmentUniformData::
     // cloudLife), or null with the clouds off: the plume map is rebuilt whenever they move on.
+    // Records through NVRHI (NvrhiPassScope), the host barrier after the SH readback native.
     void Record(
         VkCommandBuffer commandBuffer,
-        VkDescriptorSet frameDescriptorSet,
+        nvrhi::ICommandList* commandList,
+        nvrhi::IBindingSet* frameBindingSet,
         const AtmosphereParameters* parameters,
         uint32_t frameSlot,
         const glm::vec4* cloudLife = nullptr);
@@ -119,8 +116,7 @@ class VulkanAtmosphere
         uint32_t m_cloudFrame = 0;
         // Set by RestartHistory: the next frame's reconstruction ignores the history.
         bool m_cloudHistoryRestart = false;
-        VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-        VkDescriptorSet m_descriptorSet = VK_NULL_HANDLE;
+        nvrhi::BindingSetHandle m_bindingSet;
     };
 
     // A view with placeholder clouds until EnsureCloudTarget names its extent.
@@ -140,7 +136,8 @@ class VulkanAtmosphere
     void RecordView(
         VkCommandBuffer commandBuffer,
         View& view,
-        VkDescriptorSet frameDescriptorSet,
+        nvrhi::ICommandList* commandList,
+        nvrhi::IBindingSet* frameBindingSet,
         bool atmosphere,
         VulkanGpuTimer* timer = nullptr);
 
@@ -172,30 +169,42 @@ class VulkanAtmosphere
     void CreateImages();
     void CreateLutImage(LutImage& image, VkExtent3D extent);
     static void DestroyImage(VkDevice device, LutImage& image);
-    void CreateDescriptors();
+    void CreateBindingLayout();
     void CreateCloudTargets(View& view, VkExtent2D sceneExtent);
     void CreateCloudImage(LutImage& image, VkExtent2D extent, VkImageUsageFlags usage, const char* name);
-    // Writes every binding of a view's set 1: the atmosphere's images and buffers, and the view's own.
-    void WriteViewDescriptors(const View& view);
-    // Moves the view's images out of UNDEFINED and clears its aerial perspective volume.
-    void InitializeView(VkCommandBuffer commandBuffer, View& view);
-    void RecordClouds(VkCommandBuffer commandBuffer, View& view, VkDescriptorSet frameDescriptorSet, VulkanGpuTimer* timer);
-    void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout);
-    void Dispatch(VkCommandBuffer commandBuffer, size_t pipeline, uint32_t x, uint32_t y, uint32_t z) const;
+    // A view's set 1: the atmosphere's images and buffers, and the view's own.
+    void CreateViewBindingSet(View& view);
+    // Clears the view's aerial perspective volume the first time, inside a scope that brings it out of
+    // UNDEFINED.
+    void InitializeView(nvrhi::ICommandList* commandList, View& view);
+    void RecordClouds(
+        VkCommandBuffer commandBuffer,
+        View& view,
+        nvrhi::ICommandList* commandList,
+        nvrhi::IBindingSet* frameBindingSet,
+        VulkanGpuTimer* timer);
+    void CreatePipelines(nvrhi::IBindingLayout* frameSetLayout);
+    // One dispatch with set 0 and set 1; constants (kPushConstantBytes) for the cloud passes.
+    void Dispatch(
+        nvrhi::ICommandList* commandList,
+        size_t pipeline,
+        nvrhi::IBindingSet* frameBindingSet,
+        nvrhi::IBindingSet* set,
+        uint32_t x,
+        uint32_t y,
+        uint32_t z,
+        const uint32_t* constants = nullptr) const;
     void DestroyHandles();
     void DestroyPlumeStaging();
-    // The images shared by every view that set 0 samples.
-    std::array<VkImage, 6> FrameSampledImages() const;
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_sampler;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_setLayout;
     // The view whose set the shared passes in Record bind: its aerial perspective volume and clouds
     // are 1 x 1 placeholders that nothing reads.
     std::unique_ptr<View> m_placeholderView;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     // The transmittance, multiple scattering and sky-view LUTs; the aerial perspective volume is each
     // view's own, so its slot stays empty.
     std::array<LutImage, kLutCount> m_images{};
@@ -207,7 +216,7 @@ class VulkanAtmosphere
     bool m_cloudNoiseBuilt = false;
     // The phases of life the plume map was last built at.
     glm::vec4 m_cloudWeatherLife{0.0f};
-    std::array<VkPipeline, kPipelineCount> m_pipelines{};
+    std::array<nvrhi::ComputePipelineHandle, kPipelineCount> m_pipelines{};
     // The sky's radiance SH, nine vec4 written by atmosphere_irradiance.comp and read through set 0
     // binding 7. Shared by the frames in flight like the LUTs.
     VkBuffer m_irradianceBuffer = VK_NULL_HANDLE;

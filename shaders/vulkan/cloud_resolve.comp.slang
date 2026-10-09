@@ -13,7 +13,8 @@
 // Set 1 bindings 11-13 of the atmosphere's compute set.
 [[vk::binding(11, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> cloudSamples;
 [[vk::binding(12, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> cloudResolvedOut;
-[[vk::binding(13, 1)]] Sampler2D cloudHistory;
+[[vk::binding(13, 1)]] Texture2D cloudHistory;
+[[vk::binding(77, 1)]] SamplerState cloudHistorySampler;
 
 // A freshly marched pixel keeps this much of its own sample over its history, which averages the
 // march's jitter over the frames before TAA does.
@@ -45,11 +46,11 @@ float4 SampleHistory(float2 uv, float2 extent)
     float2 position3 = (center + 2.0) / extent;
     float2 position12 = (center + w2 / w12) / extent;
 
-    float4 result = cloudHistory.SampleLevel(float2(position12.x, position0.y), 0.0) * (w12.x * w0.y);
-    result += cloudHistory.SampleLevel(float2(position0.x, position12.y), 0.0) * (w0.x * w12.y);
-    result += cloudHistory.SampleLevel(position12, 0.0) * (w12.x * w12.y);
-    result += cloudHistory.SampleLevel(float2(position3.x, position12.y), 0.0) * (w3.x * w12.y);
-    result += cloudHistory.SampleLevel(float2(position12.x, position3.y), 0.0) * (w12.x * w3.y);
+    float4 result = cloudHistory.SampleLevel(cloudHistorySampler, float2(position12.x, position0.y), 0.0) * (w12.x * w0.y);
+    result += cloudHistory.SampleLevel(cloudHistorySampler, float2(position0.x, position12.y), 0.0) * (w0.x * w12.y);
+    result += cloudHistory.SampleLevel(cloudHistorySampler, position12, 0.0) * (w12.x * w12.y);
+    result += cloudHistory.SampleLevel(cloudHistorySampler, float2(position3.x, position12.y), 0.0) * (w3.x * w12.y);
+    result += cloudHistory.SampleLevel(cloudHistorySampler, float2(position12.x, position3.y), 0.0) * (w12.x * w3.y);
     float weight = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
     // The negative lobes can ring below zero at hard edges; the box below bounds the rest.
     return max(result / weight, float4(0.0));

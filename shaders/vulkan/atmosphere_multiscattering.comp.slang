@@ -5,8 +5,9 @@
 // One workgroup per texel; its 64 invocations each integrate one direction of an 8 x 8 grid that
 // is uniform over the sphere, then reduce.
 [[vk::binding(1, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> multiScatteringOut;
-[[vk::binding(4, 1)]] Sampler2D transmittanceLut;
-[[vk::binding(5, 1)]] Sampler2D multiScatteringLut;
+// Set 1 is VulkanAtmosphere's NVRHI binding set: each sampled LUT's sampler at its binding + 64.
+[[vk::binding(4, 1)]] Texture2D transmittanceLut;
+[[vk::binding(68, 1)]] SamplerState transmittanceLutSampler;
 
 groupshared float3 sharedMultiScatteringAs1[64];
 groupshared float3 sharedLuminance[64];
@@ -30,8 +31,12 @@ void main(uint3 groupThreadId : SV_GroupThreadID, uint3 groupId : SV_GroupID)
     float phi = acos(1.0 - 2.0 * j / 8.0);
     float3 direction = float3(cos(theta) * sin(phi), cos(phi), sin(theta) * sin(phi));
 
+    // This pass writes the multiple-scattering LUT and integrates without it (useMultiScattering
+    // false), so the integration gets the transmittance LUT in its place rather than a view of the
+    // image being written.
     ScatteringResult result = IntegrateScatteredLuminance(
-        origin, direction, sunDirection, float3(1.0), AtmosphereLut(transmittanceLut), AtmosphereLut(multiScatteringLut),
+        origin, direction, sunDirection, float3(1.0), AtmosphereLut(transmittanceLut, transmittanceLutSampler),
+        AtmosphereLut(transmittanceLut, transmittanceLutSampler),
         true, 20.0, 9.0e9, false, false);
     sharedMultiScatteringAs1[index] = result.multiScatteringAs1 / 64.0;
     sharedLuminance[index] = result.luminance / 64.0;

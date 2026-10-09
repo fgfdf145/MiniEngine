@@ -153,8 +153,9 @@ void UvToTransmittanceLutParams(float2 uv, out float viewHeight, out float cosZe
     cosZenith = clamp(cosZenith, -1.0, 1.0);
 }
 
-// A LUT the functions below sample at its top level: a combined image sampler, as the LUT passes'
-// own sets bind them, or a texture and its sampler, as the frame set does.
+// A LUT the functions below sample at its top level: a combined image sampler, as the path tracer's
+// own set binds the multiple scattering, or a texture and its sampler, as the frame set and the
+// atmosphere's set 1 do.
 interface IAtmosphereLut
 {
     float4 SampleTop(float2 uv);

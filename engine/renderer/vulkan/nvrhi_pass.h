@@ -18,6 +18,14 @@ struct NvrhiSharedTexture
     nvrhi::ResourceStates exitState = nvrhi::ResourceStates::Unknown;
 };
 
+// The same for a buffer.
+struct NvrhiSharedBuffer
+{
+    nvrhi::IBuffer* buffer = nullptr;
+    nvrhi::ResourceStates state = nvrhi::ResourceStates::Unknown;
+    nvrhi::ResourceStates exitState = nvrhi::ResourceStates::Unknown;
+};
+
 // One pass's NVRHI commands in the frame's command list, between passes that record native Vulkan
 // into the same command buffer (docs/design/2026-10-08-nvrhi-backend-design.md, stage 3). The list
 // runs without automatic barriers (VulkanCommandContext): native code moves images between layouts
@@ -29,7 +37,10 @@ struct NvrhiSharedTexture
 class NvrhiPassScope
 {
   public:
-    NvrhiPassScope(nvrhi::ICommandList* commandList, std::initializer_list<NvrhiSharedTexture> shared);
+    NvrhiPassScope(
+        nvrhi::ICommandList* commandList,
+        std::initializer_list<NvrhiSharedTexture> shared,
+        std::initializer_list<NvrhiSharedBuffer> sharedBuffers = {});
     ~NvrhiPassScope();
 
     NvrhiPassScope(const NvrhiPassScope&) = delete;
@@ -38,6 +49,7 @@ class NvrhiPassScope
   private:
     nvrhi::ICommandList* m_commandList = nullptr;
     std::vector<NvrhiSharedTexture> m_shared;
+    std::vector<NvrhiSharedBuffer> m_sharedBuffers;
 };
 
 // A SPIR-V shader from the shader folder (EnginePaths::ShaderRoot), entry point main. Throws when
