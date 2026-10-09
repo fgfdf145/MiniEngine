@@ -125,6 +125,9 @@ struct EditorSharedState
     // Whether the backend can path trace (hardware ray tracing), and what it says of path tracing.
     bool pathTracingAvailable = false;
     std::string pathTracingStatus;
+    // The offline mode's image: the share of its target samples it has, negative where it is not
+    // running (or has no target).
+    float pathTracingProgress = -1.0f;
 
     // DLSS resolves the viewport (see ResolveSceneExtents in the Vulkan renderer): it picks the render
     // size itself, so the viewport asks for every display pixel whatever the render scale says.

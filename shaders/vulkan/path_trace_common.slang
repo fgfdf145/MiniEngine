@@ -14,6 +14,9 @@
 #ifndef PATH_TRACE_SET
 #define PATH_TRACE_SET 1
 #endif
+#ifndef PT_HISTORY_FLOAT32
+#define PT_HISTORY_FLOAT32 0
+#endif
 
 // The G-buffer, nearest.
 [[vk::binding(0, PATH_TRACE_SET)]] Sampler2D ptDepth;
@@ -29,12 +32,20 @@
 // SceneReflections, which path tracing mode takes over).
 [[vk::binding(8, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptRawDiffuse;
 [[vk::binding(9, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptRawSpecular;
+// The offline mode's accumulation is full float (PT_HISTORY_FLOAT32, the _float32 variants of the
+// temporal and filter shaders): a half float's running mean stops moving after a few thousand frames.
+#if PT_HISTORY_FLOAT32
+[[vk::binding(10, PATH_TRACE_SET)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> ptHistoryDiffuse;
+[[vk::binding(11, PATH_TRACE_SET)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> ptHistorySpecular;
+#else
 [[vk::binding(10, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptHistoryDiffuse;
 [[vk::binding(11, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptHistorySpecular;
+#endif
 [[vk::binding(12, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptFinalDiffuse;
 [[vk::binding(13, PATH_TRACE_SET)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> ptFinalSpecular;
 // Last frame's accumulation and the surfaces it was made on (x view depth, yz the shading normal,
-// octahedral; x 0 where there was none), nearest; and this frame's surfaces.
+// octahedral; x 0 where there was none; w the specular path's hit distance for ray reconstruction),
+// nearest; and this frame's surfaces.
 [[vk::binding(14, PATH_TRACE_SET)]] Sampler2D ptPreviousDiffuse;
 [[vk::binding(15, PATH_TRACE_SET)]] Sampler2D ptPreviousSpecular;
 [[vk::binding(16, PATH_TRACE_SET)]] Sampler2D ptPreviousSurface;
@@ -70,6 +81,12 @@ struct PathTraceConstants
     // The G-buffer is this many times 2 larger each way than the grid traced (extent): the layer at
     // half resolution reads its top-left pixel of each 2 x 2 block (PtGBufferPixel).
     uint gbufferShift;
+    // Samples a pixel traces this frame (each its two paths, and the direct light where
+    // PT_FLAG_DIRECT_LIGHT says), averaged.
+    uint samplesPerPixel;
+    // The path vertices, from the first, that aim a shadow ray at an emissive triangle.
+    uint emissiveNeeBounces;
+    uint2 padding;
 };
 [[vk::push_constant]] ConstantBuffer<PathTraceConstants> pathTrace;
 
@@ -91,6 +108,14 @@ static const uint PT_FLAG_LIGHT_GRID = 64u;
 // DLSS ray reconstruction denoises the raw paths: the specular result's alpha is the specular path's
 // first hit distance (0 where there was no specular path), for its guides.
 static const uint PT_FLAG_HIT_DISTANCE = 128u;
+// The offline mode: the trace adds the direct light at the G-buffer's surface (the lighting pass then
+// adds none, its push constant debug.w = 3).
+static const uint PT_FLAG_DIRECT_LIGHT = 256u;
+// The offline image has all its samples: nothing is traced, and the temporal pass carries last
+// frame's accumulation over as it is.
+static const uint PT_FLAG_HOLD = 512u;
+// Path regularization (path_trace.comp.slang's PT_REGULARIZED_ROUGHNESS).
+static const uint PT_FLAG_REGULARIZE = 1024u;
 
 static const uint PT_IMAGE_RAW = 0u;
 static const uint PT_IMAGE_HISTORY = 1u;

@@ -28,7 +28,8 @@ struct LightingConstants
     // ray traced one (SceneShadow) instead of the cascades; z = 1 to trace the local lights' shadows
     // (the ray query variant only); w = 1 for path tracing mode: the path traced light (SceneGi and
     // SceneReflections, path_trace_pass.h) in place of every ambient term; w = 2 for ReSTIR PT: its light
-    // (scenePathTrace, restir_pt_pass.h) in place of all the shading.
+    // (scenePathTrace, restir_pt_pass.h) in place of all the shading; w = 3 for the path tracer's offline
+    // mode: the two targets in place of the ambient terms and the direct lights.
     float4 debug;
 };
 [[vk::push_constant]] ConstantBuffer<LightingConstants> lightingData;
@@ -178,7 +179,7 @@ FragmentOutput main(FragmentInput input)
         output.outColor = float4(0.0, 0.0, 0.0, 1.0);
         return output;
     }
-    if (lightingData.debug.w > 1.5)
+    if (lightingData.debug.w > 1.5 && lightingData.debug.w < 2.5)
     {
         // ReSTIR PT (restir_pt_spatial.comp) carries all the light the surface reflects, direct and
         // indirect; only the surface's own emission is added here. Its debug views (a = 1) show as they are.
@@ -232,6 +233,7 @@ FragmentOutput main(FragmentInput input)
     {
         // Path tracing mode: the two targets hold the demodulated traced light, pre-exposed.
         pathTracedIndirect = true;
+        pathTracedDirect = lightingData.debug.w > 2.5;
         pathTracedDiffuse = sceneGi.Sample(gbufferSampler, input.fragTexCoord).rgb * ubo.exposure.y;
         pathTracedSpecular = reflection.rgb;
         reflection = float4(0.0);

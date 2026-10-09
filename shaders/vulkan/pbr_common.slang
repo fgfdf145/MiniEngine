@@ -297,6 +297,11 @@ float AnisotropicSpecularTerm(float3 N, float3 V, float3 L, float3 H, float roug
     return D * Vis;
 }
 
+// The diffuse share of the last light EvaluateSceneLight (EvaluateBRDF, EvaluateAreaLight) gave, for
+// the path tracer's offline mode, which demodulates the direct light into its diffuse and specular
+// channels (path_trace.comp.slang). Shaders that never read it lose the stores at compile time.
+static float3 lastLightDiffuse = float3(0.0);
+
 // ---------------------------------------------------------------------------
 // Cook-Torrance BRDF contribution for one light sample
 // Returns outgoing radiance.
@@ -359,6 +364,7 @@ float3 EvaluateBRDF(
         diffuse = lerp(diffuse, transmitted, specularParams.transmissionFactor);
     }
     result += diffuse;
+    lastLightDiffuse = diffuse;
 
     float specularNdL = max(dot(N, specularL), 0.0);
     if (specularNdL > 0.0)
@@ -634,6 +640,7 @@ float3 EvaluateAreaLight(
     // Burley's diffuse, weighted by the Fresnel toward the centre, applied to the exact irradiance.
     float3 kD = DiffuseWeight(max(dot(V, centreH), 0.0), metallic, specularParams);
     float3 diffuse = kD * albedo * BurleyDiffuse(NdV, clamp(dot(N, toCentre), 1e-4, 1.0), max(dot(toCentre, centreH), 0.0), roughness) * irradiance;
+    lastLightDiffuse = diffuse;
 
     return diffuse + specular;
 }
@@ -924,6 +931,7 @@ float3 EvaluateSceneLight(
 {
     coatContribution = float3(0.0);
     sheenContribution = float3(0.0);
+    lastLightDiffuse = float3(0.0);
 
     if (int(light.directionAndType.w) == LIGHT_AREA)
     {
@@ -1205,6 +1213,9 @@ PathTraceLobes PathTraceLobesOf(
 static bool pathTracedIndirect = false;
 static float3 pathTracedDiffuse = float3(0.0);
 static float3 pathTracedSpecular = float3(0.0);
+// And in its offline mode the two carry the direct light as well: ShadeSurface adds no light of its
+// own, its emission aside.
+static bool pathTracedDirect = false;
 
 // Ambient plus every direct light for one resolved surface point; the caller adds emissive. The
 // arithmetic and its order are exactly what triangle.frag's main() ran inline before phase two,
@@ -1249,8 +1260,8 @@ float3 ShadeSurface(
     float3 energyCompensation = EvaluateBaseSpecularAlbedos(directEnvironmentBrdf, albedo, metallic, specular).total / max(uncompensated, float3(1e-4));
 
     // Directional lights reach everywhere, so they are never binned: every pixel loops over them.
-    // The shadow caster is always one of them.
-    uint directionalCount = ubo.lightCounts.x;
+    // The shadow caster is always one of them. The path tracer's offline mode traces them all itself.
+    uint directionalCount = pathTracedDirect ? 0u : ubo.lightCounts.x;
     int shadowLightIndex = int(ubo.shadowParams.x);
     float3 directAccum = float3(0.0);
     float3 coatAccum = float3(0.0);
@@ -1291,7 +1302,7 @@ float3 ShadeSurface(
     // Local lights: the pixel's cluster lists every one whose range reaches it, in ascending order,
     // and a light left out contributes exactly zero, so this sums the same values in the same order
     // as the brute-force loop below. That loop stays as the comparison path.
-    if (ubo.lightCounts.z != 0u && !shadeAllLocalLights)
+    if (!pathTracedDirect && ubo.lightCounts.z != 0u && !shadeAllLocalLights)
     {
         uint2 range = LightClusterRange(FindLightCluster(worldPosition));
         for (uint k = 0u; k < range.y; ++k)
@@ -1315,7 +1326,7 @@ float3 ShadeSurface(
             sheenAccum += sheenContribution;
         }
     }
-    else
+    else if (!pathTracedDirect)
     {
         for (uint i = directionalCount; i < ubo.lightCounts.y; ++i)
         {

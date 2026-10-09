@@ -36,6 +36,12 @@ class VulkanRayScene;
 // pass samples (set 0 bindings 30 and 31) and which rest in SHADER_READ_ONLY_OPTIMAL between frames.
 // It runs with either path tracer, ReSTIR PT included, and always denoises itself: ray reconstruction
 // never sees it. The raw pair is the two's shared scratch.
+//
+// The offline mode (docs/design/2026-10-09-path-tracing-offline-mode-design.md) runs the same
+// dispatches with several samples a pixel, the direct light traced at the G-buffer's surface, full
+// float accumulations (the _float32 temporal and filter variants), and once the image has its samples
+// no trace at all: the temporal pass carries the accumulations over (ScenePassFrameContext's
+// pathTraceHold).
 class VulkanPathTracePass : public IScenePass
 {
   public:
@@ -63,6 +69,11 @@ class VulkanPathTracePass : public IScenePass
 
     // Whether the device runs the trace at all (hardware ray tracing).
     bool IsSupported() const;
+    // The accumulations' format the next Prepare and PrepareLayer make: full float for the offline
+    // mode, half otherwise. True when images of the other format exist: the caller waits for the frames
+    // that may use them, calls ReleaseImages and points set 0 away from the layer's result.
+    bool SetFullPrecisionHistory(bool fullPrecision);
+    void ReleaseImages();
     // Makes the intermediate images at the targets' size when a frame is about to path trace and they
     // do not exist yet; true when it made them, and their history must be reset. Recording before
     // this for a path traced frame records nothing.
@@ -93,7 +104,9 @@ class VulkanPathTracePass : public IScenePass
         bool historyValid,
         float historyScale,
         bool hitDistance,
-        uint32_t gbufferShift) const;
+        uint32_t gbufferShift,
+        bool directLight,
+        bool hold) const;
     void CreateRaw(VkExtent2D extent);
     void WriteDescriptorSets(const SceneRenderTargets& targets);
     void WriteLayerDescriptorSets(const VulkanPathTraceLayerPass& layer);
@@ -122,8 +135,10 @@ class VulkanPathTracePass : public IScenePass
     VkPipeline m_tracePipelines[2][2] = {};
     VkPipeline m_tracePipeline = VK_NULL_HANDLE;
     const VulkanRayScene* m_rayScene = nullptr;
-    VkPipeline m_temporalPipeline = VK_NULL_HANDLE;
-    VkPipeline m_filterPipeline = VK_NULL_HANDLE;
+    // By full precision (the offline mode's float32 accumulations).
+    VkPipeline m_temporalPipelines[2] = {};
+    VkPipeline m_filterPipelines[2] = {};
+    bool m_fullPrecision = false;
     // The raw paths (0 diffuse, 1 specular), rewritten every frame; and the accumulations of the two
     // channels and the surfaces they were made on, ping-ponged.
     HistoryImagePair m_raw;

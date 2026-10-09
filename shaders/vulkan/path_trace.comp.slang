@@ -56,7 +56,8 @@ static const float PT_DIFFUSE_SPREAD = 0.3;
 // Path regularization (Kaplanyan and Dachsbacher 2013, in its simple form): a surface a path reaches
 // after a diffuse bounce is at least this rough, so a lamp's light reflected off a near-mirror onto a
 // diffuse surface (a caustic, which next event estimation finds only by luck) is a soft glow rather
-// than scattered speckles. Off with the firefly clamp, for the reference.
+// than scattered speckles. PT_FLAG_REGULARIZE: on with the firefly clamp in real time, by its own
+// switch in the offline mode; off for the reference.
 static const float PT_REGULARIZED_ROUGHNESS = 0.3;
 // The roughest a lobe may be for its path to count as a sharp reflection.
 static const float PT_SHARP_ROUGHNESS = 0.3;
@@ -66,10 +67,6 @@ static const float PT_AIR_MIN_KM = 0.2;
 // Emissive samples whose light would add less than this (pre-exposed luminance) trace their shadow
 // ray by Russian roulette (EmissiveShadowWeight).
 static const float PT_SHADOW_ROULETTE = 1.0 / 64.0;
-// The path vertices next event estimation looks for an emissive triangle at, from the first: past
-// them the paths alone find emissive surfaces (all their light, no MIS), which costs a shadow ray less
-// a vertex where it matters least.
-static const uint PT_EMISSIVE_NEE_BOUNCES = 1u;
 // The hit distance a ray that leaves the scene reports to ray reconstruction: far enough that its
 // reflection moves with the camera's rotation alone.
 static const float PT_SKY_HIT_DISTANCE = 10000.0;
@@ -380,7 +377,7 @@ TransmissionLobe TransmissionLobeOf(RayHit hit, bool transmissive, bool doubleSi
 // The roughness floor after a diffuse bounce: none for the reference.
 float Regularization()
 {
-    return pathTrace.fireflyClamp > 0.0 ? PT_REGULARIZED_ROUGHNESS : 0.0;
+    return (pathTrace.flags & PT_FLAG_REGULARIZE) != 0u ? PT_REGULARIZED_ROUGHNESS : 0.0;
 }
 
 // A vertex's contribution with its pre-exposed luminance held to the firefly clamp.
@@ -480,23 +477,31 @@ void RayHitLayersOf(RayHitSurface surface, out CoatParams coat, out SheenParams 
 
 // The light one scene light sends toward V off a path's surface, unshadowed, its layers composed as
 // ShadeSurface composes them: the base under the sheen's scaling, plus the sheen; all of it under
-// what the coat's Fresnel lets through, plus the coat.
+// what the coat's Fresnel lets through, plus the coat. diffuse and sheenLight are the shares of it
+// that came through the base's diffuse lobe and the sheen's (the offline mode's demodulation).
 float3 LayeredLight(
     SceneLightData light, float3 position, float3 N, float3 V, float3 albedo, float metallic, float roughness, float3 energyCompensation,
-    CoatParams coat, SheenParams sheen, SpecularParams specular, float sheenScaling, float coatTransmittance)
+    CoatParams coat, SheenParams sheen, AnisotropyParams anisotropy, SpecularParams specular, float sheenScaling, float coatTransmittance,
+    out float3 diffuse, out float3 sheenLight)
 {
     float3 coatContribution;
     float3 sheenContribution;
     float3 result = EvaluateSceneLight(
         light, position, N, V, albedo, metallic, roughness, energyCompensation, coat, coatContribution, sheen, sheenContribution,
-        NoAnisotropy(), specular);
+        anisotropy, specular);
+    diffuse = lastLightDiffuse;
+    sheenLight = float3(0.0);
     if (HasSheen(sheen))
     {
         result = result * sheenScaling + sheenContribution;
+        diffuse *= sheenScaling;
+        sheenLight = sheenContribution;
     }
     if (coat.factor > 0.0)
     {
         result = result * coatTransmittance + coat.factor * coatContribution;
+        diffuse *= coatTransmittance;
+        sheenLight *= coatTransmittance;
     }
     return result;
 }
@@ -508,19 +513,26 @@ float3 LayeredLight(
 // alone): from the light grid's cell when the point is in it (light_grid_common.slang: lights whose
 // range reaches the cell, a uniform subset of them when there are more than it holds, each then
 // counting for all of them), else from the cluster grid's list when the point is in the view
-// frustum, which names only lights whose range reaches it, else from every local light.
+// frustum, which names only lights whose range reaches it, else from every local light. diffuse and
+// sheenLight are the shares of the result LayeredLight says.
 float3 DirectLight(
     float3 position, float3 N, float3 faceNormal, float3 V, float3 albedo, float metallic, float roughness, float3 energyCompensation,
-    CoatParams coat, SheenParams sheen, SpecularParams specular, float sheenScaling, float coatTransmittance)
+    CoatParams coat, SheenParams sheen, AnisotropyParams anisotropy, SpecularParams specular, float sheenScaling, float coatTransmittance,
+    out float3 diffuse, out float3 sheenLight)
 {
     float3 result = float3(0.0);
+    diffuse = float3(0.0);
+    sheenLight = float3(0.0);
     int casterIndex = int(ubo.shadowParams.x);
     float3 origin = OffsetRayOrigin(position, faceNormal);
     for (uint i = 0u; i < ubo.lightCounts.x; ++i)
     {
         SceneLightData light = sceneLights[i];
+        float3 lightDiffuse;
+        float3 lightSheen;
         float3 contribution = LayeredLight(
-            light, position, N, V, albedo, metallic, roughness, energyCompensation, coat, sheen, specular, sheenScaling, coatTransmittance);
+            light, position, N, V, albedo, metallic, roughness, energyCompensation, coat, sheen, anisotropy, specular, sheenScaling,
+            coatTransmittance, lightDiffuse, lightSheen);
         if (any(contribution > float3(0.0)))
         {
             float3 toLight = normalize(-light.directionAndType.xyz);
@@ -530,6 +542,8 @@ float3 DirectLight(
                 visibility *= CloudShadow(position);
             }
             result += contribution * visibility;
+            diffuse += lightDiffuse * visibility;
+            sheenLight += lightSheen * visibility;
         }
     }
 
@@ -592,14 +606,17 @@ float3 DirectLight(
     {
         return result;
     }
+    // Without a coat or a sheen LayeredLight is EvaluateSceneLight alone.
     SceneLightData chosen = sceneLights[chosenLight];
-    float3 chosenContribution = coat.factor > 0.0 || HasSheen(sheen)
-                                  ? LayeredLight(chosen, position, N, V, albedo, metallic, roughness, energyCompensation, coat, sheen, specular,
-                                                 sheenScaling, coatTransmittance)
-                                  : EvaluateSceneLight(chosen, position, N, V, albedo, metallic, roughness, energyCompensation, NoCoat(),
-                                                       coatContribution, NoSheen(), sheenContribution, NoAnisotropy(), specular);
-    float visibility = LocalVisibility(chosen, position, faceNormal);
-    return result + chosenContribution / chosenTarget * (weightSum / float(pathTrace.lightCandidates)) * visibility;
+    float3 chosenDiffuse;
+    float3 chosenSheen;
+    float3 chosenContribution = LayeredLight(
+        chosen, position, N, V, albedo, metallic, roughness, energyCompensation, coat, sheen, anisotropy, specular, sheenScaling,
+        coatTransmittance, chosenDiffuse, chosenSheen);
+    float weight = (weightSum / float(pathTrace.lightCandidates)) * LocalVisibility(chosen, position, faceNormal) / chosenTarget;
+    diffuse += chosenDiffuse * weight;
+    sheenLight += chosenSheen * weight;
+    return result + chosenContribution * weight;
 }
 
 // The light arriving at a G-buffer surface from direction, through the scene, physical units: the
@@ -741,7 +758,7 @@ float3 TracePath(float3 origin, float3 direction, float coneWidth, float coneSpr
             float3 light;
             float density;
             float3 target;
-            if (bounce <= PT_EMISSIVE_NEE_BOUNCES && EmissiveSample(surface.position, surface.faceNormal, coneWidth, L, light, density, target))
+            if (bounce <= pathTrace.emissiveNeeBounces && EmissiveSample(surface.position, surface.faceNormal, coneWidth, L, light, density, target))
             {
                 float pathDensity = bounce < pathTrace.maxBounces
                                         ? PathVertexDensity(N, coat.normal, V, L, material.roughness, coat.roughness, lobeWeights)
@@ -753,9 +770,12 @@ float3 TracePath(float3 origin, float3 direction, float coneWidth, float coneSpr
                                                       PathTraceLuminance(emissiveLight * throughput));
             }
         }
+        float3 directDiffuse;
+        float3 directSheen;
         float3 emitted = emission + emissiveLight +
                        DirectLight(surface.position, N, surface.faceNormal, V, material.albedo, material.metallic, material.roughness,
-                                   lobes.energyCompensation, coat, sheen, specular, sheenScaling, coatTransmittance);
+                                   lobes.energyCompensation, coat, sheen, NoAnisotropy(), specular, sheenScaling, coatTransmittance,
+                                   directDiffuse, directSheen);
         emitted *= throughput;
         radiance += clamped ? ClampContribution(emitted) : emitted;
         if (bounce == pathTrace.maxBounces || lobeTotal <= 0.0)
@@ -825,7 +845,7 @@ float3 TracePath(float3 origin, float3 direction, float coneWidth, float coneSpr
             break;
         }
         previousDensity = 0.0;
-        if (lobePick >= transmittedWeight && EmissiveLightsOn() && bounce <= PT_EMISSIVE_NEE_BOUNCES)
+        if (lobePick >= transmittedWeight && EmissiveLightsOn() && bounce <= pathTrace.emissiveNeeBounces)
         {
             previousDensity = PathVertexDensity(N, coat.normal, V, nextDirection, material.roughness, coat.roughness, lobeWeights);
         }
@@ -843,6 +863,22 @@ float3 TracePath(float3 origin, float3 direction, float coneWidth, float coneSpr
         direction = nextDirection;
     }
     return radiance;
+}
+
+// The trace's store: the raw pair or the result, never the accumulation (StorePathTracePair would
+// name it, whose format the offline mode changes).
+void StoreTraced(bool raw, int2 pixel, float4 diffuse, float4 specular)
+{
+    if (raw)
+    {
+        ptRawDiffuse[pixel] = diffuse;
+        ptRawSpecular[pixel] = specular;
+    }
+    else
+    {
+        ptFinalDiffuse[pixel] = diffuse;
+        ptFinalSpecular[pixel] = specular;
+    }
 }
 
 float4 Sanitize(float3 value)
@@ -863,12 +899,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     {
         return;
     }
-    uint target = (pathTrace.flags & (PT_FLAG_ACCUMULATE | PT_FLAG_DENOISE)) != 0u ? PT_IMAGE_RAW : PT_IMAGE_FINAL;
+    bool raw = (pathTrace.flags & (PT_FLAG_ACCUMULATE | PT_FLAG_DENOISE)) != 0u;
     int2 gbufferPixel = PtGBufferPixel(pixel);
     float depth = ptDepth.Load(int3(gbufferPixel, 0)).r;
-    if (!PathTraceSurfaceShaded(pixel, depth) || pathTrace.maxBounces == 0u)
+    if (!PathTraceSurfaceShaded(pixel, depth) || (pathTrace.maxBounces == 0u && (pathTrace.flags & PT_FLAG_DIRECT_LIGHT) == 0u))
     {
-        StorePathTracePair(target, pixel, float4(0.0, 0.0, 0.0, 1.0), float4(0.0, 0.0, 0.0, 1.0));
+        StoreTraced(raw, pixel, float4(0.0, 0.0, 0.0, 1.0), float4(0.0, 0.0, 0.0, 1.0));
         return;
     }
     g_rngState = HashUint(uint(pixel.x) + uint(pixel.y) * 65536u) ^ HashUint(pathTrace.frameIndex * 0x9e3779b9u + 0x632be5abu);
@@ -885,13 +921,22 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     uint flags = DecodeShadingFlags(surfaceData.a);
     CoatParams coat = NoCoat();
     SheenParams sheen = NoSheen();
+    AnisotropyParams anisotropy = NoAnisotropy();
     SpecularParams specular = NoSpecularOverride();
-    if ((flags & SHADING_FLAG_CLEARCOAT) != 0u)
+    if ((flags & (SHADING_FLAG_CLEARCOAT | SHADING_FLAG_ANISOTROPY)) != 0u)
     {
         float4 coatData = ptCoat.Load(int3(gbufferPixel, 0));
-        coat.factor = coatData.r;
-        coat.roughness = clamp(coatData.g, 0.04, 1.0);
-        coat.normal = (flags & SHADING_FLAG_COAT_NORMAL) != 0u ? DecodeNormalOctahedral(ptVelocity.Load(int3(gbufferPixel, 0)).ba) : geoNormal;
+        if ((flags & SHADING_FLAG_CLEARCOAT) != 0u)
+        {
+            coat.factor = coatData.r;
+            coat.roughness = clamp(coatData.g, 0.04, 1.0);
+            coat.normal = (flags & SHADING_FLAG_COAT_NORMAL) != 0u ? DecodeNormalOctahedral(ptVelocity.Load(int3(gbufferPixel, 0)).ba) : geoNormal;
+        }
+        if ((flags & SHADING_FLAG_ANISOTROPY) != 0u)
+        {
+            anisotropy.tangent = DecodeAnisotropyTangent(N, coatData.b);
+            anisotropy.strength = coatData.a;
+        }
     }
     if ((flags & SHADING_FLAG_SHEEN) != 0u)
     {
@@ -910,125 +955,171 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // Off the surface by more than the depth buffer's reconstruction error, which grows with distance.
     float distanceToCamera = length(ubo.cameraWorldPosition.xyz - worldPosition);
-    float3 origin = OffsetRayOrigin(worldPosition + geoNormal * (0.002 + 0.0004 * distanceToCamera), geoNormal);
+    float3 lifted = worldPosition + geoNormal * (0.002 + 0.0004 * distanceToCamera);
+    float3 origin = OffsetRayOrigin(lifted, geoNormal);
     // A pixel's footprint where the paths leave, and the angle it widens by.
     float pixelAngle = 2.0 / (abs(ubo.proj[1][1]) * pathTrace.extent.y);
     float coneWidth = distanceToCamera * pixelAngle;
 
-    // The two paths' first directions and weights, then one loop that traces both: TracePath is
-    // compiled once, which keeps the shader's registers, and so its occupancy, those of one path.
-    // The diffuse path is cosine-weighted, so the lobe's weight is its albedo, which demodulates to 1.
-    // The specular path leaves through the base's lobe or the coat's, by their albedos.
-    float3 directions[2];
-    float3 weights[2] = {float3(0.0), float3(0.0)};
-    float spreads[2] = {pixelAngle + PT_DIFFUSE_SPREAD, pixelAngle};
-    bool clampFirst[2] = {true, false};
-    bool sharp[2] = {false, false};
-    float roughnessFloors[2] = {Regularization(), 0.0};
-    float densities[2] = {0.0, 0.0};
-    directions[0] = CosineSampleHemisphere(N, float2(Random(), Random()));
-    bool hasDiffuse = PathTraceLuminance(lobes.diffuse) > 0.0;
-    if (hasDiffuse && dot(directions[0], geoNormal) > 0.0)
-    {
-        weights[0] = float3(1.0);
-        densities[0] = max(dot(N, directions[0]), 0.0) / PI;
-    }
     float3 specularAlbedo = lobes.specular + lobes.coat;
     float baseWeight = PathTraceLuminance(lobes.specular);
     float coatWeight = PathTraceLuminance(lobes.coat);
     float coatProbability = baseWeight + coatWeight > 0.0 ? coatWeight / (baseWeight + coatWeight) : 0.0;
-    directions[1] = N;
-    if (baseWeight + coatWeight > 0.0)
-    {
-        bool throughCoat = Random() < coatProbability;
-        float3 lobeNormal = throughCoat ? coat.normal : N;
-        float lobeRoughness = throughCoat ? coat.roughness : roughness;
-        float3 H = SampleGgxVisibleNormal(lobeNormal, V, lobeRoughness, float2(Random(), Random()));
-        directions[1] = reflect(-V, H);
-        float NdV = max(dot(lobeNormal, V), 1e-4);
-        float NdL = dot(lobeNormal, directions[1]);
-        if (NdL > 0.0 && dot(directions[1], geoNormal) > 0.0)
-        {
-            float VdH = max(dot(V, H), 0.0);
-            float alpha = lobeRoughness * lobeRoughness;
-            float3 weight;
-            if (throughCoat)
-            {
-                weight = float3(coat.factor * FresnelSchlick(VdH, COAT_F0).x) / coatProbability;
-            }
-            else
-            {
-                float3 F = lerp(FresnelSchlick(VdH, specular.dielectricF0, specular.dielectricF90), FresnelSchlick(VdH, albedo), metallic);
-                weight = F * lobes.energyCompensation * lobes.baseScale / (1.0 - coatProbability);
-            }
-            weights[1] = weight * SmithG2OverG1(NdV, NdL, alpha) / max(specularAlbedo, float3(1e-3));
-            spreads[1] += alpha;
-            clampFirst[1] = lobeRoughness > 0.25;
-            sharp[1] = lobeRoughness < PT_SHARP_ROUGHNESS;
-            densities[1] = (1.0 - coatProbability) * GgxReflectionDensity(N, V, directions[1], roughness) +
-                           (coat.factor > 0.0 ? coatProbability * GgxReflectionDensity(coat.normal, V, directions[1], coat.roughness) : 0.0);
-        }
-    }
+    bool hasDiffuse = PathTraceLuminance(lobes.diffuse) > 0.0;
+    // The offline mode's direct light (PT_FLAG_DIRECT_LIGHT) goes into the two channels as the lighting
+    // pass would have shaded it, the sheen's share into the channel whose lobe is the brighter.
+    bool directLight = (pathTrace.flags & PT_FLAG_DIRECT_LIGHT) != 0u;
+    float sheenScaling = HasSheen(sheen) ? 1.0 - max(sheen.color.r, max(sheen.color.g, sheen.color.b)) * SampleSheenAlbedo(sheen.roughness, max(dot(N, V), 1e-4)) : 1.0;
+    float coatTransmittance = 1.0 - coat.factor * FresnelSchlick(max(dot(coat.normal, V), 0.0), COAT_F0).x;
+    bool sheenIntoDiffuse = PathTraceLuminance(lobes.diffuse) >= PathTraceLuminance(specularAlbedo);
 
-    // Next event estimation for the emissive triangles here, as the lighting pass does it for the
-    // analytic lights: one point, one shadow ray, into both channels, each weighed against its own
-    // path's direction (MIS) and demodulated as that path is (the diffuse one a Lambert lobe, by its
-    // cosine-weighted directions).
-    float3 emissiveDiffuse = float3(0.0);
-    float3 emissiveSpecular = float3(0.0);
-    if (EmissiveLightsOn())
-    {
-        float3 L;
-        float3 incoming;
-        float density;
-        float3 target;
-        if (EmissiveSample(origin, geoNormal, coneWidth, L, incoming, density, target))
-        {
-            float NdL = dot(N, L);
-            if (hasDiffuse && NdL > 0.0)
-            {
-                emissiveDiffuse = ClampContribution(incoming * (NdL / PI) * MisWeight(density, NdL / PI));
-            }
-            if (baseWeight + coatWeight > 0.0)
-            {
-                float3 H = normalize(V + L);
-                float VdH = max(dot(V, H), 0.0);
-                float3 F = lerp(FresnelSchlick(VdH, specular.dielectricF0, specular.dielectricF90), FresnelSchlick(VdH, albedo), metallic);
-                float3 reflected = NdL > 0.0 ? IsotropicSpecularTerm(N, V, L, H, roughness) * NdL * F * lobes.energyCompensation * lobes.baseScale : float3(0.0);
-                float pathDensity = (1.0 - coatProbability) * GgxReflectionDensity(N, V, L, roughness);
-                if (coat.factor > 0.0)
-                {
-                    reflected += coat.factor * EvaluateCoatSpecular(coat, V, L, 1.0, float3(1.0));
-                    pathDensity += coatProbability * GgxReflectionDensity(coat.normal, V, L, coat.roughness);
-                }
-                emissiveSpecular = incoming * reflected / max(specularAlbedo, float3(1e-3)) * MisWeight(density, pathDensity);
-                if (min(roughness, coat.factor > 0.0 ? coat.roughness : 1.0) > 0.25)
-                {
-                    emissiveSpecular = ClampContribution(emissiveSpecular);
-                }
-            }
-            // The lobes' albedos bring the demodulated light back to what it adds to the pixel.
-            float shadow = EmissiveShadowWeight(origin, geoNormal, target,
-                                                max(PathTraceLuminance(emissiveDiffuse * lobes.diffuse), PathTraceLuminance(emissiveSpecular * specularAlbedo)));
-            emissiveDiffuse *= shadow;
-            emissiveSpecular *= shadow;
-        }
-    }
-
-    float3 light[2] = {float3(0.0), float3(0.0)};
+    // samplesPerPixel samples, each two paths and the next event estimation at the surface, averaged.
+    // One loop over every path of every sample traces them: TracePath is compiled once, which keeps
+    // the shader's registers, and so its occupancy, those of one path.
+    uint samples = max(pathTrace.samplesPerPixel, 1u);
+    float3 diffuse = float3(0.0);
+    float3 specularLight = float3(0.0);
     float specularHitDistance = 0.0;
-    for (int path = 0; path < 2; ++path)
+    bool hitDistanceFound = false;
+    [loop]
+    for (uint sample = 0u; sample < samples; ++sample)
     {
-        if (any(weights[path] > float3(0.0)))
+        // The two paths' first directions and weights. The diffuse path is cosine-weighted, so the
+        // lobe's weight is its albedo, which demodulates to 1. The specular path leaves through the
+        // base's lobe or the coat's, by their albedos.
+        float3 directions[2];
+        float3 weights[2] = {float3(0.0), float3(0.0)};
+        float spreads[2] = {pixelAngle + PT_DIFFUSE_SPREAD, pixelAngle};
+        bool clampFirst[2] = {true, false};
+        bool sharp[2] = {false, false};
+        float roughnessFloors[2] = {Regularization(), 0.0};
+        float densities[2] = {0.0, 0.0};
+        directions[0] = CosineSampleHemisphere(N, float2(Random(), Random()));
+        if (hasDiffuse && dot(directions[0], geoNormal) > 0.0)
         {
-            light[path] = TracePath(origin, directions[path], coneWidth, spreads[path], clampFirst[path], roughnessFloors[path], sharp[path],
-                                    densities[path]) *
-                          weights[path];
-            specularHitDistance = path == 1 ? g_firstHitDistance : specularHitDistance;
+            weights[0] = float3(1.0);
+            densities[0] = max(dot(N, directions[0]), 0.0) / PI;
         }
+        directions[1] = N;
+        if (baseWeight + coatWeight > 0.0)
+        {
+            bool throughCoat = Random() < coatProbability;
+            float3 lobeNormal = throughCoat ? coat.normal : N;
+            float lobeRoughness = throughCoat ? coat.roughness : roughness;
+            float3 H = SampleGgxVisibleNormal(lobeNormal, V, lobeRoughness, float2(Random(), Random()));
+            directions[1] = reflect(-V, H);
+            float NdV = max(dot(lobeNormal, V), 1e-4);
+            float NdL = dot(lobeNormal, directions[1]);
+            if (NdL > 0.0 && dot(directions[1], geoNormal) > 0.0)
+            {
+                float VdH = max(dot(V, H), 0.0);
+                float alpha = lobeRoughness * lobeRoughness;
+                float3 weight;
+                if (throughCoat)
+                {
+                    weight = float3(coat.factor * FresnelSchlick(VdH, COAT_F0).x) / coatProbability;
+                }
+                else
+                {
+                    float3 F = lerp(FresnelSchlick(VdH, specular.dielectricF0, specular.dielectricF90), FresnelSchlick(VdH, albedo), metallic);
+                    weight = F * lobes.energyCompensation * lobes.baseScale / (1.0 - coatProbability);
+                }
+                weights[1] = weight * SmithG2OverG1(NdV, NdL, alpha) / max(specularAlbedo, float3(1e-3));
+                spreads[1] += alpha;
+                clampFirst[1] = lobeRoughness > 0.25;
+                sharp[1] = lobeRoughness < PT_SHARP_ROUGHNESS;
+                densities[1] = (1.0 - coatProbability) * GgxReflectionDensity(N, V, directions[1], roughness) +
+                               (coat.factor > 0.0 ? coatProbability * GgxReflectionDensity(coat.normal, V, directions[1], coat.roughness) : 0.0);
+            }
+        }
+
+        // Next event estimation for the emissive triangles here, as the lighting pass does it for the
+        // analytic lights: one point, one shadow ray, into both channels, each weighed against its own
+        // path's direction (MIS) and demodulated as that path is (the diffuse one a Lambert lobe, by its
+        // cosine-weighted directions).
+        float3 emissiveDiffuse = float3(0.0);
+        float3 emissiveSpecular = float3(0.0);
+        if (EmissiveLightsOn())
+        {
+            float3 L;
+            float3 incoming;
+            float density;
+            float3 target;
+            if (EmissiveSample(origin, geoNormal, coneWidth, L, incoming, density, target))
+            {
+                float NdL = dot(N, L);
+                if (hasDiffuse && NdL > 0.0)
+                {
+                    emissiveDiffuse = ClampContribution(incoming * (NdL / PI) * MisWeight(density, NdL / PI));
+                }
+                if (baseWeight + coatWeight > 0.0)
+                {
+                    float3 H = normalize(V + L);
+                    float VdH = max(dot(V, H), 0.0);
+                    float3 F = lerp(FresnelSchlick(VdH, specular.dielectricF0, specular.dielectricF90), FresnelSchlick(VdH, albedo), metallic);
+                    float3 reflected = NdL > 0.0 ? IsotropicSpecularTerm(N, V, L, H, roughness) * NdL * F * lobes.energyCompensation * lobes.baseScale : float3(0.0);
+                    float pathDensity = (1.0 - coatProbability) * GgxReflectionDensity(N, V, L, roughness);
+                    if (coat.factor > 0.0)
+                    {
+                        reflected += coat.factor * EvaluateCoatSpecular(coat, V, L, 1.0, float3(1.0));
+                        pathDensity += coatProbability * GgxReflectionDensity(coat.normal, V, L, coat.roughness);
+                    }
+                    emissiveSpecular = incoming * reflected / max(specularAlbedo, float3(1e-3)) * MisWeight(density, pathDensity);
+                    if (min(roughness, coat.factor > 0.0 ? coat.roughness : 1.0) > 0.25)
+                    {
+                        emissiveSpecular = ClampContribution(emissiveSpecular);
+                    }
+                }
+                // The lobes' albedos bring the demodulated light back to what it adds to the pixel.
+                float shadow = EmissiveShadowWeight(origin, geoNormal, target,
+                                                    max(PathTraceLuminance(emissiveDiffuse * lobes.diffuse), PathTraceLuminance(emissiveSpecular * specularAlbedo)));
+                emissiveDiffuse *= shadow;
+                emissiveSpecular *= shadow;
+            }
+        }
+
+        // The analytic lights' direct light (offline mode), demodulated by the lobes the lighting pass
+        // multiplies the channels by: exact however the light divides between them.
+        if (directLight)
+        {
+            float3 directDiffuse;
+            float3 directSheen;
+            float3 direct = DirectLight(lifted, N, geoNormal, V, albedo, metallic, roughness, lobes.energyCompensation, coat, sheen, anisotropy,
+                                        specular, sheenScaling, coatTransmittance, directDiffuse, directSheen);
+            float3 directSpecular = max(direct - directDiffuse - directSheen, float3(0.0));
+            directDiffuse += sheenIntoDiffuse ? directSheen : float3(0.0);
+            directSpecular += sheenIntoDiffuse ? float3(0.0) : directSheen;
+            emissiveDiffuse += directDiffuse / max(lobes.diffuse, float3(1e-4));
+            emissiveSpecular += directSpecular / max(specularAlbedo, float3(1e-4));
+        }
+
+        for (int path = 0; path < 2; ++path)
+        {
+            if (any(weights[path] > float3(0.0)))
+            {
+                float3 light = TracePath(origin, directions[path], coneWidth, spreads[path], clampFirst[path], roughnessFloors[path], sharp[path],
+                                         densities[path]) *
+                               weights[path];
+                if (path == 0)
+                {
+                    diffuse += light;
+                }
+                else
+                {
+                    specularLight += light;
+                    if (!hitDistanceFound)
+                    {
+                        specularHitDistance = g_firstHitDistance;
+                        hitDistanceFound = true;
+                    }
+                }
+            }
+        }
+        diffuse += emissiveDiffuse;
+        specularLight += emissiveSpecular;
     }
-    float3 diffuse = light[0] + emissiveDiffuse;
-    float3 specularLight = light[1] + emissiveSpecular;
+    diffuse /= float(samples);
+    specularLight /= float(samples);
 
     // Ray reconstruction's specular hit distance rides in the specular channel's alpha (dlss_rr_guides.comp
     // reads it), which nothing else reads of the result.
@@ -1037,5 +1128,5 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     {
         specularResult.a = min(specularHitDistance, 65000.0);
     }
-    StorePathTracePair(target, pixel, Sanitize(diffuse * ubo.exposure.x), specularResult);
+    StoreTraced(raw, pixel, Sanitize(diffuse * ubo.exposure.x), specularResult);
 }

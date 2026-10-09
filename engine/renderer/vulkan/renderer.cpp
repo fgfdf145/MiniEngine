@@ -718,7 +718,7 @@ void VulkanRenderer::DrawFrame()
     State().editorUi.SetSelectionOutlineTexture(kSelectionOutlineTextureId);
     // Fixed once NGX has started, before the render thread exists.
     State().editorUi.SetDlssStatus(m_dlss->IsAvailable(), m_dlss->IsRayReconstructionAvailable(), m_dlss->Status());
-    State().editorUi.SetPathTracingStatus(m_rayScene->HasHardwareRayTracing(), m_pathTracingStatusShown);
+    State().editorUi.SetPathTracingStatus(m_rayScene->HasHardwareRayTracing(), m_pathTracingStatusShown, m_pathTracingProgressShown);
     State().editorUi.SetGpuMemoryStatus(FormatGpuMemoryStatus(State().gpuMemory, State().worldStreaming));
     State().editorUi.SetGpuMemory(State().gpuMemory);
     const EditorUiFrameResult uiFrame = DrawEditorUi(kViewportTextureId, viewportExtent);
@@ -825,6 +825,7 @@ void VulkanRenderer::ApplyRenderFeedback()
     m_minimapAvailable = feedback.minimapLoaded;
     State().gpuMemory = feedback.gpuMemory;
     m_pathTracingStatusShown = feedback.pathTracingStatus;
+    m_pathTracingProgressShown = feedback.pathTracingProgress;
     if (feedback.outOfMemory.value_or(false))
     {
         // World streaming gives memory back before it asks for more.
@@ -1663,6 +1664,8 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     // has: DLSS (it resolves with the engine's TAA instead), path tracing (it rasterises with the ray
     // traced effects), and the G-buffer debug views.
     RenderDebugSettings renderDebug = packet.renderDebug;
+    // The offline mode's switches stand in for the path tracer's own (EffectivePathTracing).
+    renderDebug.pathTracing = EffectivePathTracing(renderDebug.pathTracing);
     RenderCapabilities capabilities = shared.capabilities;
     if (!viewport)
     {
@@ -1771,6 +1774,10 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     lightUpload.clustered = clusteredLighting;
     lightUpload.shadowTiles = shared.gpuShadowTiles;
 
+    if (viewport && features.plainPathTracing)
+    {
+        SyncPathTraceHistoryPrecision(view, features.offlinePathTracing);
+    }
     // The forward-shaded surfaces path traced as well (the viewport's path tracing only), from images
     // made before the camera block says so.
     const bool pathTraceLayer = viewport && features.pathTracing && renderDebug.pathTracing.forwardSurfaces &&
@@ -1970,6 +1977,7 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.pathTracing.enabled = features.pathTracing;
     frame.localLightCount = static_cast<uint32_t>(shared.selectedLights.size()) - shared.directionalLightCount;
     frame.pathTracing.restir = features.restirPt;
+    frame.pathTracing.offline.enabled = features.offlinePathTracing;
     // The layer accumulates and denoises by the settings whatever DLSS does: ray reconstruction never
     // sees it.
     frame.pathTraceLayer = pathTraceLayer;
@@ -2049,10 +2057,11 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
         frame.rayTracing.denoise = frame.rayTracing.denoise && features.rayTracedShadowDenoise;
         frame.pathTracing.accumulate = frame.pathTracing.accumulate && features.pathTraceAccumulate;
         frame.pathTracing.denoise = frame.pathTracing.denoise && features.pathTraceDenoise;
-        // The raw paths' reflections reproject by their hit distance (its guides).
+        // The raw paths' reflections reproject by their hit distance (its guides); so do the offline
+        // mode's accumulated ones, which keep the latest hit distance beside them.
         frame.pathTraceHitDistance = frame.dlssRayReconstruction && frame.pathTracing.reflectionGuides && frame.pathTracing.enabled &&
                                      !frame.pathTracing.restir &&
-                                     !frame.pathTracing.accumulate && !frame.pathTracing.denoise;
+                                     (frame.pathTracing.offline.enabled || (!frame.pathTracing.accumulate && !frame.pathTracing.denoise));
         m_dlssResetPending = false;
     }
     // The traced shadow accumulates only while its filters run.
@@ -2105,6 +2114,7 @@ void VulkanRenderer::PublishFeedback(const RenderFramePacket& frame)
     }
     m_feedback.gpuMemory = m_gpuMemory;
     m_feedback.pathTracingStatus = m_pathTracingStatus;
+    m_feedback.pathTracingProgress = m_pathTracingProgress;
 }
 
 GpuMemoryReport VulkanRenderer::MeasureGpuMemory(const RenderFramePacket& frame) const
@@ -2761,6 +2771,26 @@ void VulkanRenderer::PathTraceLayerBindings(
     depth = placeholder;
     diffuse = placeholder;
     specular = placeholder;
+}
+
+void VulkanRenderer::SyncPathTraceHistoryPrecision(VulkanSceneView& view, bool fullPrecision)
+{
+    if (view.pathTracePass == nullptr || !view.pathTracePass->SetFullPrecisionHistory(fullPrecision))
+    {
+        return;
+    }
+    // The frames in flight still use the old images; set 0 stops naming the layer's result, which
+    // the next path traced frame makes again (and points set 0 back at).
+    m_commandContext->WaitForAllFrames();
+    view.pathTracePass->ReleaseImages();
+    TextureDescriptorBinding depth;
+    TextureDescriptorBinding diffuse;
+    TextureDescriptorBinding specular;
+    PathTraceLayerBindings(view, depth, diffuse, specular);
+    view.uniformBuffer->SetPathTraceLayerImages(depth, diffuse, specular);
+    view.pathTraceLayerHistory.Reset();
+    view.pathTraceHistory.Reset();
+    m_pathTraceAccumulation.Reset();
 }
 
 bool VulkanRenderer::PreparePathTraceLayer(VulkanSceneView& view, bool halfResolution)
@@ -4823,6 +4853,9 @@ void VulkanRenderer::UpdatePathTracing(
         const bool sceneChanged = packet.contentChanged || m_ddgiMovingInstances.MovedThisFrame() || m_pathTraceGeometryEpoch != m_ddgiGeometryEpoch;
         stillFrames = m_pathTraceAccumulation.Advance(view, lighting, packet.renderDebug, sceneChanged);
         frame.pathTraceHistoryCap = PathTraceHistoryCap(frame.pathTracing, stillFrames);
+        // The offline image stops tracing once a still image has its samples.
+        frame.pathTraceHold = plainPathTracing && frame.pathTracing.offline.enabled &&
+                              OfflinePathTraceProgress(frame.pathTracing.offline, stillFrames).done;
     }
     else
     {
@@ -4834,6 +4867,7 @@ void VulkanRenderer::UpdatePathTracing(
     m_view.pathTraceHistoryPreExposure = preExposure;
 
     const RenderDebugSettings& renderDebug = packet.renderDebug;
+    m_pathTracingProgress = -1.0f;
     if (!renderDebug.pathTracing.enabled)
     {
         m_pathTracingStatus.clear();
@@ -4855,6 +4889,43 @@ void VulkanRenderer::UpdatePathTracing(
                               : renderDebug.forwardOnly       ? "Off in the forward-only order"
                               : renderDebug.khronosReference  ? "Off in the Khronos reference view"
                                                               : "Waiting for the ray scene";
+    }
+    else if (frame.pathTracing.offline.enabled)
+    {
+        // How far the offline image is, timed from its first still frame.
+        const OfflinePathTracingSettings& offline = frame.pathTracing.offline;
+        const OfflineProgress progress = OfflinePathTraceProgress(offline, stillFrames);
+        const auto now = std::chrono::steady_clock::now();
+        if (stillFrames == 0u)
+        {
+            m_offlineStart = now;
+            m_offlineSeconds.reset();
+        }
+        const double seconds = std::chrono::duration<double>(now - m_offlineStart).count();
+        if (progress.done && !m_offlineSeconds)
+        {
+            m_offlineSeconds = seconds;
+        }
+        const char* const denoiser = frame.dlssRayReconstruction ? "ray reconstruction" : "own filter";
+        if (progress.done)
+        {
+            m_pathTracingStatus = std::format("Offline: done, {} spp in {:.1f} s ({})", progress.targetSamples, m_offlineSeconds.value_or(seconds), denoiser);
+        }
+        else if (progress.targetSamples == 0u)
+        {
+            m_pathTracingStatus = std::format("Offline: {} spp, {:.1f} s, no target ({})", progress.samples, seconds, denoiser);
+        }
+        else
+        {
+            const double left = seconds * (static_cast<double>(progress.targetSamples) / static_cast<double>(std::max(progress.samples, 1u)) - 1.0);
+            m_pathTracingStatus = stillFrames == 0u ? std::format("Offline: {} spp a frame, waiting for a still image ({})",
+                                                                  OfflineSamplesPerPixel(offline), denoiser)
+                                                    : std::format("Offline: {} / {} spp, {:.1f} s, about {:.0f} s left ({})", progress.samples,
+                                                                  progress.targetSamples, seconds, left, denoiser);
+        }
+        m_pathTracingProgress =
+            progress.targetSamples == 0u ? -1.0f : std::min(static_cast<float>(progress.samples) / static_cast<float>(progress.targetSamples), 1.0f);
+        return;
     }
     else if (frame.dlssRayReconstruction)
     {

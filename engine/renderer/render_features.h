@@ -43,6 +43,9 @@ struct RenderFeatures
     // ReSTIR PT runs: it shades the deferred pixels' direct light too, so the traced shadows stand aside.
     bool restirPt = false;
     bool plainPathTracing = false;
+    // The plain path tracer in its offline mode: it traces the deferred pixels' direct light too, so
+    // the traced shadows stand aside, and it accumulates still frames under ray reconstruction as well.
+    bool offlinePathTracing = false;
 
     // Each effect's place, its own switch aside.
     bool taa = false;
@@ -70,10 +73,12 @@ struct RenderFeatures
     bool occlusionRays = false;
     // The traced sun shadow's filters (DLSS ray reconstruction denoises it itself).
     bool rayTracedShadowDenoise = false;
-    // The plain path tracer's accumulation and filters (likewise left to ray reconstruction).
+    // The plain path tracer's accumulation and filters (likewise left to ray reconstruction, but for
+    // the offline mode's accumulation of still frames).
     bool pathTraceAccumulate = false;
     bool pathTraceDenoise = false;
 };
 
+// The path tracing switches are read through EffectivePathTracing: the offline mode's, where it is on.
 RenderFeatures ResolveRenderFeatures(const RenderDebugSettings& settings, const RenderCapabilities& capabilities);
 }

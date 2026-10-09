@@ -42,6 +42,14 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("path_tracing", "light_grid", settings.pathTracing.lightGrid);
     visit("path_tracing", "reflection_guides", settings.pathTracing.reflectionGuides);
     visit("path_tracing", "restir", settings.pathTracing.restir);
+    OfflinePathTracingSettings& offline = settings.pathTracing.offline;
+    visit("path_tracing_offline", "enabled", offline.enabled);
+    visit("path_tracing_offline", "samples_per_pixel", offline.samplesPerPixel);
+    visit("path_tracing_offline", "target_samples", offline.targetSamples);
+    visit("path_tracing_offline", "max_bounces", offline.maxBounces);
+    visit("path_tracing_offline", "light_candidates", offline.lightCandidates);
+    visit("path_tracing_offline", "firefly_clamp", offline.fireflyClamp);
+    visit("path_tracing_offline", "path_regularization", offline.pathRegularization);
     RestirPtSettings& restirPt = settings.pathTracing.restirPt;
     visit("restir_pt", "temporal_reuse", restirPt.temporalReuse);
     visit("restir_pt", "spatial_reuse", restirPt.spatialReuse);

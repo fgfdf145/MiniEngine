@@ -279,6 +279,33 @@ struct RestirPtSettings
 // when it runs, denoises the raw paths instead of the engine's filters. The Render > Pipeline > Path
 // Tracing mode; it needs hardware ray tracing and falls back to the hybrid image without it.
 // With restir on, ReSTIR PT Enhanced (RestirPtSettings) runs instead and carries the direct light too.
+// The path tracer's offline mode (docs/design/2026-10-09-path-tracing-offline-mode-design.md): every
+// path tracing feature on (EffectivePathTracing), the direct light at the G-buffer's surface traced
+// too, samplesPerPixel samples a pixel each frame, and a still image accumulated in full precision up
+// to targetSamples, after which the trace stops and the result stands. DLSS ray reconstruction, where
+// it runs, denoises the accumulation; elsewhere the path tracer's own filter does.
+struct OfflinePathTracingSettings
+{
+    bool operator==(const OfflinePathTracingSettings&) const = default;
+
+    bool enabled = false;
+    int samplesPerPixel = 4;
+    // The samples a pixel accumulates while everything stands still; 0 never stops.
+    int targetSamples = 4096;
+    int maxBounces = 8;
+    int lightCandidates = 32;
+    // As PathTracingSettings::fireflyClamp, twice the real-time one: on the material spheres with the
+    // sun, 256 samples a pixel unclamped still show the sun's one-bounce caustics off the glossy
+    // spheres as speckles, and 64 takes 1.7 % of the light of a 4096-sample image (32: 2.1 %). 0
+    // clamps nothing: the reference.
+    float fireflyClamp = 64.0f;
+    // A surface a path reaches after a diffuse bounce is at least a little rough (Kaplanyan and
+    // Dachsbacher 2013), so the sun's and lamps' light reflected off near-mirrors onto diffuse surfaces
+    // (caustics, which next event estimation finds only by luck) converges as a soft glow rather than
+    // speckles that thousands of samples do not settle. Off: the unbiased reference.
+    bool pathRegularization = true;
+};
+
 struct PathTracingSettings
 {
     bool operator==(const PathTracingSettings&) const = default;
@@ -326,6 +353,9 @@ struct PathTracingSettings
     // neighbours and frames (best with DLSS ray reconstruction, as the paper is evaluated).
     bool restir = false;
     RestirPtSettings restirPt;
+    // Overrides the switches above while on (EffectivePathTracing); they keep their values for when it
+    // is off again.
+    OfflinePathTracingSettings offline;
 };
 
 // The operator the tone mapping pass applies to the shaded image (the G-buffer views pick their own).

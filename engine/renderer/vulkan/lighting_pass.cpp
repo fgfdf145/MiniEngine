@@ -130,7 +130,7 @@ void VulkanLightingPass::Record(
         frame.gbufferView == GBufferDebugView::LightClusters ? 1.0f : 0.0f,
         frame.rayTracing.sunShadows ? 1.0f : 0.0f,
         traced ? 1.0f : 0.0f,
-        frame.pathTracing.enabled ? (frame.pathTracing.restir ? 2.0f : 1.0f) : 0.0f);
+        frame.pathTracing.enabled ? (frame.pathTracing.restir ? 2.0f : (frame.pathTracing.offline.enabled ? 3.0f : 1.0f)) : 0.0f);
     vkCmdPushConstants(
         commandBuffer,
         layout,

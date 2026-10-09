@@ -309,6 +309,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     // halfResolution: the layer is traced at half the resolution each way (its images remade, the
     // frames in flight finished first, when that changes).
     bool PreparePathTraceLayer(VulkanSceneView& view, bool halfResolution);
+    // The path tracer's accumulations in the format the frame needs (full float in the offline mode);
+    // images of the other one are released after the frames using them, the layer's result unbound.
+    void SyncPathTraceHistoryPrecision(VulkanSceneView& view, bool fullPrecision);
     // A view's set 0 for drawCapacity draws, with every live draw's material written in.
     std::unique_ptr<VulkanUniformBuffer> CreateViewUniformBuffer(const VulkanSceneView& view, uint32_t drawCapacity) const;
     nvrhi::ISampler* EquirectangularSampler() const;
@@ -691,6 +694,12 @@ class VulkanRenderer : public EditorRenderBackendBase
     // thread's copy from the feedback.
     std::string m_pathTracingStatus;
     std::string m_pathTracingStatusShown;
+    float m_pathTracingProgress = -1.0f;
+    float m_pathTracingProgressShown = -1.0f;
+    // When the offline image started accumulating (its first still frame), and how long it took once
+    // it was done.
+    std::chrono::steady_clock::time_point m_offlineStart{};
+    std::optional<double> m_offlineSeconds;
     // How far the clouds have moved, run on by every frame's time (engine/renderer/volumetric_clouds.h).
     CloudMotion m_cloudMotion;
     std::unique_ptr<VulkanPipelineSet> m_forwardPipelines;

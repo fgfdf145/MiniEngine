@@ -33,7 +33,9 @@ enum class RenderPipelineMode
 {
     Rasterization,
     Hybrid,
-    PathTracing
+    PathTracing,
+    // The path tracer's offline mode (OfflinePathTracingSettings).
+    PathTracingOffline
 };
 
 enum class AntiAliasingMode

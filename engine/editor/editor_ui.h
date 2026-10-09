@@ -313,12 +313,14 @@ class EditorUiController
         m_state.dlssStatus = std::move(status);
     }
     // Whether the render backend can path trace and use hardware ray tracing (the Render > Pipeline
-    // modes and the Ray Tracing switch), and what the Graphics Debug window says of path tracing.
-    void SetPathTracingStatus(bool available, std::string status)
+    // modes and the Ray Tracing switch), and what the Graphics Debug window says of path tracing:
+    // a line, and how far the offline mode's image is (0 to 1; negative where it is not running).
+    void SetPathTracingStatus(bool available, std::string status, float progress = -1.0f)
     {
         m_state.pathTracingAvailable = available;
         m_state.commands.rayTracingSupported = available;
         m_state.pathTracingStatus = std::move(status);
+        m_state.pathTracingProgress = progress;
     }
     // DLSS resolves the viewport (see ResolveSceneExtents in the Vulkan renderer): it picks the render
     // size itself, so the viewport asks for every display pixel whatever the render scale says.

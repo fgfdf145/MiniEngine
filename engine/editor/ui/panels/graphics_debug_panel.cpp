@@ -334,122 +334,180 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
         refresh();
     }
     ImGui::BeginDisabled(!features.pathTracing);
-    DragIntInRange("Bounces##pt", &pathTracing.maxBounces, 1, 16);
-    DragIntInRange("Light candidates##pt", &pathTracing.lightCandidates, 1, 32);
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("Local lights each path vertex resamples one from for its shadow ray");
-    }
-    ImGui::Checkbox("Glass and blended surfaces##pt", &pathTracing.forwardSurfaces);
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("The nearest glass, Blend or transmissive surface over each pixel is path traced too,\n"
-                          "and the paths meet those surfaces; off, they keep the probes and the sky");
-    }
-    ImGui::BeginDisabled(!pathTracing.forwardSurfaces);
-    ImGui::Checkbox("Half resolution##ptlayer", &pathTracing.forwardSurfacesHalfResolution);
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("Glass and blended surfaces traced at half the resolution each way: a quarter of their cost");
-    }
-    ImGui::EndDisabled();
-    ImGui::Checkbox("Air and fog along the paths##pt", &pathTracing.rayMedia);
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("Reflected and bounced light passes through the aerial perspective and the height fog");
-    }
-    ImGui::Checkbox("Emissive surfaces as lights##pt", &pathTracing.emissiveLights);
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("Each path vertex also aims a shadow ray at a point on an emissive triangle, picked by its power,\n"
-                          "weighted against the paths that hit it (MIS); off, only the paths find emissive surfaces");
-    }
-    ImGui::Checkbox("Light grid##pt", &pathTracing.lightGrid);
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("Path vertices pick their local light candidates from a world grid around the camera whose cells\n"
-                          "list the lights reaching them; off, from the view's cluster grid or every local light");
-    }
-    ImGui::Checkbox("Reflection guides for ray reconstruction##pt", &pathTracing.reflectionGuides);
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("DLSS ray reconstruction gets the specular hit distance and the reflections' motion vectors,\n"
-                          "so glossy reflections do not smear along with the surface while the camera moves");
-    }
-    // ReSTIR PT Enhanced in place of the plain path tracer: it carries the direct light too.
-    if (ImGui::Checkbox("ReSTIR PT Enhanced##pt", &pathTracing.restir))
+    // The offline mode (also Render > Pipeline > Path Tracing (Offline)): its own few settings, and
+    // every real-time switch below set for it (EffectivePathTracing), so those are hidden.
+    OfflinePathTracingSettings& offline = pathTracing.offline;
+    if (ImGui::Checkbox("Offline mode##pt", &offline.enabled))
     {
         refresh();
     }
-    if (ImGui::IsItemHovered())
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
     {
-        ImGui::SetTooltip("Direct and indirect light in one reservoir, resampled across paired neighbours and frames\n"
-                          "(Lin, Kettunen and Wyman 2026), instead of the lighting pass's lights and shadows.\n"
-                          "Best with DLSS ray reconstruction.");
+        ImGui::SetTooltip("Every path tracing feature on, the direct light traced too, several samples a pixel each frame,\n"
+                          "and a still image accumulated in full precision up to the target, then held.\n"
+                          "DLSS ray reconstruction denoises it where it runs; the path tracer's own filter elsewhere.");
     }
-    if (pathTracing.restir)
+    if (offline.enabled)
     {
-        RestirPtSettings& restirPt = pathTracing.restirPt;
         ImGui::Indent();
-        ImGui::Checkbox("Temporal reuse##restir", &restirPt.temporalReuse);
-        ImGui::SameLine();
-        ImGui::Checkbox("Spatial reuse##restir", &restirPt.spatialReuse);
-        ImGui::Checkbox("Footprint reconnection##restir", &restirPt.footprintReconnection);
+        DragIntInRange("Samples per pixel##ptoffline", &offline.samplesPerPixel, 1, 64);
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("The paper's dual ray footprint test; off, a fixed distance and two-vertex roughness");
+            ImGui::SetTooltip("Samples each pixel traces every frame (each a diffuse and a specular path, and the direct light)");
         }
-        if (restirPt.footprintReconnection)
-        {
-            DragFloatInRange("Footprint scale c##restir", &restirPt.footprintScale, 0.001f, 1.0f, "%.3f");
-        }
-        else
-        {
-            DragFloatInRange("Shortest reconnection (m)##restir", &restirPt.legacyDistance, 0.0f, 10.0f, "%.2f");
-        }
-        DragFloatInRange("Roughness threshold##restir", &restirPt.roughnessThreshold, 0.0f, 1.0f, "%.2f");
-        DragFloatInRange("Confidence cap##restir", &restirPt.cap, 1.0f, 100.0f, "%.0f");
-        ImGui::Checkbox("Decorrelation##restir", &restirPt.decorrelation);
+        DragIntInRange("Target samples##ptoffline", &offline.targetSamples, 0, 1 << 20);
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("Lowers the temporal confidence where neighbours share a sample (duplication map)");
+            ImGui::SetTooltip("Samples a still image accumulates before the trace stops; 0 never stops");
         }
-        ImGui::Checkbox("Colour noise reduction##restir", &restirPt.colorNoiseReduction);
-        ImGui::Checkbox("Dual motion vectors##restir", &restirPt.dualMotionVectors);
-        ImGui::Checkbox("Permutation sampling##restir", &restirPt.permutationSampling);
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Temporal reuse takes a neighbour in the 2 x 2 quad: noise the denoiser can average");
-        }
-        ImGui::Checkbox("Russian roulette##restir", &restirPt.russianRoulette);
-        ImGui::Checkbox("Accumulate (still camera)##restir", &restirPt.accumulate);
-        static const char* kViews[] = {"Image", "Duplication map", "Reconnection vertex", "Confidence (log2)", "Path length", "Pairing check"};
-        ImGui::Combo("View##restir", &restirPt.debugView, kViews, IM_ARRAYSIZE(kViews));
-        if (ImGui::SmallButton("Reset##restir"))
-        {
-            restirPt = RestirPtSettings{};
-        }
-        ImGui::Unindent();
-    }
-    else
-    {
-        DragFloatInRange("Firefly clamp##pt", &pathTracing.fireflyClamp, 0.0f, 1000.0f, "%.1f");
+        DragIntInRange("Bounces##ptoffline", &offline.maxBounces, 1, 16);
+        DragIntInRange("Light candidates##ptoffline", &offline.lightCandidates, 1, 32);
+        DragFloatInRange("Firefly clamp##ptoffline", &offline.fireflyClamp, 0.0f, 1000.0f, "%.1f");
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("The brightest a path vertex may add, in display units; 0 clamps nothing (reference)");
         }
-        // DLSS ray reconstruction takes the raw paths and denoises them itself.
-        const char* const rayReconstructionReason = "DLSS ray reconstruction denoises the paths";
-        PipelineCheckbox("Accumulate##pt", &pathTracing.accumulate, features.pathTraceAccumulate, rayReconstructionReason);
-        ImGui::BeginDisabled(!pathTracing.accumulate || !features.pathTraceAccumulate);
-        DragIntInRange("Frames while moving##pt", &pathTracing.motionFrames, 1, 256);
-        DragIntInRange("Frames while still##pt", &pathTracing.maxFrames, 1, 2048);
+        ImGui::Checkbox("Path regularization##ptoffline", &offline.pathRegularization);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Surfaces after a diffuse bounce are at least a little rough, so caustics off near-mirrors\n"
+                              "converge as a soft glow instead of speckles; off for the unbiased reference");
+        }
+        if (state.pathTracingProgress >= 0.0f)
+        {
+            ImGui::ProgressBar(state.pathTracingProgress, ImVec2(-1.0f, 0.0f));
+        }
+        if (ImGui::SmallButton("Reset##ptoffline"))
+        {
+            offline = OfflinePathTracingSettings{.enabled = true};
+            refresh();
+        }
+        ImGui::Unindent();
+    }
+    // The real-time switches wait while the offline mode sets them all.
+    if (offline.enabled)
+    {
+        ImGui::TextDisabled("The offline mode sets every switch below");
+    }
+    else
+    {
+        DragIntInRange("Bounces##pt", &pathTracing.maxBounces, 1, 16);
+        DragIntInRange("Light candidates##pt", &pathTracing.lightCandidates, 1, 32);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Local lights each path vertex resamples one from for its shadow ray");
+        }
+        ImGui::Checkbox("Glass and blended surfaces##pt", &pathTracing.forwardSurfaces);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("The nearest glass, Blend or transmissive surface over each pixel is path traced too,\n"
+                              "and the paths meet those surfaces; off, they keep the probes and the sky");
+        }
+        ImGui::BeginDisabled(!pathTracing.forwardSurfaces);
+        ImGui::Checkbox("Half resolution##ptlayer", &pathTracing.forwardSurfacesHalfResolution);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Glass and blended surfaces traced at half the resolution each way: a quarter of their cost");
+        }
         ImGui::EndDisabled();
-        PipelineCheckbox("Denoise##pt", &pathTracing.denoise, features.pathTraceDenoise, rayReconstructionReason);
+        ImGui::Checkbox("Air and fog along the paths##pt", &pathTracing.rayMedia);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Reflected and bounced light passes through the aerial perspective and the height fog");
+        }
+        ImGui::Checkbox("Emissive surfaces as lights##pt", &pathTracing.emissiveLights);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Each path vertex also aims a shadow ray at a point on an emissive triangle, picked by its power,\n"
+                              "weighted against the paths that hit it (MIS); off, only the paths find emissive surfaces");
+        }
+        ImGui::Checkbox("Light grid##pt", &pathTracing.lightGrid);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Path vertices pick their local light candidates from a world grid around the camera whose cells\n"
+                              "list the lights reaching them; off, from the view's cluster grid or every local light");
+        }
+        ImGui::Checkbox("Reflection guides for ray reconstruction##pt", &pathTracing.reflectionGuides);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("DLSS ray reconstruction gets the specular hit distance and the reflections' motion vectors,\n"
+                              "so glossy reflections do not smear along with the surface while the camera moves");
+        }
+        // ReSTIR PT Enhanced in place of the plain path tracer: it carries the direct light too.
+        if (ImGui::Checkbox("ReSTIR PT Enhanced##pt", &pathTracing.restir))
+        {
+            refresh();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Direct and indirect light in one reservoir, resampled across paired neighbours and frames\n"
+                              "(Lin, Kettunen and Wyman 2026), instead of the lighting pass's lights and shadows.\n"
+                              "Best with DLSS ray reconstruction.");
+        }
+        if (pathTracing.restir)
+        {
+            RestirPtSettings& restirPt = pathTracing.restirPt;
+            ImGui::Indent();
+            ImGui::Checkbox("Temporal reuse##restir", &restirPt.temporalReuse);
+            ImGui::SameLine();
+            ImGui::Checkbox("Spatial reuse##restir", &restirPt.spatialReuse);
+            ImGui::Checkbox("Footprint reconnection##restir", &restirPt.footprintReconnection);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("The paper's dual ray footprint test; off, a fixed distance and two-vertex roughness");
+            }
+            if (restirPt.footprintReconnection)
+            {
+                DragFloatInRange("Footprint scale c##restir", &restirPt.footprintScale, 0.001f, 1.0f, "%.3f");
+            }
+            else
+            {
+                DragFloatInRange("Shortest reconnection (m)##restir", &restirPt.legacyDistance, 0.0f, 10.0f, "%.2f");
+            }
+            DragFloatInRange("Roughness threshold##restir", &restirPt.roughnessThreshold, 0.0f, 1.0f, "%.2f");
+            DragFloatInRange("Confidence cap##restir", &restirPt.cap, 1.0f, 100.0f, "%.0f");
+            ImGui::Checkbox("Decorrelation##restir", &restirPt.decorrelation);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Lowers the temporal confidence where neighbours share a sample (duplication map)");
+            }
+            ImGui::Checkbox("Colour noise reduction##restir", &restirPt.colorNoiseReduction);
+            ImGui::Checkbox("Dual motion vectors##restir", &restirPt.dualMotionVectors);
+            ImGui::Checkbox("Permutation sampling##restir", &restirPt.permutationSampling);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Temporal reuse takes a neighbour in the 2 x 2 quad: noise the denoiser can average");
+            }
+            ImGui::Checkbox("Russian roulette##restir", &restirPt.russianRoulette);
+            ImGui::Checkbox("Accumulate (still camera)##restir", &restirPt.accumulate);
+            static const char* kViews[] = {"Image", "Duplication map", "Reconnection vertex", "Confidence (log2)", "Path length", "Pairing check"};
+            ImGui::Combo("View##restir", &restirPt.debugView, kViews, IM_ARRAYSIZE(kViews));
+            if (ImGui::SmallButton("Reset##restir"))
+            {
+                restirPt = RestirPtSettings{};
+            }
+            ImGui::Unindent();
+        }
+        else
+        {
+            DragFloatInRange("Firefly clamp##pt", &pathTracing.fireflyClamp, 0.0f, 1000.0f, "%.1f");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("The brightest a path vertex may add, in display units; 0 clamps nothing (reference)");
+            }
+            // DLSS ray reconstruction takes the raw paths and denoises them itself.
+            const char* const rayReconstructionReason = "DLSS ray reconstruction denoises the paths";
+            PipelineCheckbox("Accumulate##pt", &pathTracing.accumulate, features.pathTraceAccumulate, rayReconstructionReason);
+            ImGui::BeginDisabled(!pathTracing.accumulate || !features.pathTraceAccumulate);
+            DragIntInRange("Frames while moving##pt", &pathTracing.motionFrames, 1, 256);
+            DragIntInRange("Frames while still##pt", &pathTracing.maxFrames, 1, 2048);
+            ImGui::EndDisabled();
+            PipelineCheckbox("Denoise##pt", &pathTracing.denoise, features.pathTraceDenoise, rayReconstructionReason);
+        }
     }
     if (ImGui::SmallButton("Reset##pt"))
     {
-        pathTracing = PathTracingSettings{.enabled = pathTracing.enabled, .restir = pathTracing.restir};
+        pathTracing = PathTracingSettings{.enabled = pathTracing.enabled, .restir = pathTracing.restir, .offline = pathTracing.offline};
         refresh();
     }
     ImGui::EndDisabled();

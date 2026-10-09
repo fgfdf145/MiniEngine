@@ -1,4 +1,4 @@
-// The Graphics Debug panel drawn headless in each pipeline mode: hybrid, path tracing, ReSTIR PT,
+﻿// The Graphics Debug panel drawn headless in each pipeline mode: hybrid, path tracing, ReSTIR PT,
 // forward only and the Khronos reference view. Each greys out the controls the pipeline does not use
 // (render_features.h); drawing every mode checks the panel's disabled scopes stay balanced, and with
 // MINIENGINE_UI_SNAPSHOT_DIR set each mode is written there as a PNG to look at.
@@ -103,6 +103,20 @@ void TestEveryMode()
     debug.dlssMode = DlssMode::Quality;
     debug.dlssRayReconstruction = true;
     fixture.Draw("graphics_debug_restir_pt_dlss.png");
+
+    // The offline mode over ReSTIR's switch, with its progress bar, then with ray reconstruction.
+    debug = RenderDebugSettings{};
+    debug.pathTracing.enabled = true;
+    debug.pathTracing.restir = true;
+    debug.pathTracing.offline.enabled = true;
+    fixture.state.pathTracingStatus = "Offline: 512 / 4096 spp, 6.1 s, about 43 s left (own filter)";
+    fixture.state.pathTracingProgress = 0.125f;
+    fixture.Draw("graphics_debug_offline.png");
+    debug.dlssMode = DlssMode::Dlaa;
+    debug.dlssRayReconstruction = true;
+    fixture.Draw("graphics_debug_offline_dlss.png");
+    fixture.state.pathTracingStatus.clear();
+    fixture.state.pathTracingProgress = -1.0f;
 
     debug = RenderDebugSettings{};
     debug.forwardOnly = true;

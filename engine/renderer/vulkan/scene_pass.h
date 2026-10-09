@@ -161,6 +161,9 @@ struct ScenePassFrameContext
     bool pathTraceHitDistance = false;
     TemporalHistoryFrame pathTraceHistory;
     float pathTraceHistoryScale = 1.0f;
+    // The offline mode's image has all its samples: the path tracer traces nothing and carries its
+    // accumulations over (the layer's too, where its history is valid).
+    bool pathTraceHold = false;
     uint32_t pathTraceHistoryCap = 1;
     TemporalHistoryFrame restirPtHistory;
     glm::vec3 previousCameraPosition{0.0f};

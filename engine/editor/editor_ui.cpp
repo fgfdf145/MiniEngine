@@ -389,12 +389,14 @@ void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
     m_state.commands.toneMapping = m_state.renderDebug.toneMapper;
     m_state.commands.khronosReference = m_state.renderDebug.khronosReference;
     m_state.commands.antiAliasing = m_state.renderDebug.taa ? AntiAliasingMode::Taa : AntiAliasingMode::None;
-    // The pipeline is what the settings make of it: path tracing, the ray traced effects over
-    // rasterization (hybrid), or rasterization alone.
+    // The pipeline is what the settings make of it: path tracing (offline or real time), the ray
+    // traced effects over rasterization (hybrid), or rasterization alone.
     m_state.commands.rayTracing = m_state.renderDebug.hardwareRayTracing;
-    m_state.commands.pipelineMode = m_state.renderDebug.pathTracing.enabled  ? RenderPipelineMode::PathTracing
-                                    : m_state.renderDebug.hardwareRayTracing ? RenderPipelineMode::Hybrid
-                                                                             : RenderPipelineMode::Rasterization;
+    const PathTracingSettings& pathTracing = m_state.renderDebug.pathTracing;
+    m_state.commands.pipelineMode = pathTracing.enabled && pathTracing.offline.enabled ? RenderPipelineMode::PathTracingOffline
+                                    : pathTracing.enabled                              ? RenderPipelineMode::PathTracing
+                                    : m_state.renderDebug.hardwareRayTracing           ? RenderPipelineMode::Hybrid
+                                                                                       : RenderPipelineMode::Rasterization;
     m_state.commands.videoRecording = m_state.videoRecording.active;
     m_state.commands.quadRecording = m_state.quadRecordingStatus.active;
     // Play is driving a car: whatever the commands asked last frame, this is what happened.
@@ -439,8 +441,10 @@ void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& bef
     }
     if (m_state.commands.pipelineMode != before.pipelineMode)
     {
-        m_state.renderDebug.pathTracing.enabled = m_state.commands.pipelineMode == RenderPipelineMode::PathTracing;
-        m_state.renderDebug.hardwareRayTracing = m_state.commands.pipelineMode != RenderPipelineMode::Rasterization;
+        const RenderPipelineMode mode = m_state.commands.pipelineMode;
+        m_state.renderDebug.pathTracing.enabled = mode == RenderPipelineMode::PathTracing || mode == RenderPipelineMode::PathTracingOffline;
+        m_state.renderDebug.pathTracing.offline.enabled = mode == RenderPipelineMode::PathTracingOffline;
+        m_state.renderDebug.hardwareRayTracing = mode != RenderPipelineMode::Rasterization;
     }
     if (m_state.commands.playState != before.playState)
     {

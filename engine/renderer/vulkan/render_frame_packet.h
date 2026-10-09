@@ -84,7 +84,9 @@ struct RenderFeedback
     bool minimapLoaded = false;
     GpuMemoryReport gpuMemory;
     // What path tracing is doing, for the Graphics Debug window: how far a still image has
-    // accumulated, or why it does not run.
+    // accumulated, or why it does not run; and the offline mode's share of its target samples
+    // (negative where it is not running).
     std::string pathTracingStatus;
+    float pathTracingProgress = -1.0f;
 };
 }
