@@ -717,7 +717,7 @@ bool DrivePathsPanel::DrawViewportOverlay(EditorContext& context, ImDrawList& dr
         return true;
     }
     const size_t at = m_selectedPoint >= 0 && m_selectedPoint < static_cast<int>(path.points.size()) ? static_cast<size_t>(m_selectedPoint) + 1
-                                                                                                      : path.points.size();
+                                                                                                     : path.points.size();
     path.points.insert(path.points.begin() + static_cast<std::ptrdiff_t>(at), SceneDrivePathPoint{*placed, 0.0f});
     m_selectedPoint = static_cast<int>(at);
     scene.SetDrivePaths(std::move(edited));
