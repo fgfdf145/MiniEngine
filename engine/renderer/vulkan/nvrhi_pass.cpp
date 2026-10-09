@@ -84,6 +84,16 @@ nvrhi::ComputePipelineHandle CreateNvrhiComputePipeline(
     return pipeline;
 }
 
+nvrhi::ViewportState NativeViewportState(VkExtent2D extent)
+{
+    const float width = static_cast<float>(extent.width);
+    const float height = static_cast<float>(extent.height);
+    nvrhi::ViewportState state;
+    state.addViewport(nvrhi::Viewport(0.0f, width, height, 0.0f, 0.0f, 1.0f));
+    state.addScissorRect(nvrhi::Rect(0, static_cast<int>(extent.width), 0, static_cast<int>(extent.height)));
+    return state;
+}
+
 nvrhi::VulkanBindingOffsets ShaderBindingOffsets()
 {
     return nvrhi::VulkanBindingOffsets()

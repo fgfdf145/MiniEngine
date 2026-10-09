@@ -77,17 +77,16 @@ class VulkanGiResolvePass : public IScenePass
 
 // A full-screen triangle over the HDR target, blended ONE + ONE, that adds SceneGi through each
 // pixel's diffuse albedo (gi_composite.frag). It binds the lighting pass's sets: the camera at set
-// 0, the empty set 1 and the G-buffer, SceneGi included, at set 2.
+// 0 and the G-buffer, SceneGi included, at set 2 (NVRHI fills set 1 with an empty one). An NVRHI
+// graphics pipeline, drawn with dynamic rendering into a framebuffer per transient copy.
 class VulkanGiCompositePass : public IScenePass
 {
   public:
     VulkanGiCompositePass(
-        VkDevice device,
-        VkPipelineCache pipelineCache,
+        nvrhi::IDevice* nvrhiDevice,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
-        VkDescriptorSetLayout emptySetLayout,
-        VkDescriptorSetLayout gbufferSetLayout);
+        nvrhi::IBindingLayout* frameSetLayout,
+        nvrhi::IBindingLayout* gbufferSetLayout);
     ~VulkanGiCompositePass() override;
 
     VulkanGiCompositePass(const VulkanGiCompositePass&) = delete;
@@ -103,13 +102,9 @@ class VulkanGiCompositePass : public IScenePass
 
   private:
     void CreateFramebuffers(const SceneRenderTargets& targets);
-    void DestroyFramebuffers();
-    void DestroyHandles();
 
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
-    std::vector<VkFramebuffer> m_framebuffers;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::GraphicsPipelineHandle m_pipeline;
+    std::vector<nvrhi::FramebufferHandle> m_framebuffers;
 };
 }

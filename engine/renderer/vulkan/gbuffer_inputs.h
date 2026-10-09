@@ -60,6 +60,9 @@ class VulkanGBufferDescriptors
     // Routed through ResolveIndex like every other per-copy lookup, so the frame slot rule lives in
     // SceneRenderTargets alone.
     VkDescriptorSet GetSet(const SceneRenderTargets& targets, uint32_t imageIndex, uint32_t frameSlot) const;
+    // The same layout and sets as NVRHI's, for the passes on NVRHI pipelines.
+    nvrhi::IBindingLayout* GetBindingLayout() const;
+    nvrhi::IBindingSet* GetBindingSet(const SceneRenderTargets& targets, uint32_t imageIndex, uint32_t frameSlot) const;
 
     // Rewrites every set against the rebuilt views. Must run with in-flight frames waited on.
     void OnTargetsRebuilt(const SceneRenderTargets& targets);

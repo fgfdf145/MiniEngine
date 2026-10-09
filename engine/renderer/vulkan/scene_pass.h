@@ -80,8 +80,9 @@ struct ScenePassFrameContext
     // Physical radiance to HDR target units, the same value as the camera block's exposure.x (see
     // PreExposureFromEv100). Always positive.
     float preExposure = 1.0f;
-    // Set 2 for passes that sample the G-buffer; see VulkanGBufferDescriptors.
+    // Set 2 for passes that sample the G-buffer; see VulkanGBufferDescriptors. The same set as NVRHI's.
     VkDescriptorSet gbufferDescriptorSet = VK_NULL_HANDLE;
+    nvrhi::IBindingSet* gbufferBindingSet = nullptr;
     // What the tone mapping pass writes to the viewport.
     GBufferDebugView gbufferView = GBufferDebugView::Off;
     // AO parameters for this frame. enabled is already false in the forward-only order.

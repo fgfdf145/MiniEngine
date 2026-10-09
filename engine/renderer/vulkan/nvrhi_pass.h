@@ -65,6 +65,11 @@ nvrhi::ComputePipelineHandle CreateNvrhiComputePipeline(
     const char* shaderName,
     std::initializer_list<nvrhi::IBindingLayout*> layouts);
 
+// A viewport and scissor over extent the way the engine's shaders are written for: Vulkan's own, y
+// down. NVRHI turns every viewport into Direct3D's (a negative height from maxY); handing it the
+// rectangle upside down (minY at the bottom edge) cancels that, and the scissor is given apart.
+nvrhi::ViewportState NativeViewportState(VkExtent2D extent);
+
 // NVRHI's VulkanBindingOffsets all zero: a binding layout item's slot is the binding the shader
 // declares, as the engine's shaders number their sets themselves.
 nvrhi::VulkanBindingOffsets ShaderBindingOffsets();

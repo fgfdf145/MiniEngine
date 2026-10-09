@@ -1930,6 +1930,7 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.frameBindingSet = view.uniformBuffer->GetFrameBindingSet(imageIndex);
     frame.commandList = m_commandContext->GetCommandList();
     frame.gbufferDescriptorSet = view.gbufferDescriptors->GetSet(*view.targets, imageIndex, frame.frameSlot);
+    frame.gbufferBindingSet = view.gbufferDescriptors->GetBindingSet(*view.targets, imageIndex, frame.frameSlot);
     // The order and the forward filter both derive from this one switch, here, so they cannot
     // disagree. The forward-only order never runs the geometry pass and leaves the G-buffer
     // undefined, so its debug views are forced off rather than trusted to the UI's disabled state.
@@ -3071,12 +3072,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanGiTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanGiResolvePass>(m_nvrhi->Get(), m_device->GetHandle(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanGiCompositePass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        view.gbufferDescriptors->GetEmptySetLayout(),
-        view.gbufferDescriptors->GetSetLayout()));
+        m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), view.gbufferDescriptors->GetBindingLayout()));
     view.passes.push_back(std::make_unique<VulkanDdgiDebugPass>(
         m_device->GetHandle(),
         m_nvrhi->Get(),

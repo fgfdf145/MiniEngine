@@ -48,6 +48,19 @@ VkDescriptorSet VulkanGBufferDescriptors::GetSet(
     return m_descriptorSets.at(targets.ResolveIndex(kInputs.front(), imageIndex, frameSlot));
 }
 
+nvrhi::IBindingLayout* VulkanGBufferDescriptors::GetBindingLayout() const
+{
+    return m_setLayout;
+}
+
+nvrhi::IBindingSet* VulkanGBufferDescriptors::GetBindingSet(
+    const SceneRenderTargets& targets,
+    uint32_t imageIndex,
+    uint32_t frameSlot) const
+{
+    return m_bindingSets.at(targets.ResolveIndex(kInputs.front(), imageIndex, frameSlot));
+}
+
 void VulkanGBufferDescriptors::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
     CreateDescriptorSets(targets);
