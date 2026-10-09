@@ -86,6 +86,27 @@ class VulkanBuffer
     {
         return m_posed ? m_previousPosition.native : m_position.native;
     }
+    // The same buffers as NVRHI's, for the passes that bind them through NVRHI (the skinning pass).
+    nvrhi::IBuffer* GetVertexBuffer() const
+    {
+        return m_vertex.handle;
+    }
+    nvrhi::IBuffer* GetPositionBuffer() const
+    {
+        return m_position.handle;
+    }
+    nvrhi::IBuffer* GetBindPoseBuffer() const
+    {
+        return m_bindPose.handle;
+    }
+    nvrhi::IBuffer* GetSkinBuffer() const
+    {
+        return m_skin.handle;
+    }
+    nvrhi::IBuffer* GetPreviousPositionBuffer() const
+    {
+        return m_posed ? m_previousPosition.handle : m_position.handle;
+    }
     // A posed, device-addressable mesh's position stream, which its ray tracing bottom level is
     // built and refitted from (VulkanRayAcceleration); 0 otherwise.
     VkDeviceAddress GetPositionAddress() const

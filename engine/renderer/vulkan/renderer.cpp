@@ -1266,7 +1266,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // a shadow into view. Without a palette (not yet ticked) it keeps the pose it has.
     for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
     {
-        if (!renderSubmesh->skinned || renderSubmesh->skinningSet == VK_NULL_HANDLE)
+        if (!renderSubmesh->skinned || !renderSubmesh->skinningSet)
         {
             continue;
         }
@@ -1276,7 +1276,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
             continue;
         }
         shared.skinningDispatches.push_back(VulkanSkinningPass::Dispatch{
-            renderSubmesh->buffer.get(), renderSubmesh->skinningSet, palette, renderSubmesh->paletteOffset, renderSubmesh->jointCount});
+            renderSubmesh->buffer.get(), renderSubmesh->skinningSet.Get(), palette, renderSubmesh->paletteOffset, renderSubmesh->jointCount});
     }
     // Every tyre too, deformed or not: one the car no longer squashes goes back to its shape at rest,
     // and its last frame's shape keeps rolling into its motion vectors.
@@ -1287,7 +1287,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     }();
     for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
     {
-        if (!renderSubmesh->tyre || renderSubmesh->skinningSet == VK_NULL_HANDLE)
+        if (!renderSubmesh->tyre || !renderSubmesh->skinningSet)
         {
             continue;
         }
@@ -1295,7 +1295,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         const std::vector<glm::mat4>* deformations = packet.transforms.GetTyreDeformations(renderSubmesh->entity);
         const bool deformed = deformations != nullptr && first + 2 <= deformations->size();
         shared.skinningDispatches.push_back(VulkanSkinningPass::Dispatch{
-            renderSubmesh->buffer.get(), renderSubmesh->skinningSet, deformed ? deformations : &kTyreAtRest, deformed ? first : 0u, 2, true});
+            renderSubmesh->buffer.get(), renderSubmesh->skinningSet.Get(), deformed ? deformations : &kTyreAtRest, deformed ? first : 0u, 2, true});
     }
     // From the viewport's histogram; every view is balanced the same.
     shared.whiteBalance = UpdateWhiteBalance(packet);
@@ -1416,7 +1416,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               m_gpuTimer->BeginFrame(commandBuffer, frame.frameSlot);
 
                                               // The skinned submeshes posed first: every pass after draws them.
-                                              m_skinningPass->Record(commandBuffer, frame.frameSlot, shared.skinningDispatches);
+                                              m_skinningPass->Record(commandBuffer, frame.commandList, frame.frameSlot, shared.skinningDispatches);
                                               m_gpuTimer->Mark(commandBuffer, "Skinning");
 
                                               // Ahead of the scene passes, whose material pass samples it, and of
@@ -2325,12 +2325,7 @@ void VulkanRenderer::CreateDeviceResources()
                           {
                               Retire(std::move(release));
                           });
-    m_skinningPass = std::make_unique<VulkanSkinningPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+    m_skinningPass = std::make_unique<VulkanSkinningPass>(m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     m_ddgi = std::make_unique<VulkanDdgi>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -4198,8 +4193,7 @@ void VulkanRenderer::DropSubmeshesOfRemovedEntities(const RenderFramePacket& fra
                 }
             }
             m_materialSets->Release(renderSubmesh->materialSet);
-            m_skinningPass->Release(renderSubmesh->skinningSet);
-            renderSubmesh->skinningSet = VK_NULL_HANDLE;
+            renderSubmesh->skinningSet = nullptr;
         }
     }
     std::erase_if(m_renderSubmeshes, isRemoved);
@@ -4385,8 +4379,7 @@ void VulkanRenderer::ApplyRenderContent(
                 }
             }
             m_materialSets->Release(renderSubmesh->materialSet);
-            m_skinningPass->Release(renderSubmesh->skinningSet);
-            renderSubmesh->skinningSet = VK_NULL_HANDLE;
+            renderSubmesh->skinningSet = nullptr;
             m_liveSubmeshes.erase(renderSubmesh->revision);
         }
         for (const RenderSubmesh* renderSubmesh : placed)

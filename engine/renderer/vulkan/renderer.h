@@ -129,8 +129,8 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     // A tyre (MeshData::deformable): the skinning pass deforms its buffers by its TyreDeformation from
     // the entity's (RenderTransformSnapshot::GetTyreDeformations), every frame.
     bool tyre = false;
-    // The skinning pass's descriptor set for its buffers, made with the submesh.
-    mutable VkDescriptorSet skinningSet = VK_NULL_HANDLE;
+    // The skinning pass's binding set for its buffers, made with the submesh.
+    mutable nvrhi::BindingSetHandle skinningSet;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     // CpuRenderSubmesh::castShadows and drawDistance.
