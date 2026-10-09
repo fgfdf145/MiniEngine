@@ -415,6 +415,76 @@ void TestEditing(const std::filesystem::path& model)
     fixture.Frame("material_editor_zoomed.png");
 }
 
+// What the renderer does when the window's size changes: the swapchain is rebuilt, and with it the
+// ImGui backend, which destroys every texture it made (ImGui_ImplVulkan_DestroyDeviceObjects). The
+// editor's textures must come back from their pixels, and the preview's next size makes new ones:
+// no texture may ever ask to be made or updated without pixels.
+void CheckTextureRequests()
+{
+    const ImDrawData* drawData = ImGui::GetDrawData();
+    if (drawData == nullptr || drawData->Textures == nullptr)
+    {
+        return;
+    }
+    for (const ImTextureData* texture : *drawData->Textures)
+    {
+        if (texture->Status == ImTextureStatus_WantCreate || texture->Status == ImTextureStatus_WantUpdates)
+        {
+            Require(texture->Pixels != nullptr,
+                    "a texture asks to be made or updated without pixels: " + std::to_string(texture->Width) + "x" + std::to_string(texture->Height) +
+                        " status " + std::to_string(static_cast<int>(texture->Status)) + " refs " + std::to_string(texture->RefCount) +
+                        " unused " + std::to_string(texture->UnusedFrames) + " id " + std::to_string(texture->UniqueID));
+        }
+    }
+}
+
+void DestroyBackendTextures()
+{
+    for (ImTextureData* texture : ImGui::GetPlatformIO().Textures)
+    {
+        if (texture->RefCount == 1)
+        {
+            texture->SetTexID(ImTextureID_Invalid);
+            texture->BackendUserData = nullptr;
+            texture->SetStatus(ImTextureStatus_Destroyed);
+        }
+    }
+}
+
+void TestBackendRebuildAndResize(const std::filesystem::path& model)
+{
+    Fixture fixture;
+    EditorContext context = fixture.Context();
+    fixture.window.OpenModel(context, model.string());
+    fixture.Frames(3);
+    fixture.window.FinishPreview();
+    for (int round = 0; round < 6; ++round)
+    {
+        // A rebuild between frames, as RecreateSwapchain runs before NewFrame.
+        DestroyBackendTextures();
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2(static_cast<float>(kWidth - 120 * (round % 3)), static_cast<float>(kHeight - 80 * (round % 2)));
+        for (int frame = 0; frame < 4; ++frame)
+        {
+            ImGui::GetIO().DeltaTime = 1.0f / 60.0f;
+            fixture.result = EditorUiFrameResult{};
+            EditorContext frameContext = fixture.Context();
+            ImGui::NewFrame();
+            ImGui::SetNextWindowSize(io.DisplaySize);
+            fixture.windows.TickAndDraw(frameContext, false);
+            ImGui::Render();
+            CheckTextureRequests();
+            test::ServeTextures(*ImGui::GetDrawData());
+            if (frame == 1)
+            {
+                fixture.window.FinishPreview();
+            }
+        }
+    }
+    ImGui::GetIO().DisplaySize = ImVec2(static_cast<float>(kWidth), static_cast<float>(kHeight));
+    fixture.Frames(2);
+}
+
 void TestSnapshotModel()
 {
     const char* path = std::getenv("MINIENGINE_EDITOR_TEST_MODEL");
@@ -462,6 +532,7 @@ int main()
     {
         const ScopedDirectory directory;
         TestEditing(WriteTestModel(directory.path));
+        TestBackendRebuildAndResize(WriteTestModel(directory.path));
         TestSnapshotModel();
         std::cout << "material_editor_window_tests passed\n";
     }

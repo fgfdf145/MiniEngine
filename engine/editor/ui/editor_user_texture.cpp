@@ -33,9 +33,12 @@ void Retire(std::unique_ptr<ImTextureData> texture)
         // No ImGui (shutting down): the backend has already let go of every texture.
         return;
     }
-    // Without pixels a destroyed texture stays destroyed (SetStatus would ask for it again). One never
-    // made on the GPU goes through the backend too, which only marks it destroyed.
-    texture->DestroyPixels();
+    // The pixels stay until the texture is freed: ImGui can ask for a texture handed back to be made
+    // again (it did, the frame after, while the backend was being rebuilt on a resize), and the backend
+    // then reads them. WantDestroyNextFrame keeps a destroyed texture destroyed (SetStatus would
+    // otherwise ask for one with pixels again). One never made on the GPU goes through the backend
+    // too, which only marks it destroyed.
+    texture->WantDestroyNextFrame = true;
     texture->UnusedFrames = 0;
     texture->SetStatus(ImTextureStatus_WantDestroy);
     Retired().push_back(std::move(texture));
@@ -106,6 +109,11 @@ void EditorUserTexture::CollectRetired()
         }
         else
         {
+            // Asked to be made again: asked to be destroyed again.
+            if (texture->Status != ImTextureStatus_WantDestroy)
+            {
+                texture->SetStatus(ImTextureStatus_WantDestroy);
+            }
             ++texture->UnusedFrames;
         }
     }
