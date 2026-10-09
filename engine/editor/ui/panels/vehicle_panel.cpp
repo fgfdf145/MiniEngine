@@ -347,6 +347,44 @@ bool DrawTuning(VehicleSettings& tuning)
     ImGui::Checkbox("Anti-roll Bars", &tuning.antiRollBars);
     ImGui::SameLine();
     ImGui::Checkbox("Limited-slip Differentials", &tuning.limitedSlipDifferentials);
+    VehicleDrivetrainLosses& losses = tuning.drivetrainLosses;
+    ImGui::Checkbox("Drivetrain Losses", &losses.enabled);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "The gears' meshes pass only a share of the torque (the efficiencies below; driving the wheels get that share,\n"
+            "on the overrun they must give the engine's drag over it), and the oil and bearings drag each axle the\n"
+            "drivetrain turns. Assetto Corsa has none: its torque curves are already the wheels', so with this on the\n"
+            "engine makes the curve over the indirect gears' efficiency, and the wheels get the game's torque in those.");
+    }
+    ImGui::BeginDisabled(!losses.enabled);
+    DragFloatInRange("Gearbox Efficiency", &losses.gearboxEfficiency, 0.8f, 1.0f, "%.3f", 0.001f);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("An indirect gear: two meshes through the layshaft.");
+    }
+    DragFloatInRange("Direct Gear Efficiency", &losses.directGearEfficiency, 0.8f, 1.0f, "%.3f", 0.001f);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("The gear of ratio 1: straight through the main shaft, only bearings and seals.");
+    }
+    DragFloatInRange("Final Drive Efficiency", &losses.finalDriveEfficiency, 0.8f, 1.0f, "%.3f", 0.001f);
+    DragFloatInRange("Transfer Case Efficiency", &losses.transferEfficiency, 0.8f, 1.0f, "%.3f", 0.001f);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("Four-wheel drive: all the torque with a centre differential, what a coupling passes to the front.");
+    }
+    DragFloatInRange("Spin Drag (Nm)", &losses.spinTorque, 0.0f, 50.0f, "%.1f", 0.1f);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("Each axle the drivetrain turns, at the wheels, whatever the load: the bearings and seals.");
+    }
+    DragFloatInRange("Spin Drag per rad/s (Nm)", &losses.spinTorquePerSpeed, 0.0f, 1.0f, "%.3f", 0.001f);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("Each axle's drag growing with the wheels' speed: the oil churning. At 250 km/h a wheel turns about 210 rad/s.");
+    }
+    ImGui::EndDisabled();
     if (ImGui::Button("Defaults"))
     {
         tuning = VehicleDriveService::DefaultTuning();

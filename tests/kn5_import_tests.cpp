@@ -1833,6 +1833,102 @@ void ImportPutsTheCarsTyresInTheLibrary()
     AssetRegistry::RescanAssetTree();
 }
 
+// MINIENGINE_DRIVETRAIN_PROBE=<car.gltf>: the car on a long flat straight on the brush tyre, with and without the
+// drivetrain's losses (VehicleSettings::drivetrainLosses): 0-100 and 0-200 km/h, the top speed, what the drivetrain
+// loses on the way, and 5 s off the throttle from the top. Prints the figures; checks nothing.
+void ProbeDrivetrainLosses()
+{
+    const char* gltf = std::getenv("MINIENGINE_DRIVETRAIN_PROBE");
+    if (gltf == nullptr)
+    {
+        return;
+    }
+    const std::optional<VehicleCarSpec> spec = ModelLoader::LoadModel(gltf).carSpec;
+    Require(spec.has_value() && spec->wheelbase.has_value() && spec->frontSuspension.has_value(), "the probe's car has its data");
+    const float radius = spec->frontSuspension->tyreRadius;
+    const float wheelbase = *spec->wheelbase;
+    const float track = spec->frontSuspension->track;
+    VehicleWheelLayout layout{};
+    for (size_t wheel = 0; wheel < kVehicleWheelCount; ++wheel)
+    {
+        const float side = wheel % 2 == 0 ? 0.5f * track : -0.5f * track;
+        const float along = wheel < 2 ? 0.5f * wheelbase : -0.5f * wheelbase;
+        layout[wheel] = VehicleWheelGeometry{glm::vec3(side, radius, along), radius, 0.24f};
+    }
+    const glm::vec3 boundsMin(-0.5f * track - 0.15f, 0.0f, -0.5f * wheelbase - 0.9f);
+    const glm::vec3 boundsMax(0.5f * track + 0.15f, 1.25f, 0.5f * wheelbase + 0.9f);
+    constexpr float kFrame = 1.0f / 144.0f;
+    constexpr float kHalfLength = 12000.0f;
+    std::cout << "drivetrain probe: " << gltf << '\n';
+    for (const bool losses : {false, true})
+    {
+        VehicleSettings tuning;
+        tuning.tyreModel = VehicleTyreModel::Brush;
+        tuning.dynamicBrakeBias = false;
+        tuning.drivetrainLosses.enabled = losses;
+        const VehicleSettings settings = FitVehicleSettingsToBounds(boundsMin, boundsMax, ApplyCarSpec(tuning, *spec), &layout);
+        PhysicsWorld world;
+        const std::vector<glm::vec3> vertices = {{-50.0f, 0.0f, -kHalfLength}, {-50.0f, 0.0f, kHalfLength}, {50.0f, 0.0f, kHalfLength}, {50.0f, 0.0f, -kHalfLength}};
+        const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+        Require(world.AddStaticMesh(vertices, indices, PhysicsWorld::kDefaultSurfaceFriction), "the straight");
+        const VehicleId car = world.AddVehicle(settings, {glm::dvec3(0.0, 0.05, 50.0 - kHalfLength), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        for (float t = 0.0f; t < 1.0f; t += kFrame)
+        {
+            world.Update(kFrame);
+        }
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(car, controls);
+        float t = 0.0f;
+        float to100 = -1.0f;
+        float to200 = -1.0f;
+        VehicleTelemetry at100;
+        VehicleTelemetry at200;
+        float top = 0.0f;
+        float topAt = 0.0f;
+        VehicleTelemetry telemetry = world.GetVehicleTelemetry(car);
+        // Until the speed has not grown by 0.2 km/h in 10 s, or the straight runs out.
+        while (t < 240.0f && t - topAt < 10.0f && world.GetVehiclePose(car).position.z < kHalfLength - 300.0)
+        {
+            world.Update(kFrame);
+            t += kFrame;
+            telemetry = world.GetVehicleTelemetry(car);
+            const float kmh = telemetry.forwardSpeed * 3.6f;
+            if (to100 < 0.0f && kmh >= 100.0f)
+            {
+                to100 = t;
+                at100 = telemetry;
+            }
+            if (to200 < 0.0f && kmh >= 200.0f)
+            {
+                to200 = t;
+                at200 = telemetry;
+            }
+            if (kmh > top + 0.2f)
+            {
+                top = kmh;
+                topAt = t;
+            }
+        }
+        const VehicleTelemetry atTop = telemetry;
+        controls.throttle = 0.0f;
+        world.SetVehicleControls(car, controls);
+        for (float c = 0.0f; c < 5.0f; c += kFrame)
+        {
+            world.Update(kFrame);
+        }
+        const float coasted = world.GetVehicleTelemetry(car).forwardSpeed * 3.6f;
+        const auto lost = [](const VehicleTelemetry& at)
+        {
+            return std::to_string(at.drivetrainMeshLossKw) + " + " + std::to_string(at.drivetrainSpinLossKw) + " kW (gear " + std::to_string(at.gear) + ")";
+        };
+        std::cout << (losses ? "  with the losses" : "  lossless       ") << ": crank peak " << settings.maxEngineTorque << " Nm, " << PeakCurvePower(settings.torqueCurve) / 735.5f
+                  << " PS; 0-100 " << to100 << " s, 0-200 " << to200 << " s, top " << top << " km/h in gear " << atTop.gear << " (" << topAt
+                  << " s); off the throttle 5 s: " << atTop.forwardSpeed * 3.6f << " -> " << coasted << " km/h\n"
+                  << "    lost at 100: " << lost(at100) << ", at 200: " << lost(at200) << ", at the top: " << lost(atTop) << '\n';
+    }
+}
+
 // MINIENGINE_TYRE_PROBE=<car.gltf>: the car on flat ground on the brush tyre, with and without what its
 // tyres' own data adds step by step (ComputeTyreStepTerms), through a coast-down, a stop from 100 km/h,
 // 0-100 km/h and a steady turn. Prints the figures; checks nothing.
@@ -2492,6 +2588,7 @@ int main()
         TyreLibraryStoresAndFindsTyres();
         ImportPutsTheCarsTyresInTheLibrary();
         ProbeCarTyreTerms();
+        ProbeDrivetrainLosses();
         FourWheelDriveRearSteerAndBodyBecomeASpec();
         ImportWritesFourWheelDriveRearSteerAndBody();
         LiveAxleDataBecomesASolidAxle();
