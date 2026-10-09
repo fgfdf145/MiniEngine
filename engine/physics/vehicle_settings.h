@@ -316,6 +316,31 @@ struct VehicleTurbo
 // A turbo's steady boost at these revs and this much throttle (0 to 1).
 float VehicleTurboBoost(const VehicleTurbo& turbo, float rpm, float throttle);
 
+// What the drivetrain loses between the clutch and the wheels (design:
+// docs/design/2026-10-09-drivetrain-losses-design.md). The gears' meshes pass a share of the torque that goes
+// through them (efficiency, 1 none lost): the gearbox in an indirect gear (two meshes on the layshaft), in its
+// direct gear (ratio 1, through the main shaft: bearings and seals only), the final drive's hypoid and a
+// four-wheel drive's transfer case. Driving, the wheels get the efficiency's share of the engine's torque; on
+// the overrun the wheels must give the engine's drag over it. Besides, oil churning and the bearings drag
+// each axle the drivetrain turns, whatever the load: spinTorque plus spinTorquePerSpeed per rad/s of the
+// wheels' speed, at the wheels (Nm, the axle's two together; the gearbox's own drag is in the driven rear's).
+//
+// Assetto Corsa has no drivetrain losses: its torque curves already are what reaches the wheels (Kunos' own
+// figures for its cars are about 1.15 times the curves). With the losses on, ApplyCarSpec takes such a curve
+// as the indirect gears' wheels' and turns it into the crank's (over ReferenceDrivetrainEfficiency), so that
+// at full throttle in those gears the wheels get the game's torque; the direct gear gets a little more, the
+// overrun brakes harder and the spin losses take some top speed.
+struct VehicleDrivetrainLosses
+{
+    bool enabled = false;
+    float gearboxEfficiency = 0.96f;
+    float directGearEfficiency = 0.985f;
+    float finalDriveEfficiency = 0.96f;
+    float transferEfficiency = 0.97f;
+    float spinTorque = 3.0f;          // Nm per axle, at the wheels
+    float spinTorquePerSpeed = 0.04f; // Nm per rad/s of the wheels' speed, per axle
+};
+
 struct VehicleSettings
 {
     float massKg = 1400.0f;
@@ -491,6 +516,8 @@ struct VehicleSettings
     float centreCouplingRampTorque = 0.0f;
     float centreCouplingMaxTorque = 0.0f;
     std::array<VehicleAxleDifferential, 2> axleDifferentials{};
+    // The gears', the final drive's and the transfer case's losses (off: the drivetrain passes everything).
+    VehicleDrivetrainLosses drivetrainLosses;
     // Traction control: the clutch slips once the engine asks the driven wheels for more torque than their
     // tyres can hold, this share of their peak grip on the load they carry (1 is the limit, less stays short of
     // it). 0 is off. Without it a car at full throttle in a low gear spins its tyres several times over.
@@ -812,7 +839,25 @@ bool HasSuspensionGeometry(const VehicleSettings& settings);
 
 // `tuning` with the fields `spec` knows replaced by its figures.
 // A car with an ERS gets its motor's torque curve and, for now, ersDelivery AddedToEngine.
+// With tuning.drivetrainLosses on, the spec's torque curves (the wheels' in an indirect gear, as the game
+// has them) become the crank's: over ReferenceDrivetrainEfficiency.
 VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec& spec);
+
+// The share of the torque the drivetrain passes from the clutch to the wheels in a gear of this ratio
+// (VehicleDrivetrainLosses): the gearbox's (a ratio of 1 is the direct gear; 0, neutral, passes nothing to
+// lose), the final drive's, and with a centre differential the transfer case's, which a coupling's front
+// takes on its own share instead (ApplyCentreCoupling). 1 with the losses off.
+float DrivetrainEfficiency(const VehicleSettings& settings, float gearRatio);
+// The same in an indirect gear: what ApplyCarSpec takes the game's curves to have been reduced by.
+float ReferenceDrivetrainEfficiency(const VehicleSettings& settings);
+// The torque to add to the engine so that the clutch passes what the drivetrain delivers: driving (`net`,
+// the engine's torque less its drag, above 0) the wheels get efficiency * net, so -(1 - efficiency) * net;
+// on the overrun the wheels must give net / efficiency, so (1 / efficiency - 1) * net. `efficiency` 1 adds 0.
+float DrivetrainLossTorque(float net, float efficiency);
+// An axle's churning and bearing drag at the wheels (Nm, the two wheels together) at this wheel speed (rad/s).
+float DrivetrainSpinTorque(const VehicleDrivetrainLosses& losses, float wheelSpeed);
+// The most power (W) a torque curve (rpm, Nm; sorted) gives, read linearly between its points.
+float PeakCurvePower(const std::vector<glm::vec2>& curve);
 
 // Two torque curves (rpm, Nm) added: a point at every rpm either has, each curve read linearly between
 // its points and held at its end values outside them. Both sorted by rpm; so is the result.

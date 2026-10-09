@@ -9,9 +9,11 @@
 #include <engine/renderer/scene_capture_view.h>
 
 #include <array>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -29,6 +31,11 @@ class EditorRenderBackendBase : public IRenderBackend
     void StopVideoRecording() override;
     bool StartQuadRecording(const VideoRecordingRequest& request, std::string& error) override;
     void StopQuadRecording() override;
+    bool TakePhoto(const PhotoRequest& request, std::string& error) override;
+    bool IsTakingPhoto() const override
+    {
+        return m_photo.has_value();
+    }
 
   protected:
     EditorRenderBackendBase(
@@ -67,6 +74,13 @@ class EditorRenderBackendBase : public IRenderBackend
     // As FlushVideoFrames, for the quad recording.
     virtual void FlushQuadVideoFrames()
     {
+    }
+    // Writes the photo view's picture of the frame drawn last (SceneCaptureView::photo) to path as a
+    // PNG, once the render thread has finished it. Throws when there is none.
+    virtual void CapturePhotoView(const std::filesystem::path& path)
+    {
+        (void)path;
+        throw std::runtime_error("This render backend cannot take photos");
     }
     // This frame's quad cameras, in the canvas's order (UpdateCaptureViews): while a quad recording
     // runs or the Quad Recording window previews them, and there is something to follow; else none.
@@ -121,6 +135,12 @@ class EditorRenderBackendBase : public IRenderBackend
     bool StartQuadRecordingNow(const VideoRecordingRequest& request, std::string& error);
     void StopQuadRecordingNow();
     void UpdateQuadRecording();
+    // Tools > Take Photo: a photo at the Photo Mode window's settings to
+    // captures/photo_<date>_<time>.png.
+    void TakePhotoFromEditor();
+    // Saves the photo once its view has rendered its warm-up frames, before this frame's views are
+    // placed; reports how it ended in State().photoStatus.
+    void FinishPhoto();
     // What the quad cameras follow this frame: the driven car's body, else the selected model; with
     // its name. Nothing when there is neither.
     struct QuadRecordingTarget
@@ -151,6 +171,16 @@ class EditorRenderBackendBase : public IRenderBackend
     std::unique_ptr<VideoRecorder> m_videoRecorder;
     std::unique_ptr<QuadVideoRecording> m_quadRecording;
     std::vector<SceneCaptureView> m_captureViews;
+    // The photo being made: what was asked, and how many frames have named its view.
+    struct PhotoInProgress
+    {
+        PhotoRequest request;
+        uint32_t framesQueued = 0;
+    };
+    std::optional<PhotoInProgress> m_photo;
+    // The viewport's width over its height as the scene last rendered it (UpdateViewportMatrices),
+    // which the photo frames inside.
+    float m_viewportAspect = 16.0f / 9.0f;
     // The fixed viewport size before the recording fixed it, put back when it stops.
     std::optional<RenderExtent> m_fixedViewportExtentBeforeRecording;
 

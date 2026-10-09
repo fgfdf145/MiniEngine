@@ -2,6 +2,7 @@
 
 #include <engine/logic/gizmo_settings.h>
 #include <engine/scene/scene_components.h>
+#include <engine/scene/scene_drive_path.h>
 #include <engine/scene/scene_environment.h>
 #include <engine/scene/scene_minimap.h>
 #include <engine/scene/scene_streaming.h>
@@ -68,6 +69,8 @@ struct SerializedSceneData
     SceneEnvironment environment;
     std::vector<SceneStreamingWorld> streaming;
     SceneMinimap minimap;
+    // Lines for a car to follow by itself in driving tests.
+    std::vector<SceneDrivePath> drivePaths;
     std::string selectedEntityUuid;
     // Legacy v1/v2 model-list index, retained for backward-compatible loads.
     int selectedEntityIndex = 0;
@@ -126,6 +129,9 @@ class IEditorWorld : public ISceneWorld
     // The map the viewport shows at its bottom left; invalid (no image) when the scene has none.
     virtual const SceneMinimap& GetMinimap() const = 0;
     virtual void SetMinimap(SceneMinimap minimap) = 0;
+    // The lines a car can be set to follow (VehiclePathFollower); saved with the scene.
+    virtual const std::vector<SceneDrivePath>& GetDrivePaths() const = 0;
+    virtual void SetDrivePaths(std::vector<SceneDrivePath> paths) = 0;
     virtual const SceneEnvironment& GetEnvironment() const = 0;
     virtual void SetEnvironment(const SceneEnvironment& environment) = 0;
 

@@ -1027,6 +1027,10 @@ struct PhysicsWorld::Impl
         // A four-wheel drive's centre coupling: the torque it passed in the last step (Nm at the transfer case,
         // rear to front positive), see ApplyCentreCoupling.
         float centreCouplingTorque = 0.0f;
+        // The power the drivetrain lost in the last step (W): in the gears' meshes (ApplyDrivetrainLoss and the
+        // coupling's transfer case) and to churning and bearings (ApplyDrivetrainSpin).
+        float drivetrainMeshLoss = 0.0f;
+        float drivetrainSpinLoss = 0.0f;
         // Rear-wheel steering (settings.rearSteerControllers): each controller's filtered value, the rear
         // wheels' angle (radians, with the front positive), the rear wheels' forward axes before it, and the
         // body's velocity a step ago for the lateral acceleration it reads. See ApplyRearSteer.
@@ -1358,7 +1362,7 @@ struct PhysicsWorld::Impl
             }
             const JPH::VehicleTransmission& transmission = controller->GetTransmission();
             const double propshaft = controller->GetEngine().GetTorque(std::max(controller->GetForwardInput(), 0.0f)) * transmission.GetClutchFriction() *
-                                     transmission.GetCurrentRatio() * share;
+                                     transmission.GetCurrentRatio() * share * StepDrivetrainEfficiency(vehicle, *controller);
             const double moment = data.axleTorqueReaction * propshaft;
             solid->SetHousingMoment(suspension::Vec3(moment, 0.0, 0.0));
             // The body takes the other end of it, about its own length.
@@ -1825,7 +1829,9 @@ struct PhysicsWorld::Impl
         const VehicleSettings& settings = vehicle.settings;
         const JPH::VehicleEngine& engine = controller.GetEngine();
         const JPH::VehicleTransmission& transmission = controller.GetTransmission();
-        const float engineTorque = engine.GetTorque(std::abs(controller.GetForwardInput())) - EngineCoastTorque(settings, engine.GetCurrentRPM(), vehicle.pedal);
+        const float netTorque = engine.GetTorque(std::abs(controller.GetForwardInput())) - EngineCoastTorque(settings, engine.GetCurrentRPM(), vehicle.pedal);
+        // What the drivetrain's losses (ApplyDrivetrainLoss) leave of it.
+        const float engineTorque = netTorque + DrivetrainLossTorque(netTorque, StepDrivetrainEfficiency(vehicle, controller));
         const bool overrun = engineTorque < 0.0f;
         const float driveTorque = std::abs(engineTorque) * transmission.GetClutchFriction() * std::abs(transmission.GetCurrentRatio());
         const float carCoast = settings.limitedSlipCoast >= 0.0f ? settings.limitedSlipCoast : vehicle.limitedSlipLock;
@@ -1903,10 +1909,21 @@ struct PhysicsWorld::Impl
         const float ramp = rate > stableRate ? settings.centreCouplingRampTorque * stableRate / rate : settings.centreCouplingRampTorque;
         const float shaftTorque = ComputeCentreCouplingTorque(ramp, settings.centreCouplingMaxTorque, finalDrive, rearSpeed, frontSpeed);
         const float wheelTorque = 0.5f * shaftTorque * finalDrive;
-        frontLeft->ApplyTorque(wheelTorque, stepSeconds);
-        frontRight->ApplyTorque(wheelTorque, stepSeconds);
-        rearLeft->ApplyTorque(-wheelTorque, stepSeconds);
-        rearRight->ApplyTorque(-wheelTorque, stepSeconds);
+        // The transfer case's gears lose their share of what goes through them, on the side the power goes to:
+        // the front's when the coupling drives it, the rear's when the front drives the rear.
+        float frontTorque = wheelTorque;
+        float rearTorque = -wheelTorque;
+        if (settings.drivetrainLosses.enabled)
+        {
+            const float transfer = std::clamp(settings.drivetrainLosses.transferEfficiency, 0.05f, 1.0f);
+            const bool toFront = wheelTorque * frontSpeed >= 0.0f;
+            (toFront ? frontTorque : rearTorque) *= transfer;
+            vehicle.drivetrainMeshLoss += (1.0f - transfer) * std::abs(2.0f * wheelTorque * (toFront ? frontSpeed : rearSpeed));
+        }
+        frontLeft->ApplyTorque(frontTorque, stepSeconds);
+        frontRight->ApplyTorque(frontTorque, stepSeconds);
+        rearLeft->ApplyTorque(rearTorque, stepSeconds);
+        rearRight->ApplyTorque(rearTorque, stepSeconds);
         vehicle.centreCouplingTorque = shaftTorque;
     }
 
@@ -2524,6 +2541,65 @@ struct PhysicsWorld::Impl
         if (torque > 0.0f)
         {
             engine.ApplyTorque(-torque, stepSeconds);
+        }
+    }
+
+    // The share of the engine's torque that reaches the wheels in this step (settings.drivetrainLosses): the
+    // gear's, through the clutch as far as it is shut (an open clutch passes nothing to lose).
+    float StepDrivetrainEfficiency(const Vehicle& vehicle, const JPH::WheeledVehicleController& controller) const
+    {
+        const JPH::VehicleTransmission& transmission = controller.GetTransmission();
+        const float efficiency = DrivetrainEfficiency(vehicle.settings, transmission.GetCurrentRatio());
+        return 1.0f - (1.0f - efficiency) * std::clamp(transmission.GetClutchFriction(), 0.0f, 1.0f);
+    }
+
+    // The gears' meshes' loss, taken at the engine (the physics engine's drivetrain passes everything): the engine's
+    // torque less its drag is what would go through the clutch, and the torque added here makes the wheels get the
+    // efficiency's share of it driving, and give it over the efficiency on the overrun (DrivetrainLossTorque).
+    void ApplyDrivetrainLoss(Vehicle& vehicle, JPH::WheeledVehicleController& controller) const
+    {
+        if (!vehicle.settings.drivetrainLosses.enabled)
+        {
+            return;
+        }
+        JPH::VehicleEngine& engine = controller.GetEngine();
+        const float net = engine.GetTorque(std::abs(controller.GetForwardInput())) - EngineCoastTorque(vehicle.settings, engine.GetCurrentRPM(), vehicle.pedal);
+        const float loss = DrivetrainLossTorque(net, StepDrivetrainEfficiency(vehicle, controller));
+        if (loss == 0.0f)
+        {
+            return;
+        }
+        engine.ApplyTorque(loss, stepSeconds);
+        vehicle.drivetrainMeshLoss += std::abs(loss) * engine.GetCurrentRPM() * 2.0f * std::numbers::pi_v<float> / 60.0f;
+    }
+
+    // Churning and bearing drag on each axle the drivetrain turns (DrivetrainSpinTorque), shared by its two wheels and,
+    // as dry friction is, never turning a wheel back.
+    void ApplyDrivetrainSpin(Vehicle& vehicle)
+    {
+        const VehicleDrivetrainLosses& losses = vehicle.settings.drivetrainLosses;
+        if (!losses.enabled)
+        {
+            return;
+        }
+        const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
+        for (int axle = 0; axle < 2; ++axle)
+        {
+            const bool driven = vehicle.drive == VehicleDrive::AllWheel || (axle == 0) == (vehicle.drive == VehicleDrive::FrontWheel);
+            if (!driven)
+            {
+                continue;
+            }
+            auto* left = static_cast<JPH::WheelWV*>(wheels[static_cast<JPH::uint>(2 * axle)]);
+            auto* right = static_cast<JPH::WheelWV*>(wheels[static_cast<JPH::uint>(2 * axle + 1)]);
+            const float speed = 0.5f * (left->GetAngularVelocity() + right->GetAngularVelocity());
+            const float limit = 0.5f * DrivetrainSpinTorque(losses, speed);
+            for (JPH::WheelWV* wheel : {left, right})
+            {
+                const float drag = RollingResistanceTorque(wheel->GetAngularVelocity(), 0.0f, wheel->GetSettings()->mInertia, limit, stepSeconds);
+                vehicle.drivetrainSpinLoss += std::abs(drag * wheel->GetAngularVelocity());
+                wheel->ApplyTorque(drag, stepSeconds);
+            }
         }
     }
 
@@ -3397,6 +3473,8 @@ VehicleTelemetry PhysicsWorld::GetVehicleTelemetry(VehicleId id) const
         telemetry.wheelsInContact += wheel->HasContact() ? 1u : 0u;
     }
     telemetry.centreCouplingTorque = vehicle.centreCouplingTorque;
+    telemetry.drivetrainMeshLossKw = vehicle.drivetrainMeshLoss * 0.001f;
+    telemetry.drivetrainSpinLossKw = vehicle.drivetrainSpinLoss * 0.001f;
     telemetry.submergedShare = vehicle.submergedShare;
     telemetry.flooded = FloodedShare(vehicle.floodSeconds);
     telemetry.engineDrowned = vehicle.engineDrowned;
@@ -3521,6 +3599,9 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             impl.ApplyTractionControl(vehicle, input, localVelocity.GetZ());
             impl.ApplyAerodynamics(vehicle);
             impl.ApplySurfaceRollingResistance(vehicle);
+            vehicle.drivetrainMeshLoss = 0.0f;
+            vehicle.drivetrainSpinLoss = 0.0f;
+            impl.ApplyDrivetrainSpin(vehicle);
             impl.DistributeBrakeTorque(vehicle);
             impl.ApplyAntiLock(vehicle, input.brake, localVelocity.GetZ());
             if (input.forward != 0.0f || input.right != 0.0f || input.brake != 0.0f || input.handBrake != 0.0f)
@@ -3536,6 +3617,7 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             impl.ApplyRearSteer(vehicle, input);
             controller->SetDriverInput(impl.SpoolTurbos(vehicle, *controller, input.forward), input.right, input.brake, input.handBrake);
             impl.ApplyEngineCoast(vehicle, *controller, input.forward);
+            impl.ApplyDrivetrainLoss(vehicle, *controller);
             impl.RememberWheelAngles(vehicle);
         }
 
@@ -3566,5 +3648,15 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
         impl.accumulatedSeconds = std::min(impl.accumulatedSeconds, step);
     }
     return steps;
+}
+
+int PhysicsWorld::RunSteps(int count, float carrySeconds)
+{
+    // Half a step over the count, so no rounding in the accumulator's subtractions can lose a step.
+    const int steps = std::clamp(count, 0, MaxStepsPerUpdate());
+    m_impl->accumulatedSeconds = (static_cast<float>(steps) + 0.5f) * m_impl->stepSeconds;
+    const int ran = Update(0.0f);
+    m_impl->accumulatedSeconds = std::clamp(carrySeconds, 0.0f, m_impl->stepSeconds);
+    return ran;
 }
 }

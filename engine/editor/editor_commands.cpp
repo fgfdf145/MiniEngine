@@ -378,6 +378,8 @@ void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state,
             return state.quadRecording;
         },
         IfBound(scene.toggleQuadRecording));
+    // A still from the viewport's camera at the Photo Mode window's size; the viewport keeps its own.
+    AddBound(registry, "tools.take_photo", "Take Photo", "Tools/Take Photo", ICON_PH_APERTURE, ImGuiMod_Ctrl | ImGuiKey_F12, scene.takePhoto);
     // Shaders are compiled with the build, not by the editor, so there is no log or cache to show.
     AddBound(registry, "tools.shader_log", "Shader Compiler Log", "Tools/Shader Compiler Log...", ICON_PH_FILE_TEXT, 0, scene.showShaderLog);
     registry.AddSeparator("Tools");

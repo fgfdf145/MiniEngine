@@ -390,6 +390,11 @@ void DrawEnvironmentEditor(IEditorWorld& scene)
     {
         environment.mode = static_cast<EnvironmentMode>(mode);
     }
+    DragFloatInRange("Exposure compensation (EV)", &environment.exposureCompensationEv, -5.0f, 5.0f, "%+.1f");
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Added to the camera's auto exposure compensation in this scene: the meter makes\na white studio grey, +3 keeps it white. Manual exposure ignores it.");
+    }
 
     if (ImGui::CollapsingHeader("Time of day"))
     {

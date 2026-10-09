@@ -22,6 +22,8 @@ add_library(engine_editor
     services/model_animation_service.h
     services/model_import_service.cpp
     services/model_import_service.h
+    services/photo_mode.cpp
+    services/photo_mode.h
     services/quad_recording.cpp
     services/quad_recording.h
     services/scene_io_service.cpp
@@ -32,6 +34,10 @@ add_library(engine_editor
     services/vehicle_rig_service.cpp
     services/vehicle_rig_service.h
     services/vehicle_drive_service.h
+    services/vehicle_drive_log.cpp
+    services/vehicle_drive_log.h
+    services/vehicle_path_follower.cpp
+    services/vehicle_path_follower.h
     services/vehicle_driver_service.cpp
     services/vehicle_driver_service.h
     services/vehicle_gear_shift.cpp
@@ -78,11 +84,15 @@ add_library(engine_editor
     ui/panels/asset_browser_panel.cpp
     ui/panels/asset_browser_panel.h
     ui/panels/camera_panel.cpp
+    ui/panels/drive_paths_panel.cpp
+    ui/panels/drive_paths_panel.h
     ui/panels/camera_panel.h
     ui/panels/graphics_debug_panel.cpp
     ui/panels/graphics_debug_panel.h
     ui/panels/input_monitor_panel.cpp
     ui/panels/input_monitor_panel.h
+    ui/panels/photo_mode_panel.cpp
+    ui/panels/photo_mode_panel.h
     ui/panels/quad_recording_panel.cpp
     ui/panels/quad_recording_panel.h
     ui/panels/scene_panel.cpp

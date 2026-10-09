@@ -2,6 +2,7 @@
 
 #include <imgui.h>
 #include <engine/platform/process/process_allocation.h>
+#include <engine/editor/services/photo_mode.h>
 #include <engine/editor/services/quad_recording.h>
 #include <engine/platform/ui/ui_scale.h>
 #include <engine/renderer/camera.h>
@@ -88,6 +89,8 @@ struct EngineSettings
     EngineViewSettings view;
     // The Quad Recording window's cameras and video.
     QuadRecordingSettings quadRecording;
+    // The Photo Mode window's photo size and how it is made.
+    PhotoModeSettings photoMode;
 };
 
 // Sets the camera's and the renderer's settings from the saved ones; the G-buffer view is left as it is.

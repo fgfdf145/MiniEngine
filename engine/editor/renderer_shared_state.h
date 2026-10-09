@@ -175,6 +175,10 @@ struct RendererSharedState
     VideoRecordingIndicator quadRecordingIndicator;
     // What the quad cameras follow, by name: the driven car, else the selected model; empty for none.
     std::string quadRecordingTarget;
+    // The Photo Mode window's settings (copied from the editor every frame) and the photo as the
+    // backend last saw it.
+    PhotoModeSettings photoMode;
+    PhotoStatus photoStatus;
     std::deque<PendingModelLoad> pendingModelLoads;
     std::optional<std::string> pendingScenePath;
     std::filesystem::path engineSettingsPath;
