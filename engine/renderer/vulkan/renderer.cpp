@@ -247,7 +247,7 @@ void ForEachMaterialTexture(const CpuRenderSubmesh& submesh, Visit&& visit)
     visit(textures.thickness, TextureUsage::Data);
     visit(textures.diffuseTransmission, TextureUsage::Data);
     visit(textures.diffuseTransmissionColor, TextureUsage::Color);
-    // Combined as sRGB-encoded values (detail_layers.glsl), so read undecoded.
+    // Combined as sRGB-encoded values (detail_layers.slang), so read undecoded.
     visit(textures.detailMask, TextureUsage::Data);
     for (const std::string& layer : textures.detailLayers)
     {

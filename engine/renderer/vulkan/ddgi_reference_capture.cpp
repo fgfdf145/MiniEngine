@@ -70,7 +70,7 @@ uint8_t EncodeSrgb(float linear)
 }
 }
 
-// DdgiIrradiance of ddgi_common.glsl redone on the CPU for one surface point from the read-back
+// DdgiIrradiance of ddgi_common.slang redone on the CPU for one surface point from the read-back
 // probes, every level's every probe logged with its weights: where a lookup goes wrong, this says
 // which probe and which term (--reference-explain).
 void VulkanRenderer::ExplainDdgiLookup(const ImageCaptureRequest& device, glm::vec3 P, glm::vec3 N, glm::vec3 V)
@@ -265,7 +265,7 @@ void VulkanRenderer::CompareDdgiProbes(const std::filesystem::path& prefix, cons
     probes.resize(std::min<size_t>(probes.size(), 300));
 
     // Per probe, the texels whose directions lie nearest the six axes: TexelDirection in
-    // ddgi_update.comp, DdgiOctDecode in ddgi_common.glsl.
+    // ddgi_update.comp, DdgiOctDecode in ddgi_common.slang.
     const auto octDecode = [](glm::vec2 encoded)
     {
         glm::vec3 direction(encoded.x, 1.0f - std::abs(encoded.x) - std::abs(encoded.y), encoded.y);

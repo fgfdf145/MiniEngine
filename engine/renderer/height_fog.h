@@ -9,7 +9,7 @@ namespace me
 
 // Exponential height fog (docs/design/2026-09-28-height-fog-design.md): extinction
 // sigma(y) = density * exp(-(y - fogHeight) * falloff) per metre, the same in r, g and b. The
-// shaders mirror these functions line for line in shaders/vulkan/height_fog.glsl.
+// shaders mirror these functions line for line in shaders/vulkan/height_fog.slang.
 
 // The height exponent -(y - fogHeight) * falloff is held at or below this, so a camera far below
 // the fog height cannot overflow.

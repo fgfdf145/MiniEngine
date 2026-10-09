@@ -22,7 +22,7 @@ class VulkanSwapchain
 
     VkSwapchainKHR GetHandle() const;
     VkFormat GetImageFormat() const;
-    // True when the swapchain is HDR10: 10-bit, PQ-encoded Rec.2020 (see hdr_output.glsl).
+    // True when the swapchain is HDR10: 10-bit, PQ-encoded Rec.2020 (see hdr_output.slang).
     bool IsHdr() const;
     VkExtent2D GetExtent() const;
     const std::vector<VkImageView>& GetImageViews() const;

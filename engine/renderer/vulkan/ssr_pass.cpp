@@ -33,7 +33,7 @@ struct SsrPushConstants
 };
 static_assert(sizeof(SsrPushConstants) == 36, "SsrPushConstants must match ssr_trace.comp");
 
-// Must match SSR_TRACE_FLAG_* in shaders/vulkan/ssr_half_res.glsl.
+// Must match SSR_TRACE_FLAG_* in shaders/vulkan/ssr_half_res.slang.
 constexpr uint32_t kTraceFlagFullResolution = 1u;
 
 // Must match SsrResolveConstants in shaders/vulkan/ssr_resolve.comp.
@@ -43,7 +43,7 @@ struct SsrResolvePushConstants
     glm::vec2 invExtent{0.0f};
     float historyScale = 1.0f;
     uint32_t flags = 0;
-    // The trace's, for which pixel of each 2x2 block it traced (ssr_half_res.glsl).
+    // The trace's, for which pixel of each 2x2 block it traced (ssr_half_res.slang).
     uint32_t frameIndex = 0;
     float unused = 0.0f;
 };
@@ -154,7 +154,7 @@ ScenePassId VulkanSsrTracePass::Id() const
 RenderPassIo VulkanSsrTracePass::Io() const
 {
     // The coat target and the velocity target's coat normal: a coated pixel traces its coat's lobe
-    // (ssr_lobe.glsl).
+    // (ssr_lobe.slang).
     static constexpr std::array<RenderTargetId, 5> kReads = {
         RenderTargetId::SceneDepth,
         RenderTargetId::GBufferNormal,
@@ -205,7 +205,7 @@ void VulkanSsrTracePass::Record(
     constants.historyScale = frame.taaHistoryScale;
     constants.frameIndex = frame.frameIndex;
     // DLSS ray reconstruction denoises the reflections itself and wants a raw sample in every pixel
-    // (ssr_half_res.glsl); otherwise half resolution, filtered by the resolve.
+    // (ssr_half_res.slang); otherwise half resolution, filtered by the resolve.
     constants.flags = frame.dlssRayReconstruction ? kTraceFlagFullResolution : 0u;
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SsrRaw, frame.imageIndex, frame.frameSlot);

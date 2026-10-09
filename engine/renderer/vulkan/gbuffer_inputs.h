@@ -21,11 +21,11 @@ namespace me
 //
 // It also owns the empty layout those pipelines declare at set 1. Vulkan requires every set index
 // below the highest one a pipeline layout uses to be declared, and both pipelines put the G-buffer
-// at set 2 so shaders/vulkan/gbuffer_inputs.glsl can declare it once for both.
+// at set 2 so shaders/vulkan/gbuffer_inputs.slang can declare it once for both.
 class VulkanGBufferDescriptors
 {
   public:
-    // Binding order: binding N samples kInputs[N]. gbuffer_inputs.glsl declares the same order.
+    // Binding order: binding N samples kInputs[N]. gbuffer_inputs.slang declares the same order.
     static constexpr std::array<RenderTargetId, 14> kInputs = {
         RenderTargetId::GBufferAlbedo,
         RenderTargetId::GBufferNormal,

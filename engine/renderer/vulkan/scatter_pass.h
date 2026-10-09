@@ -11,7 +11,7 @@ namespace me
 // (scatter.frag): the materials that scatter, alone, into their own RGBA16F colour and D32 depth at
 // the scene's extent. triangle.frag (under kScatterPrepass) writes the diffuse light entering the
 // surface, pre-exposed, with the draw slot + 1 in alpha; the forward pass then diffuses it through
-// the screen (volume_scatter_common.glsl), sampling both images through set 0 bindings 19 and 20.
+// the screen (volume_scatter_common.slang), sampling both images through set 0 bindings 19 and 20.
 //
 // The images live here rather than in SceneRenderTargets: the frame set binds one image, not one per
 // frame slot, and the forward pipelines read them outside the layout tracker. They rest in

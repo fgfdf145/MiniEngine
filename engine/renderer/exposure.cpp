@@ -18,7 +18,7 @@ namespace me
 
 static_assert(
     kExposureHistogramBinCount == exposure_shader::kExposureHistogramBinCount,
-    "the C++ bin count must match exposure_histogram.glsl");
+    "the C++ bin count must match exposure_histogram.slang");
 
 float ExposureFromEv100(float ev100)
 {

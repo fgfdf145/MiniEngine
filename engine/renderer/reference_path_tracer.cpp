@@ -60,7 +60,7 @@ glm::vec3 SampleCosine(const glm::vec3& N, Random& random)
     return glm::normalize(tangent * x + bitangent * y + N * z);
 }
 
-// OffsetRayOrigin in ray_tracing_common.glsl (Wachter and Binder, Ray Tracing Gems chapter 6).
+// OffsetRayOrigin in ray_tracing_common.slang (Wachter and Binder, Ray Tracing Gems chapter 6).
 glm::vec3 OffsetRayOrigin(const glm::vec3& position, const glm::vec3& normal)
 {
     constexpr float kOriginScale = 1.0f / 32.0f;

@@ -19,7 +19,7 @@ namespace me
 
 struct RayTracingFunctions;
 
-// Top-level instance masks, matching RAY_MASK_* in shaders/vulkan/ray_tracing_common.glsl: one each
+// Top-level instance masks, matching RAY_MASK_* in shaders/vulkan/ray_tracing_common.slang: one each
 // for static and moving instances that do and do not cast shadows. The probes' rays trace the static
 // ones, shadow rays the casters, the per-pixel visibility rays all four.
 inline constexpr uint8_t kRayMaskStaticCaster = 0x1;

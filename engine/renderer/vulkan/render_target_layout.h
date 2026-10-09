@@ -21,7 +21,7 @@ namespace me
 enum class RenderTargetId : uint32_t
 {
     SceneDepth,
-    // Pre-exposed HDR color: 1.0 is 100 cd/m^2 as displayed (see shaders/vulkan/pre_exposure.glsl).
+    // Pre-exposed HDR color: 1.0 is 100 cd/m^2 as displayed (see shaders/vulkan/pre_exposure.slang).
     SceneHdr,
     SceneLdr,
     GBufferAlbedo,
@@ -30,7 +30,7 @@ enum class RenderTargetId : uint32_t
     GBufferEmissive,
     GBufferVelocity,
     // GB5: the dielectric's specular, rgb sqrt(F0) and a F90, for pixels with the custom specular
-    // flag (see SHADING_FLAG_* in shaders/vulkan/gbuffer_common.glsl).
+    // flag (see SHADING_FLAG_* in shaders/vulkan/gbuffer_common.slang).
     GBufferSpecular,
     // GB6: the coat's factor and roughness and the anisotropy's angle and strength.
     GBufferCoat,

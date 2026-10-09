@@ -1,6 +1,6 @@
 // Fits the linearly transformed cosine (LTC) tables the area lights use (Heitz, Dupuy, Hill and
 // Neubelt 2016) to this engine's specular lobe: GGX with the height-correlated Smith visibility,
-// the lobe brdf_common.glsl and pbr_common.glsl draw. Writes engine/renderer/ltc_table.cpp.
+// the lobe brdf_common.slang and pbr_common.slang draw. Writes engine/renderer/ltc_table.cpp.
 //
 // The method is the paper's: for each (roughness, N.V) texel, a 3 x 3 matrix M with the shape
 // frame * [[m11, 0, m13], [0, m22, 0], [0, 0, 1]] maps the clamped cosine distribution onto the
@@ -24,7 +24,7 @@ namespace
 constexpr int kSize = 64;
 constexpr int kSampleGrid = 32;
 constexpr float kPi = 3.14159265358979f;
-constexpr float kMinRoughness = 0.04f; // pbr_common.glsl floors roughness here
+constexpr float kMinRoughness = 0.04f; // pbr_common.slang floors roughness here
 
 float VisibilitySmithGgxCorrelated(float NdV, float NdL, float alpha)
 {
@@ -323,7 +323,7 @@ int main()
             previousRow[t] = ltc;
 
             // The inverse, scaled so its middle element is 1 (the distribution does not change
-            // under a uniform scale of M), as pbr_common.glsl rebuilds it:
+            // under a uniform scale of M), as pbr_common.slang rebuilds it:
             // mat3(vec3(x, 0, y), vec3(0, 1, 0), vec3(z, 0, w)).
             const glm::mat3 invM = ltc.invM / ltc.invM[1][1];
             matrices[a * kSize + t] = glm::vec4(invM[0][0], invM[0][2], invM[2][0], invM[2][2]);

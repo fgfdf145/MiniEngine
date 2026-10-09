@@ -337,7 +337,7 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
     };
     describeAoTarget(RenderTargetId::AoRaw, "AO trace");
     // The AO and GI traces run at half resolution, one pixel of each 2x2 block, and their resolves
-    // upsample (vbao_common.glsl's HalfResSourcePixel).
+    // upsample (vbao_common.slang's HalfResSourcePixel).
     Describe(RenderTargetId::AoRaw).downscale = 2;
     describeAoTarget(RenderTargetId::SceneAo, "AO");
 
@@ -357,7 +357,7 @@ void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
         description.bindToImGui = false;
     };
     // Full size although the reflection trace usually runs at half resolution and fills only its
-    // top-left quarter (ssr_half_res.glsl): under DLSS ray reconstruction it traces every pixel.
+    // top-left quarter (ssr_half_res.slang): under DLSS ray reconstruction it traces every pixel.
     describeSsrTarget(RenderTargetId::SsrRaw, "SSR trace");
     describeSsrTarget(RenderTargetId::SceneReflections, "Reflections");
     // One-bounce indirect diffuse: rgb radiance, the same format and usage.

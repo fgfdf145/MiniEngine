@@ -1,5 +1,5 @@
 // Polyphony Digital's reference GT7 tone mapping sample, vendored as the oracle that
-// tests/tonemap_tests.cpp checks shaders/vulkan/gt7_tonemap.glsl against.
+// tests/tonemap_tests.cpp checks shaders/vulkan/gt7_tonemap.slang against.
 //
 // Local changes, and only these: #pragma once; the whole implementation is wrapped in the
 // gt7_reference namespace; functions are marked inline so the header can be included from more

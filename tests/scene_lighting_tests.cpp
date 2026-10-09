@@ -65,7 +65,7 @@ void ZeroIntensityAmbientMakesTheSceneDark()
     Require(NearlyEqual(selection.ambientLuminance, glm::vec3(0.0f)), "a zero intensity ambient light must give no ambient");
 }
 
-// The luminance the shader reads along d (SceneAmbientAlong in scene_common.glsl).
+// The luminance the shader reads along d (SceneAmbientAlong in scene_common.slang).
 glm::vec3 AmbientAlong(const SceneLightSelection& selection, const glm::vec3& d)
 {
     return selection.ambientLuminance + glm::vec3(

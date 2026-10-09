@@ -11,7 +11,7 @@ namespace me
 
 // The froxel grid the local lights are binned into: 16 x 9 tiles across NDC, whatever the viewport
 // size, times 24 depth slices spaced exponentially between the camera's near and far planes. Must
-// match the LIGHT_CLUSTER_* constants in shaders/vulkan/scene_common.glsl.
+// match the LIGHT_CLUSTER_* constants in shaders/vulkan/scene_common.slang.
 inline constexpr uint32_t kLightClusterTilesX = 16;
 inline constexpr uint32_t kLightClusterTilesY = 9;
 inline constexpr uint32_t kLightClusterSlices = 24;
@@ -31,7 +31,7 @@ struct LightClusterCamera
 };
 
 // The volume a light can reach: its range around its position (an area light's centre). The light
-// contributes exactly zero outside it (see RangeWindow in pbr_common.glsl), which is what lets a
+// contributes exactly zero outside it (see RangeWindow in pbr_common.slang), which is what lets a
 // cluster leave it out.
 struct LightClusterSphere
 {
@@ -63,7 +63,7 @@ LightClusterGrid BuildLightClusters(
     std::span<const LightClusterSphere> spheres,
     uint32_t indexCapacity);
 
-// The cluster a view-space position falls in, by the arithmetic FindLightCluster in pbr_common.glsl
+// The cluster a view-space position falls in, by the arithmetic FindLightCluster in pbr_common.slang
 // runs. Positions outside the grid clamp to its edge clusters.
 uint32_t FindLightCluster(const LightClusterGrid& grid, const glm::mat4& projection, const glm::vec3& viewPosition);
 }

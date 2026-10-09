@@ -383,7 +383,7 @@ if (-not $SkipSdkCheck)
         }
         else
         {
-            Write-Warning("Vulkan SDK was not detected. Set VULKAN_SDK before configuring the project if glslc is unavailable.")
+            Write-Warning("Vulkan SDK was not detected. Set VULKAN_SDK before configuring the project (Vulkan headers and validation layers; its dxcompiler.dll lets tools/render_ab/build_all.py --dxil check the shaders).")
         }
     }
     else
@@ -398,7 +398,7 @@ Write-Host "Next steps:" -ForegroundColor Yellow
 Write-Host "  1. Set VCPKG_ROOT to '$resolvedVcpkgRoot' if you want CMake to reuse this checkout."
 if ($platformName -eq "windows")
 {
-    Write-Host "  2. Ensure VULKAN_SDK points to a valid SDK install if glslc is not on PATH."
+    Write-Host "  2. Ensure VULKAN_SDK points to a valid SDK install (shaders compile with vcpkgs slangc; the SDK provides the Vulkan headers, validation layers and dxcompiler.dll)."
     Write-Host "  3. Build with automatic full-thread parallelism, for example: .\scripts\build.ps1 x64-debug"
 }
 else

@@ -4,7 +4,7 @@ namespace me
 {
 
 // Geometric specular anti-aliasing (Tokuyoshi & Kaplanyan 2019, as Filament ships it). Must match
-// shaders/vulkan/specular_aa.glsl.
+// shaders/vulkan/specular_aa.slang.
 inline constexpr float kSpecularAAVariance = 0.15f;
 inline constexpr float kSpecularAAThreshold = 0.2f;
 

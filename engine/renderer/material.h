@@ -10,7 +10,7 @@ namespace me
 
 // What a surface carries beyond the plain base, as bits of its shading flags. Written to GB2.a by
 // gbuffer.frag (flags / 255), so they must stay below 256 and match the SHADING_FLAG_* constants
-// in shaders/vulkan/gbuffer_common.glsl. The lighting pass reads only the G-buffer targets the
+// in shaders/vulkan/gbuffer_common.slang. The lighting pass reads only the G-buffer targets the
 // flags name, so a surface with none of them shades exactly as the plain base always did.
 // A clear dielectric coat (KHR_materials_clearcoat): GB6.rg.
 inline constexpr uint32_t kShadingFlagClearcoat = 1u;
@@ -35,7 +35,7 @@ inline constexpr uint32_t kShadingFlagUnlit = 64u;
 inline constexpr uint32_t kShadingFlagTransmission = 128u;
 
 // One draw's material parameters as the fragment shaders read them from the material buffer (set 0
-// binding 12, MaterialData in shaders/vulkan/material_common.glsl), indexed by the draw's slot.
+// binding 12, MaterialData in shaders/vulkan/material_common.slang), indexed by the draw's slot.
 // Every member is a 16-byte multiple, so the C++ layout is the std430 one without alignment macros.
 struct alignas(16) GpuMaterialData
 {
@@ -97,7 +97,7 @@ inline bool MaterialScatters(const GpuMaterialData& material)
     return material.volumeScale[3] > 0.5f;
 }
 
-// Every texture slot's KHR_texture_transform for one draw, set 0 binding 17 (material_uv.glsl): per
+// Every texture slot's KHR_texture_transform for one draw, set 0 binding 17 (material_uv.slang): per
 // slot, in the material set's binding order, two rows, (a, b, tx, UV set) and (c, d, ty, 0), as
 // ComputeTextureTransformRows writes them.
 inline constexpr uint32_t kGpuTextureTransformSlots = 27;

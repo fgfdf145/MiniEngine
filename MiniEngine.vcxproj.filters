@@ -218,7 +218,7 @@
     <None Include="scripts\install-render-scenes.sh">
       <Filter>Scripts\Shell</Filter>
     </None>
-    <None Include="shaders\**\*.vert;shaders\**\*.frag;shaders\**\*.comp;shaders\**\*.glsl">
+    <None Include="shaders\**\*.slang">
       <Filter>Shaders</Filter>
     </None>
   </ItemGroup>

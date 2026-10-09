@@ -46,7 +46,7 @@ void LevelsCentreOnTheCamera()
         for (float spacing : {1.0f, 2.0f, 4.0f, 8.0f})
         {
             const DdgiLevel grid = ComputeDdgiLevel(camera, spacing);
-            // What ddgi_common.glsl's fade assumes: every point within half the grid minus one cell of
+            // What ddgi_common.slang's fade assumes: every point within half the grid minus one cell of
             // the camera lies between the grid's first and last probes.
             const glm::vec3 low = glm::vec3(grid.origin) * spacing;
             const glm::vec3 high = glm::vec3(grid.origin + kDdgiGridSize - 1) * spacing;

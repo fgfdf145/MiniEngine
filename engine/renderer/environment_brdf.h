@@ -29,13 +29,13 @@ glm::vec2 IntegrateEnvironmentBrdf(float roughness, float NdV, uint32_t sampleCo
 // (getIBLGGXFresnel). For F0 = 1 it is 1 / (A + B), so a perfect conductor reflects exactly
 // everything; rough metals gain the most, dielectrics almost nothing. It replaced Filament's
 // 1 + F0 (1 / (A + B) - 1), which agrees at F0 = 0 and 1 but brightens coloured metals in between
-// (up to 11% at F0 = 0.5 on a rough lobe). pbr_common.glsl's SpecularEnergyCompensation is the
+// (up to 11% at F0 = 0.5 on a rough lobe). pbr_common.slang's SpecularEnergyCompensation is the
 // same formula.
 glm::vec3 SpecularEnergyCompensation(const glm::vec3& f0, const glm::vec2& environmentBrdf);
 
 // The directional albedo of the sheen lobe (KHR_materials_sheen, Filament's model): the integral of
 // D_Charlie * V_Neubelt * N.L over the hemisphere for a white sheen at this perceptual roughness,
-// seen at this N.V. pbr_common.glsl scales the base by 1 - max(sheenColor) * this and weights the
+// seen at this N.V. pbr_common.slang scales the base by 1 - max(sheenColor) * this and weights the
 // sheen's ambient by it. Estimated with sampleCount half vectors spread uniformly over the
 // hemisphere (Charlie's lobe is too broad for importance sampling to pay off). Not clamped: the
 // model exceeds 1 for smooth sheen at grazing angles; BuildEnvironmentBrdfLut clamps what it stores.

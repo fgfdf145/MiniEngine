@@ -195,7 +195,7 @@ GT7 把算子烘焙成 3D LUT，索引前做 `pow(x, 1/4)` 的非线性（即按
 
 | 项 | 本引擎现状 | 与 GT7 的关系 |
 | --- | --- | --- |
-| 色调映射 | `shaders/vulkan/gt7_tonemap.glsl`：GT7 参考实现的 SDR + ICtCp 移植，与 `tests/third_party/gt7/` 下的参考逐位一致 | 同一算子；尚无 HDR 输出，无 3D LUT |
+| 色调映射 | `shaders/vulkan/gt7_tonemap.slang`：GT7 参考实现的 SDR + ICtCp 移植，与 `tests/third_party/gt7/` 下的参考逐位一致 | 同一算子；尚无 HDR 输出，无 3D LUT |
 | 单位 | 物理单位渲染；`ExposureFromEv100` 让曝光后 1.0 = 传感器饱和；`kExposedToGt7FrameBuffer = 2.5` 把它放到 250 nit 纸白 | GT7 帧缓冲 1.0 = 100 nit，纸白 250 nit，换算一致 |
 | 自动曝光 | 帧缓冲直方图，百分位裁剪，明暗不对称的指数适应，EV 钳制 | 相当于 GT7 的单层"短期适应"加单一参考 |
 | 眩光 | Jimenez 2014 bloom，无阈值，固定 4% 能量混合 | 同属多级高斯近似；GT7 的权重随 F 值（即曝光）变化 |

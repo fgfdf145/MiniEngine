@@ -31,7 +31,7 @@ glm::vec3 ImportanceSampleGgx(float u, float v, float roughness)
 }
 
 // The height-correlated Smith visibility, G / (4 N.L N.V), as VisibilitySmithGgxCorrelated in
-// shaders/vulkan/brdf_common.glsl: the direct lights use the same term, so the table's energy
+// shaders/vulkan/brdf_common.slang: the direct lights use the same term, so the table's energy
 // compensation is that of the lobe they draw.
 float VisibilitySmithGgxCorrelated(float NdV, float NdL, float alpha)
 {

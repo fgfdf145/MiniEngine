@@ -82,10 +82,10 @@ void PreExposureIsExposureInFrameBufferUnits()
     }
     Require(
         pre_exposure_shader::kFrameBufferUnitsPerExposed == kFrameBufferUnitsPerExposed,
-        "pre_exposure.glsl and exposure.h must agree on the frame-buffer scale");
+        "pre_exposure.slang and exposure.h must agree on the frame-buffer scale");
     Require(
         NearlyEqual(pre_exposure_shader::kExposedPerFrameBufferUnit * kFrameBufferUnitsPerExposed, 1.0f),
-        "the two GLSL constants must be reciprocals");
+        "the two shader constants must be reciprocals");
 }
 
 void SunFitsInFp16InDaylight()
