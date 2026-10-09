@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <format>
 #include <map>
 #include <memory>
 #include <optional>
@@ -300,6 +301,8 @@ VehicleSettings DefaultTuning()
     // The tyres warm and cool as the game's do.
     tuning.tyreTemperatures = true;
     tuning.tyreWear = true;
+    // The gears, the final drive and the transfer case lose some of the torque, and their oil drags.
+    tuning.drivetrainLosses.enabled = true;
     return tuning;
 }
 
@@ -371,6 +374,14 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     {
         fitTuning = ApplyCarSpec(tuning, *carSpec);
         session->carData = DescribeCarSpec(*modelData->carSpec);
+        const float efficiency = ReferenceDrivetrainEfficiency(fitTuning);
+        if (efficiency < 1.0f && carSpec->torqueCurve.size() >= 2 && !fitTuning.torqueCurve.empty())
+        {
+            // The game's curve is the wheels'; the engine now makes more (ApplyCarSpec).
+            constexpr float kWattsPerMetricHorsepower = 735.49875f;
+            session->carData += std::format("; at the crank {:.0f} Nm, {:.0f} PS (drivetrain {:.1f}% in an indirect gear)", fitTuning.maxEngineTorque,
+                                            PeakCurvePower(fitTuning.torqueCurve) / kWattsPerMetricHorsepower, efficiency * 100.0f);
+        }
         // The body's shell is in the model's frame: scaled and turned into vehicle space as the bounds are.
         fitTuning.chassisHull.clear();
         for (const glm::vec3& point : modelData->carSpec->colliderHull)
