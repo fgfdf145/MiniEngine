@@ -6,7 +6,9 @@
 #include "gbuffer_common.slang"
 #include "gbuffer_inputs.slang"
 
-[[vk::binding(0, 0)]] Sampler2D hdrTexture;
+// Set 0 is VulkanTonemapPass's NVRHI binding set: the texture's sampler at 64.
+[[vk::binding(0, 0)]] Texture2D hdrTexture;
+[[vk::binding(64, 0)]] SamplerState hdrTextureSampler;
 
 // Must match GBufferDebugView in engine/renderer/render_types.h.
 static const uint GBUFFER_VIEW_OFF = 0u;
@@ -158,14 +160,14 @@ FragmentOutput main(FragmentInput input)
         // The lighting pass wrote heat colours times kFrameBufferUnitsPerExposed; scaling back shows
         // them as they were meant, without the operator bending their hues. Blend surfaces, shaded
         // on top by the forward pass, are exposed but not tone mapped here.
-        color = min(hdrTexture.Sample(input.fragTexCoord).rgb * kExposedPerFrameBufferUnit, float3(1.0));
+        color = min(hdrTexture.Sample(hdrTextureSampler, input.fragTexCoord).rgb * kExposedPerFrameBufferUnit, float3(1.0));
     }
     else
     {
         // The HDR target already holds pre-exposed values in the operator's unit (see
         // pre_exposure.slang). Clamp below fp16's maximum before the operator: an infinite input
         // would turn into NaN inside it and show a very bright pixel as black.
-        color = min(hdrTexture.Sample(input.fragTexCoord).rgb, float3(65504.0));
+        color = min(hdrTexture.Sample(hdrTextureSampler, input.fragTexCoord).rgb, float3(65504.0));
 
         // Auto white balance, before the operator: a partial chromatic adaptation toward D65 (see
         // engine/renderer/white_balance.h). It can push a saturated colour slightly negative; the

@@ -3132,13 +3132,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_frameSetLayout->GetHandle()));
     view.passes.push_back(std::make_unique<VulkanBloomPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::move(exposurePass));
-    view.passes.push_back(std::make_unique<VulkanTonemapPass>(
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        view.gbufferDescriptors->GetSetLayout(),
-        view.gbufferDescriptors->GetEmptySetLayout()));
+    view.passes.push_back(std::make_unique<VulkanTonemapPass>(m_nvrhi->Get(), *view.targets, view.gbufferDescriptors->GetBindingLayout()));
     view.passes.push_back(std::make_unique<VulkanSelectionMaskPass>(
         m_device->GetHandle(),
         m_pipelineCache,

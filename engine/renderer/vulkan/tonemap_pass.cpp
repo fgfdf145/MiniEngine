@@ -1,13 +1,11 @@
 #include "tonemap_pass.h"
 
 #include "gbuffer_inputs.h"
-#include "pipeline.h"
+#include "nvrhi_pass.h"
 #include "sampler_settings.h"
 
-#include <engine/core/paths/engine_paths.h>
-
 #include <array>
-#include <filesystem>
+#include <stdexcept>
 #include <vector>
 
 namespace me
@@ -55,38 +53,44 @@ uint32_t ToneOperator(const ScenePassFrameContext& frame)
 }
 }
 
-VulkanTonemapPass::VulkanTonemapPass(
-    VkDevice device,
-    nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
-    const SceneRenderTargets& targets,
-    VkDescriptorSetLayout gbufferSetLayout,
-    VkDescriptorSetLayout emptySetLayout)
-    : m_device(device)
+VulkanTonemapPass::VulkanTonemapPass(nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets, nvrhi::IBindingLayout* gbufferSetLayout)
+    : m_nvrhiDevice(nvrhiDevice)
 {
-    // A throw out of a constructor skips the destructor, so everything created before the failure
-    // would leak with it. DestroyHandles skips null handles, so unwinding whatever got created is
-    // the same call the destructor makes.
-    try
+    // The pass samples one texel per pixel at matching resolution, so linear filtering would only
+    // blur, and with one mip level there is nothing for a mip mode or a LOD range to select.
+    m_sampler = CreateNvrhiSampler(nvrhiDevice, BuildClampSamplerDesc(false), "Failed to create tone mapping sampler");
+
+    // The view changes whenever the user picks one and the white balance every frame, so both are
+    // push constants rather than something that would force the binding sets to be rebuilt.
+    nvrhi::BindingLayoutDesc layoutDesc;
+    layoutDesc.visibility = nvrhi::ShaderType::Pixel;
+    layoutDesc.registerSpace = 0;
+    layoutDesc.registerSpaceIsDescriptorSet = true;
+    layoutDesc.bindingOffsets = ShaderBindingOffsets();
+    layoutDesc.bindings = {
+        nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::Sampler(64),
+        nvrhi::BindingLayoutItem::PushConstants(0, sizeof(TonemapPushConstants))};
+    m_setLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, layoutDesc, "Failed to create the tone mapping binding layout");
+    CreateBindingSets(targets);
+    CreateFramebuffers(targets);
+
+    // Every channel written without blending: the LDR alpha must stay 1.0 for ImGui.
+    nvrhi::GraphicsPipelineDesc desc;
+    desc.VS = CreateNvrhiShader(m_nvrhiDevice, nvrhi::ShaderType::Vertex, "fullscreen.vert.spv");
+    desc.PS = CreateNvrhiShader(m_nvrhiDevice, nvrhi::ShaderType::Pixel, "tonemap.frag.spv");
+    desc.primType = nvrhi::PrimitiveType::TriangleList;
+    desc.bindingLayouts = {m_setLayout, gbufferSetLayout};
+    desc.renderState.rasterState.setCullNone();
+    desc.renderState.depthStencilState.disableDepthTest().disableDepthWrite();
+    m_pipeline = m_nvrhiDevice->createGraphicsPipeline(desc, m_framebuffers.front());
+    if (!m_pipeline)
     {
-        CreateDescriptorSetLayout();
-        CreateSampler(nvrhiDevice);
-        CreateRenderPass(targets);
-        CreatePipeline(pipelineCache, gbufferSetLayout, emptySetLayout);
-        CreateDescriptorSets(targets);
-        CreateFramebuffers(targets);
-    }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
+        throw std::runtime_error("Failed to create the tone mapping pipeline");
     }
 }
 
-VulkanTonemapPass::~VulkanTonemapPass()
-{
-    DestroyHandles();
-}
+VulkanTonemapPass::~VulkanTonemapPass() = default;
 
 ScenePassId VulkanTonemapPass::Id() const
 {
@@ -128,48 +132,20 @@ void VulkanTonemapPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    // No clear values: the attachment's loadOp is DONT_CARE because the full-screen triangle
-    // covers every pixel and writes all four channels.
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = m_renderPass;
-    // There is one framebuffer per LDR copy and one descriptor set per HDR copy, so both indices
-    // come from the target they belong to rather than from a rule repeated here.
-    renderPassInfo.framebuffer = m_framebuffers.at(
-        targets.ResolveIndex(RenderTargetId::SceneLdr, frame.imageIndex, frame.frameSlot));
-    renderPassInfo.renderArea.offset = {0, 0};
-    renderPassInfo.renderArea.extent = frame.outputExtent;
-    renderPassInfo.clearValueCount = 0;
-    renderPassInfo.pClearValues = nullptr;
-
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-    SetViewportAndScissor(commandBuffer, frame.outputExtent);
-
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-
-    const VkDescriptorSet descriptorSet = m_descriptorSets.at(
-        targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot));
-    vkCmdBindDescriptorSets(
-        commandBuffer,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_pipelineLayout,
-        0,
-        1,
-        &descriptorSet,
-        0,
-        nullptr);
-
-    // Set 1 is never bound: its layout is empty.
-    vkCmdBindDescriptorSets(
-        commandBuffer,
-        VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_pipelineLayout,
-        2,
-        1,
-        &frame.gbufferDescriptorSet,
-        0,
-        nullptr);
+    (void)commandBuffer;
+    // There is one framebuffer per LDR copy and one binding set per HDR copy, so both indices come
+    // from the target they belong to rather than from a rule repeated here. The layout tracker put
+    // the LDR target in COLOR_ATTACHMENT_OPTIMAL (the write); the full-screen triangle covers every
+    // pixel and writes all four channels.
+    const uint32_t ldrSlot = targets.ResolveIndex(RenderTargetId::SceneLdr, frame.imageIndex, frame.frameSlot);
+    nvrhi::ICommandList* commandList = frame.commandList;
+    const NvrhiPassScope scope(commandList, {{targets.GetTexture(RenderTargetId::SceneLdr, ldrSlot), nvrhi::ResourceStates::RenderTarget}});
+    nvrhi::GraphicsState state;
+    state.pipeline = m_pipeline;
+    state.framebuffer = m_framebuffers.at(ldrSlot);
+    state.viewport = NativeViewportState(frame.outputExtent);
+    state.bindings = {m_bindingSets.at(targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot)), frame.gbufferBindingSet};
+    commandList->setGraphicsState(state);
 
     TonemapPushConstants constants{};
     constants.gbufferView = static_cast<uint32_t>(frame.gbufferView);
@@ -180,218 +156,47 @@ void VulkanTonemapPass::Record(
     {
         constants.whiteBalance[column] = glm::vec4(frame.whiteBalance[column], 0.0f);
     }
-    vkCmdPushConstants(
-        commandBuffer,
-        m_pipelineLayout,
-        VK_SHADER_STAGE_FRAGMENT_BIT,
-        0,
-        sizeof(constants),
-        &constants);
-
-    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
-
-    vkCmdEndRenderPass(commandBuffer);
+    commandList->setPushConstants(&constants, sizeof(constants));
+    commandList->draw(nvrhi::DrawArguments().setVertexCount(3));
 }
 
 void VulkanTonemapPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
-    // Both sides of the pass follow the new images: the framebuffers attach the new LDR views and
-    // the descriptor sets sample the new HDR views. The render pass and pipeline depend only on
-    // the LDR format, which a rebuild does not change.
-    DestroyFramebuffers();
+    // Both sides of the pass follow the new images: the framebuffers attach the new LDR images and
+    // the binding sets sample the new HDR ones. The pipeline depends only on the LDR format, which a
+    // rebuild does not change.
     CreateFramebuffers(targets);
-    CreateDescriptorSets(targets);
+    CreateBindingSets(targets);
 }
 
-void VulkanTonemapPass::CreateDescriptorSetLayout()
+void VulkanTonemapPass::CreateBindingSets(const SceneRenderTargets& targets)
 {
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    binding.descriptorCount = 1;
-    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &binding;
-
-    CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_setLayout), "Failed to create tone mapping descriptor set layout");
-}
-
-void VulkanTonemapPass::CreateSampler(nvrhi::IDevice* nvrhiDevice)
-{
-    // The pass samples one texel per pixel at matching resolution, so linear filtering would only
-    // blur, and with one mip level there is nothing for a mip mode or a LOD range to select.
-    m_sampler = CreateNvrhiSampler(nvrhiDevice, BuildClampSamplerDesc(false), "Failed to create tone mapping sampler");
-}
-
-void VulkanTonemapPass::CreateRenderPass(const SceneRenderTargets& targets)
-{
-    m_renderPass = CreateFullscreenRenderPass(m_device, targets.GetFormat(RenderTargetId::SceneLdr), "tone mapping");
-}
-
-void VulkanTonemapPass::CreatePipeline(
-    VkPipelineCache pipelineCache,
-    VkDescriptorSetLayout gbufferSetLayout,
-    VkDescriptorSetLayout emptySetLayout)
-{
-    const std::array<VkDescriptorSetLayout, 3> setLayouts = {m_setLayout, emptySetLayout, gbufferSetLayout};
-
-    // The view changes whenever the user picks one and the white balance every frame, so both are
-    // push constants rather than something that would force the descriptor sets to be rewritten.
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(TonemapPushConstants);
-
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
-    pipelineLayoutInfo.pSetLayouts = setLayouts.data();
-    pipelineLayoutInfo.pushConstantRangeCount = 1;
-    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-
-    CheckVulkan(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout), "Failed to create tone mapping pipeline layout");
-
-    m_pipeline = CreateFullscreenPipeline(
-        m_device,
-        pipelineCache,
-        m_renderPass,
-        m_pipelineLayout,
-        "tonemap.frag.spv",
-        "tone mapping");
-}
-
-void VulkanTonemapPass::CreateDescriptorSets(const SceneRenderTargets& targets)
-{
-    // One set per HDR copy, so these are indexed by frame slot. The count is fixed
-    // (kMaxFramesInFlight), so the pool is sized once and reused.
-    const uint32_t copyCount = targets.GetTransientCopyCount();
-
-    if (m_descriptorPool == VK_NULL_HANDLE)
+    // One set per HDR copy, so these are indexed by frame slot.
+    m_bindingSets.clear();
+    for (uint32_t slot = 0; slot < targets.GetTransientCopyCount(); ++slot)
     {
-        VkDescriptorPoolSize poolSize{};
-        poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSize.descriptorCount = copyCount;
-
-        VkDescriptorPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.maxSets = copyCount;
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes = &poolSize;
-
-        CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create tone mapping descriptor pool");
-    }
-    else
-    {
-        // Called again from OnTargetsRebuilt because the HDR views changed. Resetting the pool
-        // returns the previous sets to it instead of leaking them.
-        m_descriptorSets.clear();
-        CheckVulkan(vkResetDescriptorPool(m_device, m_descriptorPool, 0), "Failed to reset tone mapping descriptor pool");
-    }
-
-    const std::vector<VkDescriptorSetLayout> layouts(copyCount, m_setLayout);
-
-    VkDescriptorSetAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocateInfo.descriptorPool = m_descriptorPool;
-    allocateInfo.descriptorSetCount = copyCount;
-    allocateInfo.pSetLayouts = layouts.data();
-
-    m_descriptorSets.assign(copyCount, VK_NULL_HANDLE);
-    CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, m_descriptorSets.data()), "Failed to allocate tone mapping descriptor sets");
-
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
-    {
-        VkDescriptorImageInfo imageInfo{};
-        imageInfo.sampler = NativeSampler(m_sampler);
-        imageInfo.imageView = targets.GetSampledView(RenderTargetId::SceneTaa, slot);
-        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = m_descriptorSets[slot];
-        write.dstBinding = 0;
-        write.dstArrayElement = 0;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.descriptorCount = 1;
-        write.pImageInfo = &imageInfo;
-
-        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+        nvrhi::BindingSetDesc desc;
+        desc.bindings = {
+            nvrhi::BindingSetItem::Texture_SRV(0, targets.GetTexture(RenderTargetId::SceneTaa, slot)),
+            nvrhi::BindingSetItem::Sampler(64, m_sampler),
+            nvrhi::BindingSetItem::PushConstants(0, sizeof(TonemapPushConstants))};
+        m_bindingSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create a tone mapping binding set"));
     }
 }
 
 void VulkanTonemapPass::CreateFramebuffers(const SceneRenderTargets& targets)
 {
     // One framebuffer per LDR copy, so these are indexed by swapchain image.
-    const VkExtent2D extent = targets.GetOutputExtent();
-    const uint32_t copyCount = targets.GetLdrCopyCount();
-    m_framebuffers.reserve(copyCount);
-
-    for (uint32_t imageIndex = 0; imageIndex < copyCount; ++imageIndex)
-    {
-        const VkImageView attachment = targets.GetView(RenderTargetId::SceneLdr, imageIndex);
-
-        VkFramebufferCreateInfo framebufferInfo{};
-        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = m_renderPass;
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = &attachment;
-        framebufferInfo.width = extent.width;
-        framebufferInfo.height = extent.height;
-        framebufferInfo.layers = 1;
-
-        // Appended one at a time so that a failure part way through still leaves every handle
-        // created so far reachable by DestroyFramebuffers.
-        VkFramebuffer framebuffer = VK_NULL_HANDLE;
-        CheckVulkan(vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &framebuffer), "Failed to create tone mapping framebuffer");
-        m_framebuffers.push_back(framebuffer);
-    }
-}
-
-void VulkanTonemapPass::DestroyFramebuffers()
-{
-    for (VkFramebuffer framebuffer : m_framebuffers)
-    {
-        if (framebuffer != VK_NULL_HANDLE)
-        {
-            vkDestroyFramebuffer(m_device, framebuffer, nullptr);
-        }
-    }
     m_framebuffers.clear();
-}
-
-void VulkanTonemapPass::DestroyHandles()
-{
-    if (m_pipeline != VK_NULL_HANDLE)
+    for (uint32_t imageIndex = 0; imageIndex < targets.GetLdrCopyCount(); ++imageIndex)
     {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    // Destroying the pool frees every set allocated from it.
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
-    m_descriptorSets.clear();
-    if (m_setLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
-    }
-    m_sampler = nullptr;
-    DestroyFramebuffers();
-    if (m_renderPass != VK_NULL_HANDLE)
-    {
-        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
-        m_renderPass = VK_NULL_HANDLE;
+        nvrhi::FramebufferHandle framebuffer = m_nvrhiDevice->createFramebuffer(
+            nvrhi::FramebufferDesc().addColorAttachment(targets.GetTexture(RenderTargetId::SceneLdr, imageIndex)));
+        if (!framebuffer)
+        {
+            throw std::runtime_error("Failed to create a tone mapping framebuffer");
+        }
+        m_framebuffers.push_back(framebuffer);
     }
 }
 }
