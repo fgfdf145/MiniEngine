@@ -2063,6 +2063,124 @@ void TestWheelsRideOverSharpImpactBumps()
     }
 }
 
+// BeamNG's Grid Map v2 (its "blocks" strip): bumps across the road `height` high with 45 degree sides and
+// a 20 cm top, from x0 to x1, centred on z, ends square (walls). The game's ground plane, 218 km across,
+// comes in the same mesh.
+void AddBeamNgBump(std::vector<glm::vec3>& vertices, std::vector<uint32_t>& indices, float x0, float x1, float z, float height)
+{
+    const uint32_t first = static_cast<uint32_t>(vertices.size());
+    for (const float x : {x0, x1})
+    {
+        vertices.insert(vertices.end(), {{x, 0.0f, z - 0.1f - height}, {x, height, z - 0.1f}, {x, height, z + 0.1f}, {x, 0.0f, z + 0.1f + height}});
+    }
+    // Sides and top (x0's corners 0..3, x1's 4..7), then the ends.
+    for (const uint32_t index : {0u, 1u, 5u, 0u, 5u, 4u, 1u, 2u, 6u, 1u, 6u, 5u, 2u, 3u, 7u, 2u, 7u, 6u, 0u, 3u, 2u, 0u, 2u, 1u, 4u, 5u, 6u, 4u, 6u, 7u})
+    {
+        indices.push_back(first + index);
+    }
+}
+
+void AddBeamNgGroundPlane(std::vector<glm::vec3>& vertices, std::vector<uint32_t>& indices)
+{
+    constexpr float kHalf = 109216.0f;
+    const uint32_t first = static_cast<uint32_t>(vertices.size());
+    vertices.insert(vertices.end(), {{-kHalf, 0.0f, -kHalf}, {kHalf, 0.0f, -kHalf}, {kHalf, 0.0f, kHalf}, {-kHalf, 0.0f, kHalf}});
+    for (const uint32_t index : {0u, 1u, 2u, 0u, 2u, 3u})
+    {
+        indices.push_back(first + index);
+    }
+}
+
+// The physics engine stores a mesh's corners to 21 bits an axis over its bounds: the ground plane made
+// those 10 cm steps, and the bumps' 20 cm tops came out slivers and were left out.
+void TestNarrowFacesSurviveAHugeMesh()
+{
+    std::vector<glm::vec3> vertices;
+    std::vector<uint32_t> indices;
+    AddBeamNgGroundPlane(vertices, indices);
+    AddBeamNgBump(vertices, indices, 104.0f, 107.0f, -71.7f, 0.2f);
+    PhysicsWorld world;
+    AddUpwardMesh(world, vertices, indices);
+    const std::optional<double> top = world.FindGroundBelow(glm::dvec3(105.5, 1.0, -71.7), 2.0);
+    std::cout << "a 20 cm bump's top in a 218 km mesh found at " << (top ? *top : -1.0) << " m\n";
+    Require(top && std::abs(*top - 0.2) < 0.002, "the bump's top is there, where the map has it");
+}
+
+// The car on BeamNG's ground plane alone, two triangles 218 km across, cut into tiles: where the two
+// meet, the physics engine took contacts tens of metres off the edge for the edge's (its tolerance goes
+// with the triangle's size) and shoved the car across at 20 m/s. Halved to a kilometre, they do not.
+void TestCarDrivesStraightOnAHugeGroundPlane()
+{
+    std::vector<glm::vec3> vertices;
+    std::vector<uint32_t> indices;
+    AddBeamNgGroundPlane(vertices, indices);
+    PhysicsWorld world;
+    AddUpwardMesh(world, vertices, indices);
+    const VehicleId car = world.AddVehicle(GtrWithSplitter(), {glm::vec3(0.0f, 0.0f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    Simulate(world, 1.0f);
+    constexpr float kFrame = 1.0f / 60.0f;
+    float worstShove = 0.0f;
+    PhysicsPose last = world.GetVehiclePose(car);
+    for (float time = 0.0f; time < 6.0f; time += kFrame)
+    {
+        VehicleControls controls;
+        controls.throttle = std::clamp((30.0f - world.GetVehicleTelemetry(car).forwardSpeed * 3.6f) * 0.2f, -1.0f, 1.0f);
+        world.SetVehicleControls(car, controls);
+        world.Update(kFrame);
+        const PhysicsPose pose = world.GetVehiclePose(car);
+        const glm::vec3 right = pose.rotation * glm::vec3(1.0f, 0.0f, 0.0f);
+        worstShove = std::max(worstShove, std::abs(glm::dot(glm::vec3(pose.position - last.position), right)) / kFrame);
+        last = pose;
+    }
+    std::cout << "GT-R at 30 km/h on a ground plane 218 km across: shoved across at up to " << worstShove << " m/s, reached z " << last.position.z << "\n";
+    Require(last.position.z > 30.0f, "the car drives on the plane");
+    Require(worstShove < 0.1f, "the plane does not shove the car across");
+}
+
+// A bump `height` high with 45 degree sides, from x = -3 to 3 across z = 0: with a 20 cm top, or a ridge.
+void AddBumpOrRidge(std::vector<glm::vec3>& vertices, std::vector<uint32_t>& indices, float height, bool ridge)
+{
+    AddBeamNgBump(vertices, indices, -3.0f, 3.0f, 0.0f, height);
+    if (ridge)
+    {
+        // Each end's two top corners in one, on the bump's middle line, and its foot `height` either side.
+        const uint32_t first = static_cast<uint32_t>(vertices.size()) - 8;
+        for (const uint32_t end : {first, first + 4})
+        {
+            vertices[end].z = -height;
+            vertices[end + 1].z = 0.0f;
+            vertices[end + 2].z = 0.0f;
+            vertices[end + 3].z = height;
+        }
+        for (uint32_t& index : indices)
+        {
+            index = index == first + 2 ? first + 1 : index == first + 6 ? first + 5 : index;
+        }
+    }
+}
+
+// The car parked with its floor on a ridge between the axles: the floor's edge across the ridge's crest
+// pushes straight up, half way between its 45 degree faces and along neither, and that contact was
+// dropped as a stray edge's: the floor sank 9 cm into the ridge. It rests on the crest as it does on
+// a top 20 cm wide.
+void TestFloorRestsOnARidge()
+{
+    std::array<double, 2> rest{};
+    for (const bool ridge : {false, true})
+    {
+        std::vector<glm::vec3> vertices = {{-50.0f, 0.0f, -50.0f}, {50.0f, 0.0f, -50.0f}, {50.0f, 0.0f, 50.0f}, {-50.0f, 0.0f, 50.0f}};
+        std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+        AddBumpOrRidge(vertices, indices, 0.25f, ridge);
+        PhysicsWorld world;
+        AddUpwardMesh(world, vertices, indices);
+        const VehicleId car = world.AddVehicle(GtrWithSplitter(), {glm::vec3(0.0f, 0.15f, -0.3f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 4.0f);
+        rest[ridge ? 1 : 0] = world.GetVehiclePose(car).position.y;
+    }
+    std::cout << "GT-R parked over a 25 cm bump: the body rests at " << rest[0] << " m on its 20 cm top, " << rest[1] << " m on a ridge\n";
+    Require(std::abs(rest[1] - rest[0]) < 0.01, "the floor rests on the ridge's crest");
+}
+
 // Ground as generated heightfields and imported tracks often come: every 0.5 m cell a quad with its own
 // four vertices, none shared with its neighbours: flat up to z = -40, then gentle waves (2 cm, 7.5 m long).
 void AddGroundOfSeparateCells(PhysicsWorld& world)
@@ -3484,6 +3602,9 @@ int main()
         TestSplitterRidesOverARoadSpike();
         TestWheelMountsATallKerbWithoutLeaping();
         TestWheelsRideOverSharpImpactBumps();
+        TestNarrowFacesSurviveAHugeMesh();
+        TestCarDrivesStraightOnAHugeGroundPlane();
+        TestFloorRestsOnARidge();
         TestSplitterGlidesOverTheSeamsOfSeparateCells();
         TestCarDataPlacesTheCentreOfMass();
         TestRodLengthRestsWhereTheModelDrawsTheWheels();

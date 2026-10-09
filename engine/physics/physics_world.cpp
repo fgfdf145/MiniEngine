@@ -42,10 +42,12 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <numbers>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -131,6 +133,183 @@ void DropTrianglesFlatOnceStored(const JPH::VertexList& vertices, JPH::IndexedTr
     }
 }
 
+// What lies beyond each edge of a ground triangle, for GroundEdgeContactFilter: kept in the triangle's
+// user data, 10 bits an edge (edge i runs from corner i to corner i + 1). An edge with one neighbour holds
+// the angle that neighbour's normal turns from the triangle's own, about the edge: positive toward the
+// edge's outside, so a ridge (a convex edge) turns positive and a valley negative. Its neighbour's normal
+// is then cos(turn) n + sin(turn) (e x n), n the triangle's normal and e the edge's direction.
+namespace GroundEdgeTurns
+{
+constexpr uint32_t kBitsPerEdge = 10;
+constexpr uint32_t kEdgeMask = (1u << kBitsPerEdge) - 1;
+// No neighbour, or only the triangle's own back (a sheet's two sides): the mesh ends at the edge.
+constexpr uint32_t kOpen = kEdgeMask;
+// Three or more faces meet at the edge: no one turn says what is beyond it.
+constexpr uint32_t kTangled = kEdgeMask - 1;
+constexpr uint32_t kTurnSteps = kEdgeMask - 2; // -pi..pi
+// Set on every triangle the turns were stored for.
+constexpr uint32_t kStored = 1u << 31;
+
+constexpr uint32_t Encode(float turn)
+{
+    const float share = (turn + std::numbers::pi_v<float>) / (2.0f * std::numbers::pi_v<float>);
+    return static_cast<uint32_t>(std::clamp(share, 0.0f, 1.0f) * static_cast<float>(kTurnSteps) + 0.5f);
+}
+
+constexpr float Decode(uint32_t code)
+{
+    return static_cast<float>(code) / static_cast<float>(kTurnSteps) * 2.0f * std::numbers::pi_v<float> - std::numbers::pi_v<float>;
+}
+
+constexpr uint32_t EdgeCode(uint32_t userData, uint32_t edge)
+{
+    return (userData >> (edge * kBitsPerEdge)) & kEdgeMask;
+}
+
+// Stores the turns of the edges of every triangle in lists, its neighbours found in all of them (a
+// walkable triangle's neighbour may be a wall's, or in another tile), by the vertices they share.
+void Store(const JPH::VertexList& vertices, std::span<JPH::IndexedTriangleList> lists)
+{
+    std::vector<JPH::IndexedTriangle*> triangles;
+    for (JPH::IndexedTriangleList& list : lists)
+    {
+        for (JPH::IndexedTriangle& triangle : list)
+        {
+            triangles.push_back(&triangle);
+        }
+    }
+    std::vector<JPH::Vec3> normals(triangles.size());
+    for (size_t index = 0; index < triangles.size(); ++index)
+    {
+        const JPH::Vec3 a(vertices[triangles[index]->mIdx[0]]);
+        const JPH::Vec3 b(vertices[triangles[index]->mIdx[1]]);
+        const JPH::Vec3 c(vertices[triangles[index]->mIdx[2]]);
+        normals[index] = (b - a).Cross(c - a).NormalizedOr(JPH::Vec3::sZero());
+        triangles[index]->mUserData = kStored;
+    }
+    struct EdgeEntry
+    {
+        uint64_t key = 0; // the lower vertex index above the higher
+        uint32_t triangle = 0;
+        uint32_t edge = 0;
+        bool rising = false; // runs from the lower index to the higher
+    };
+    std::vector<EdgeEntry> edges;
+    edges.reserve(triangles.size() * 3);
+    for (uint32_t index = 0; index < triangles.size(); ++index)
+    {
+        for (uint32_t edge = 0; edge < 3; ++edge)
+        {
+            const uint32_t from = triangles[index]->mIdx[edge];
+            const uint32_t to = triangles[index]->mIdx[(edge + 1) % 3];
+            edges.push_back({static_cast<uint64_t>(std::min(from, to)) << 32 | std::max(from, to), index, edge, from < to});
+        }
+    }
+    std::sort(edges.begin(), edges.end(), [](const EdgeEntry& a, const EdgeEntry& b) { return a.key < b.key; });
+    for (size_t first = 0; first < edges.size();)
+    {
+        size_t last = first + 1;
+        while (last < edges.size() && edges[last].key == edges[first].key)
+        {
+            ++last;
+        }
+        for (size_t self = first; self < last; ++self)
+        {
+            const EdgeEntry& entry = edges[self];
+            const JPH::Vec3 normal = normals[entry.triangle];
+            uint32_t code = kOpen;
+            if (normal != JPH::Vec3::sZero())
+            {
+                const JPH::Vec3 from(vertices[triangles[entry.triangle]->mIdx[entry.edge]]);
+                const JPH::Vec3 to(vertices[triangles[entry.triangle]->mIdx[(entry.edge + 1) % 3]]);
+                const JPH::Vec3 outward = (to - from).Normalized().Cross(normal);
+                int found = 0;
+                JPH::Vec3 beyond = JPH::Vec3::sZero();
+                for (size_t other = first; other < last; ++other)
+                {
+                    if (other == self || normals[edges[other].triangle] == JPH::Vec3::sZero())
+                    {
+                        continue;
+                    }
+                    // A neighbour wound the same way runs the shared edge the other way; one that runs it
+                    // the same way is wound against the triangle and faces the other side.
+                    const JPH::Vec3 facing = edges[other].rising != entry.rising ? normals[edges[other].triangle] : -normals[edges[other].triangle];
+                    if (facing.Dot(normal) < -0.9998f)
+                    {
+                        continue; // the triangle's own back
+                    }
+                    beyond = facing;
+                    ++found;
+                }
+                if (found == 1)
+                {
+                    code = Encode(std::atan2(beyond.Dot(outward), beyond.Dot(normal)));
+                }
+                else if (found > 1)
+                {
+                    code = kTangled;
+                }
+            }
+            triangles[entry.triangle]->mUserData |= code << (entry.edge * kBitsPerEdge);
+        }
+        first = last;
+    }
+}
+} // namespace GroundEdgeTurns
+
+// A mesh shape stores its vertices to the 21 bits an axis spread over its bounds (see
+// DropTrianglesFlatOnceStored): a millimetre on a 2 km map, but BeamNG's ground plane, 218 km across,
+// shared the collision mesh of the whole Grid Map, and its 10 cm steps moved every corner up to 5 cm
+// and dropped the 20 cm tops of its bumps as slivers: the car's floor fell into the bumps. A mesh
+// larger than kTileSize is cut into tiles that size by the triangles' centres. Triangles larger than a
+// tile go together with those of their size (within four times), wherever they lie: an edge between
+// two tiles is open to the physics engine, which takes a contact near an open edge for the edge's
+// within a distance that grows with the triangle, and the plane's two halves in two tiles shoved the
+// car across at 20 m/s anywhere near their diagonal. Kept together they meet as one mesh.
+std::vector<JPH::IndexedTriangleList> CutIntoTiles(const JPH::VertexList& vertices, JPH::IndexedTriangleList triangles)
+{
+    constexpr float kTileSize = 1024.0f; // 0.5 mm steps
+    std::vector<JPH::IndexedTriangleList> tiles;
+    JPH::AABox bounds;
+    for (const JPH::IndexedTriangle& triangle : triangles)
+    {
+        for (const JPH::uint32 index : triangle.mIdx)
+        {
+            bounds.Encapsulate(JPH::Vec3(vertices[index]));
+        }
+    }
+    if (triangles.empty() || bounds.GetSize().ReduceMax() <= 2.0f * kTileSize)
+    {
+        tiles.push_back(std::move(triangles));
+        return tiles;
+    }
+    std::map<std::array<int64_t, 4>, size_t> tileOf; // size step and cell (the first step's only)
+    for (const JPH::IndexedTriangle& triangle : triangles)
+    {
+        const JPH::Vec3 a(vertices[triangle.mIdx[0]]);
+        const JPH::Vec3 b(vertices[triangle.mIdx[1]]);
+        const JPH::Vec3 c(vertices[triangle.mIdx[2]]);
+        const float extent = (JPH::Vec3::sMax(JPH::Vec3::sMax(a, b), c) - JPH::Vec3::sMin(JPH::Vec3::sMin(a, b), c)).ReduceMax();
+        int64_t step = 0;
+        float size = kTileSize;
+        while (extent > size)
+        {
+            size *= 4.0f;
+            ++step;
+        }
+        const JPH::Vec3 centre = step == 0 ? (a + b + c) / 3.0f / size : JPH::Vec3::sZero();
+        const std::array<int64_t, 4> key = {
+            step, static_cast<int64_t>(std::floor(centre.GetX())), static_cast<int64_t>(std::floor(centre.GetY())), static_cast<int64_t>(std::floor(centre.GetZ()))};
+        const auto [entry, added] = tileOf.try_emplace(key, tiles.size());
+        if (added)
+        {
+            tiles.emplace_back();
+        }
+        tiles[entry->second].push_back(triangle);
+    }
+    return tiles;
+}
+
 // What a vehicle's wheels collide with: everything but the vehicle itself and the walls.
 class WheelBodyFilter final : public JPH::BodyFilter
 {
@@ -156,9 +335,11 @@ class WheelBodyFilter final : public JPH::BodyFilter
 // A car's body meets the ground's edges and corners, not only its faces: a splitter a few centimetres
 // up (Assetto Corsa's R34 has 6 cm) runs into the rim of a kerb top whose riser the map leaves out, or
 // into a vertex standing out of the road (San Andreas has them, 20 cm). Pushed out along the edge,
-// sideways to the surface, the body stops dead and is thrown up. Against walkable ground the body only
-// keeps contacts along the face's own normal, from above or below: it rides over the kerb or the bump
-// as a scraping splitter does. Walls (the steep body) still stop it.
+// sideways to the surface, the body stops dead and is thrown up. Against walkable ground the body keeps
+// a contact at an edge only where the faces meeting there hold it that way: its push lies between their
+// normals, as a body resting across a ridge is held. Where nothing is beyond the edge (the kerb without
+// its riser) and inside a face, it keeps only contacts along the face's own normal, from above or below:
+// it rides over the kerb or the bump as a scraping splitter does. Walls (the steep body) still stop it.
 class GroundEdgeContactFilter final : public JPH::ContactListener
 {
   public:
@@ -182,13 +363,137 @@ class GroundEdgeContactFilter final : public JPH::ContactListener
         const JPH::Body& ground = firstIsGround ? body1 : body2;
         const JPH::SubShapeID& triangle = firstIsGround ? result.mSubShapeID1 : result.mSubShapeID2;
         const JPH::RVec3 point = baseOffset + (firstIsGround ? result.mContactPointOn1 : result.mContactPointOn2);
-        const JPH::Vec3 face = ground.GetWorldSpaceSurfaceNormal(triangle, point);
-        return std::abs(push.Dot(face)) >= kMinFaceAlignment ? JPH::ValidateResult::AcceptContact : JPH::ValidateResult::RejectContact;
+        bool keep = false;
+        switch (JudgeEdge(ground, triangle, point, push))
+        {
+        case EdgeVerdict::Holds:
+            keep = true;
+            break;
+        case EdgeVerdict::DoesNotHold:
+            keep = false;
+            break;
+        case EdgeVerdict::NoEdge:
+            keep = std::abs(push.Dot(ground.GetWorldSpaceSurfaceNormal(triangle, point))) >= kMinFaceAlignment;
+            break;
+        }
+        return keep ? JPH::ValidateResult::AcceptContact : JPH::ValidateResult::RejectContact;
+    }
+
+    void OnContactAdded(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold, JPH::ContactSettings& settings) override
+    {
+        DropFalseManifold(body1, body2, manifold, settings);
+    }
+
+    void OnContactPersisted(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold, JPH::ContactSettings& settings) override
+    {
+        DropFalseManifold(body1, body2, manifold, settings);
     }
 
   private:
+    // How much deeper than the contact's own penetration its points may lie.
+    static constexpr float kManifoldDepthSlack = 0.05f;
+
+    // The physics engine builds a contact's points by clipping the two shapes' faces along its normal, and
+    // where that normal is a triangle's own but not the contact's the points come out far apart: the R34's
+    // floor resting on a BeamNG bump's top took the side normal of the bump's end (a wall) across its top
+    // edge, its points 67 cm apart along it for a contact 2 cm clear. The position solver closes what the
+    // points say, and moved the car 7 cm sideways and rolled it 4 degrees each step, the "thrown up" of the
+    // suspension tests. A contact whose points lie deeper than its own depth is no contact: dropped.
+    static void DropFalseManifold(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold, JPH::ContactSettings& settings)
+    {
+        if (body1.IsStatic() == body2.IsStatic())
+        {
+            return;
+        }
+        for (JPH::uint index = 0; index < manifold.mRelativeContactPointsOn1.size(); ++index)
+        {
+            const float penetration = (manifold.mRelativeContactPointsOn1[index] - manifold.mRelativeContactPointsOn2[index]).Dot(manifold.mWorldSpaceNormal);
+            if (penetration > manifold.mPenetrationDepth + kManifoldDepthSlack)
+            {
+                settings.mIsSensor = true;
+                return;
+            }
+        }
+    }
+
+    enum class EdgeVerdict
+    {
+        Holds,       // at an edge whose faces hold the body up along the push
+        DoesNotHold, // at edges whose faces are known, none holding it so
+        NoEdge,      // inside the face, at an edge with nothing (known) beyond it, or not pushed up
+    };
+
     // Within 25 degrees of the face's normal (or its reverse): a face contact, not an edge's.
     static constexpr float kMinFaceAlignment = 0.9f;
+    // How far from an edge the contact may lie and still be the edge's.
+    static constexpr float kEdgeDistance = 0.01f;
+    // How far out of the wedge between two faces' normals an edge's push may lean.
+    static constexpr float kWedgeSlack = 0.0873f; // 5 degrees
+
+    // A box's edge across the ridge of BeamNG's 20 cm bumps (45 degree sides) pushes straight up, along
+    // the top's normal, and the triangle reported may be the side's: taken for a stray edge contact and
+    // dropped, the floor sank into the bump, as it did between a log's facets. Only pushes that hold the
+    // body up count: one leaning back between a stone's faces on BeamNG's rough road is as real, but it
+    // stopped the splitter dead at 37 km/h and rolled the R34 over; it is judged as before, by the face.
+    // An edge the physics engine keeps (an open one, or a seam between two meshes) may report a push
+    // leaning back toward the body against a face that goes on flat beyond it: that is dropped, the
+    // face beyond holds the body.
+    static EdgeVerdict JudgeEdge(const JPH::Body& ground, const JPH::SubShapeID& triangle, JPH::RVec3Arg point, JPH::Vec3Arg push)
+    {
+        if (push.GetY() < kMinFaceAlignment)
+        {
+            return EdgeVerdict::NoEdge;
+        }
+        const JPH::Shape* shape = ground.GetShape();
+        if (shape->GetSubType() != JPH::EShapeSubType::Mesh)
+        {
+            return EdgeVerdict::NoEdge;
+        }
+        const uint32_t turns = static_cast<const JPH::MeshShape*>(shape)->GetTriangleUserData(triangle);
+        if ((turns & GroundEdgeTurns::kStored) == 0)
+        {
+            return EdgeVerdict::NoEdge;
+        }
+        // In the shape's own space, where its triangles are stored.
+        const JPH::RMat44 toWorld = ground.GetCenterOfMassTransform();
+        const JPH::Vec3 at(toWorld.InversedRotationTranslation() * point);
+        const JPH::Vec3 out = toWorld.Multiply3x3Transposed(push);
+        JPH::Shape::SupportingFace corners;
+        shape->GetSupportingFace(triangle, JPH::Vec3::sAxisY(), JPH::Vec3::sOne(), JPH::Mat44::sIdentity(), corners);
+        const JPH::Vec3 normal = corners.size() == 3 ? (corners[1] - corners[0]).Cross(corners[2] - corners[0]).NormalizedOr(JPH::Vec3::sZero()) : JPH::Vec3::sZero();
+        if (normal == JPH::Vec3::sZero())
+        {
+            return EdgeVerdict::NoEdge;
+        }
+        // From below the face: its back, and its neighbours' backs.
+        const float side = out.Dot(normal) >= 0.0f ? 1.0f : -1.0f;
+        const auto angle = [](JPH::Vec3Arg a, JPH::Vec3Arg b) { return std::acos(std::clamp(a.Dot(b), -1.0f, 1.0f)); };
+        bool atKnownEdge = false;
+        for (uint32_t edge = 0; edge < 3; ++edge)
+        {
+            const JPH::Vec3 from = corners[edge];
+            const JPH::Vec3 along = corners[(edge + 1) % 3] - from;
+            const float t = std::clamp((at - from).Dot(along) / along.LengthSq(), 0.0f, 1.0f);
+            if ((from + along * t - at).LengthSq() > kEdgeDistance * kEdgeDistance)
+            {
+                continue;
+            }
+            const uint32_t code = GroundEdgeTurns::EdgeCode(turns, edge);
+            if (code == GroundEdgeTurns::kOpen || code == GroundEdgeTurns::kTangled)
+            {
+                return EdgeVerdict::NoEdge;
+            }
+            atKnownEdge = true;
+            const float turn = GroundEdgeTurns::Decode(code);
+            const JPH::Vec3 own = side * normal;
+            const JPH::Vec3 beyond = side * (std::cos(turn) * normal + std::sin(turn) * along.Normalized().Cross(normal));
+            if (angle(out, own) + angle(out, beyond) <= angle(own, beyond) + kWedgeSlack)
+            {
+                return EdgeVerdict::Holds;
+            }
+        }
+        return atKnownEdge ? EdgeVerdict::DoesNotHold : EdgeVerdict::NoEdge;
+    }
 };
 
 // Finds the ground with the wheel's cylinder, which rolls it over kerbs and seams a ray would catch
@@ -2970,15 +3275,29 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
         (normal.GetY() >= kMinWheelSurfaceNormalY * length ? walkable : steep).push_back(triangle);
     }
 
+    // Each tile is a body of its own, stored to its own bounds.
+    std::vector<JPH::IndexedTriangleList> tiles = CutIntoTiles(joltVertices, std::move(walkable));
+    const size_t walkableTiles = tiles.size();
+    for (JPH::IndexedTriangleList& tile : CutIntoTiles(joltVertices, std::move(steep)))
+    {
+        tiles.push_back(std::move(tile));
+    }
+    for (JPH::IndexedTriangleList& tile : tiles)
+    {
+        DropTrianglesFlatOnceStored(joltVertices, tile);
+    }
+    // The body's contacts with the walkable ground read them (GroundEdgeContactFilter).
+    GroundEdgeTurns::Store(joltVertices, tiles);
+
     const float bodyFriction = std::max(friction, 0.0f);
     const auto addBody = [&](JPH::IndexedTriangleList list, uint64_t userData) -> size_t
     {
-        DropTrianglesFlatOnceStored(joltVertices, list);
         if (list.empty())
         {
             return 0;
         }
-        const JPH::MeshShapeSettings shapeSettings(joltVertices, std::move(list));
+        JPH::MeshShapeSettings shapeSettings(joltVertices, std::move(list));
+        shapeSettings.mPerTriangleUserData = userData != kWheelsIgnoreBody;
         const size_t triangleCount = shapeSettings.mIndexedTriangles.size();
         const JPH::ShapeSettings::ShapeResult shape = shapeSettings.Create();
         if (shape.HasError() || triangleCount == 0)
@@ -3000,7 +3319,12 @@ bool PhysicsWorld::AddStaticMesh(std::span<const glm::vec3> vertices, std::span<
         m_impl->broadPhaseDirty = true;
         return triangleCount;
     };
-    return addBody(std::move(walkable), 0) + addBody(std::move(steep), kWheelsIgnoreBody) > 0;
+    size_t added = 0;
+    for (size_t tile = 0; tile < tiles.size(); ++tile)
+    {
+        added += addBody(std::move(tiles[tile]), tile < walkableTiles ? 0 : kWheelsIgnoreBody);
+    }
+    return added > 0;
 }
 
 void PhysicsWorld::AddStaticBox(const glm::dvec3& center, const glm::vec3& halfExtents, const glm::quat& rotation, float friction)
