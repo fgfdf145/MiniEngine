@@ -2,6 +2,7 @@
 
 #include "buffer.h"
 #include "compute_pass_util.h"
+#include "nvrhi_pass.h"
 #include "sampler_settings.h"
 
 #include <engine/core/log/log.h>
@@ -62,6 +63,10 @@ static_assert(offsetof(Vertex, color) == 3 * sizeof(float) && offsetof(Vertex, t
 // Matches RayMaterial in ray_tracing_common.slang: albedo and coverage, emission and flags, the
 // textures' samplers.
 constexpr VkDeviceSize kRayMaterialBytes = 48;
+// raySamplers in ray_hit_common.slang: the ray set's binding of every material sampler.
+constexpr uint32_t kRaySamplerBinding = 8;
+// RAY_TEXTURE_SET in ray_hit_common.slang: the texture table's descriptor set.
+constexpr uint32_t kRayTextureSet = 3;
 
 // Every buffer holds at least one element of the largest kind (an instance), so a descriptor always
 // names something and the empty scene's dummy instance fits.
@@ -88,18 +93,24 @@ size_t InstanceCapacity(size_t current, size_t needed)
 VulkanRayScene::VulkanRayScene(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
+    nvrhi::vulkan::IDevice* nvrhiVulkanDevice,
     VkPipelineCache pipelineCache,
     uint32_t frameCount,
     bool hardwareRayTracing,
     TextureDescriptorBinding defaultTexture,
-    std::vector<VkSampler> samplerTable,
-    bool updateUnusedWhilePending)
+    std::vector<nvrhi::ISampler*> samplerTable,
+    bool updateUnusedWhilePending,
+    bool bufferDeviceAddress)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
+      m_nvrhiVulkanDevice(nvrhiVulkanDevice),
       m_frameCount(frameCount),
       m_defaultTexture(defaultTexture),
       m_samplerTable(std::move(samplerTable)),
-      m_updateUnusedWhilePending(hardwareRayTracing && updateUnusedWhilePending)
+      m_updateUnusedWhilePending(hardwareRayTracing && updateUnusedWhilePending),
+      m_bufferDeviceAddress(bufferDeviceAddress)
 {
     try
     {
@@ -107,26 +118,33 @@ VulkanRayScene::VulkanRayScene(
         {
             m_acceleration = std::make_unique<VulkanRayAcceleration>(m_physicalDevice, m_device, m_frameCount);
         }
-        std::vector<VkDescriptorType> types(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-        std::vector<VkDescriptorPoolSize> poolSizes = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7 * m_frameCount}};
+        // The lighting pass traces too (its local lights' shadows), from its fragment shader.
+        nvrhi::BindingLayoutDesc setDesc;
+        setDesc.visibility = nvrhi::ShaderType::Compute | nvrhi::ShaderType::Pixel;
+        setDesc.registerSpace = 1;
+        setDesc.registerSpaceIsDescriptorSet = true;
+        setDesc.bindingOffsets = ShaderBindingOffsets();
+        for (uint32_t binding = 0; binding < 5; ++binding)
+        {
+            setDesc.bindings.push_back(nvrhi::BindingLayoutItem::RawBuffer_SRV(binding));
+        }
         if (m_acceleration)
         {
-            types.push_back(VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR);
-            types.push_back(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-            types.push_back(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-            poolSizes.push_back({VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, m_frameCount});
+            setDesc.bindings.push_back(nvrhi::BindingLayoutItem::RayTracingAccelStruct(5));
+            setDesc.bindings.push_back(nvrhi::BindingLayoutItem::RawBuffer_SRV(6));
+            setDesc.bindings.push_back(nvrhi::BindingLayoutItem::RawBuffer_SRV(7));
+            setDesc.bindings.push_back(nvrhi::BindingLayoutItem::Sampler(kRaySamplerBinding).setSize(VulkanSamplerCache::kSamplerCount));
         }
-        // The lighting pass traces too (its local lights' shadows), from its fragment shader.
-        m_setLayout = CreateComputeSetLayout(m_device, types, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+        m_setLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, setDesc, "Failed to create the ray scene binding layout");
         if (m_acceleration)
         {
             if (m_samplerTable.size() != VulkanSamplerCache::kSamplerCount)
             {
-                throw std::runtime_error("The ray texture table needs every material sampler");
+                throw std::runtime_error("The ray scene set needs every material sampler");
             }
             for (uint32_t index = 0; index < m_samplerTable.size(); ++index)
             {
-                m_samplerIndices.emplace(m_samplerTable[index], index);
+                m_samplerIndices.emplace(NativeSampler(m_samplerTable[index]), index);
             }
             // The texture table: as many entries as the device lets one stage see, less a margin for
             // the frame set's own samplers; each content allocates what its slots need.
@@ -134,41 +152,25 @@ VulkanRayScene::VulkanRayScene(
             vkGetPhysicalDeviceProperties(m_physicalDevice, &properties);
             const uint32_t limit = std::min(properties.limits.maxPerStageDescriptorSampledImages, properties.limits.maxDescriptorSetSampledImages);
             m_textureLimit = std::min<uint32_t>(limit > 256u ? limit - 256u : limit / 2u, 1u << 20);
-            // Binding 0 the sampler table, written once per set; binding 1 the textures (variable
-            // count, so the last binding). A new draw's textures go into slots no frame in flight
-            // reads, while the frames read others.
-            const std::array<VkDescriptorBindingFlags, 2> bindingFlags = {
-                0u,
-                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
-                    (m_updateUnusedWhilePending ? VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT : 0u)};
-            VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{};
-            flagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-            flagsInfo.bindingCount = static_cast<uint32_t>(bindingFlags.size());
-            flagsInfo.pBindingFlags = bindingFlags.data();
-            std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
-            bindings[0].binding = 0;
-            bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-            bindings[0].descriptorCount = static_cast<uint32_t>(m_samplerTable.size());
-            bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-            bindings[1].binding = 1;
-            bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            bindings[1].descriptorCount = m_textureLimit;
-            bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-            VkDescriptorSetLayoutCreateInfo layoutInfo{};
-            layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-            layoutInfo.pNext = &flagsInfo;
-            layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-            layoutInfo.pBindings = bindings.data();
-            CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_textureSetLayout), "Failed to create the ray texture table layout");
+            // The textures, one binding with a variable count (partially bound): a table is allocated
+            // for the slots' needs. A new draw's textures go into slots no frame in flight reads, while
+            // the frames read others.
+            nvrhi::BindlessLayoutDesc tableDesc;
+            tableDesc.visibility = nvrhi::ShaderType::Compute | nvrhi::ShaderType::Pixel;
+            tableDesc.maxCapacity = m_textureLimit;
+            tableDesc.registerSpaces.push_back(nvrhi::BindingLayoutItem::Texture_SRV(0));
+            tableDesc.descriptorSet = kRayTextureSet;
+            tableDesc.variableCount = true;
+            tableDesc.updateUnusedWhilePending = m_updateUnusedWhilePending;
+            m_textureSetLayout = m_nvrhiDevice->createBindlessLayout(tableDesc);
+            if (!m_textureSetLayout)
+            {
+                throw std::runtime_error("Failed to create the ray texture table layout");
+            }
         }
 
-        VkDescriptorPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.maxSets = m_frameCount;
-        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-        poolInfo.pPoolSizes = poolSizes.data();
-        CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create the ray scene descriptor pool");
-        m_sets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, m_frameCount);
+        m_bindingSets.resize(m_frameCount);
+        m_sets.assign(m_frameCount, VK_NULL_HANDLE);
 
         // Placeholder buffers, so the sets are valid before the first build.
         m_meshNodes = CreateBuffer(AtLeastOne(0));
@@ -349,44 +351,28 @@ void VulkanRayScene::SetContent(
             {
                 throw std::runtime_error("The ray texture table outgrew the device's sampled image limit");
             }
-            if (m_texturePool != VK_NULL_HANDLE)
-            {
-                vkDestroyDescriptorPool(m_device, m_texturePool, nullptr);
-                m_texturePool = VK_NULL_HANDLE;
-                m_textureSet = VK_NULL_HANDLE;
-            }
+            // The old table goes at once: the frames in flight have finished (SetContent's contract).
+            m_textureTable = nullptr;
+            m_textureSet = VK_NULL_HANDLE;
             // Room to grow, so a streamed map does not reallocate it at every new cell.
             // A map's draws from the first content on (65,536 slots, 320k descriptors): growing it writes
             // every slot again, which took tens of milliseconds of a frame while a map streamed in.
             m_textureCapacity = std::min<uint32_t>(std::max(capacity + capacity / 4u, 65536u), m_textureLimit / kRayTexturesPerSlot);
             const uint32_t count = m_textureCapacity * kRayTexturesPerSlot;
-            const std::array<VkDescriptorPoolSize, 2> poolSizes = {
-                VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, static_cast<uint32_t>(m_samplerTable.size())},
-                VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, count}};
-            VkDescriptorPoolCreateInfo poolInfo{};
-            poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-            poolInfo.maxSets = 1;
-            poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-            poolInfo.pPoolSizes = poolSizes.data();
-            CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_texturePool), "Failed to create the ray texture table pool");
-            VkDescriptorSetVariableDescriptorCountAllocateInfo variableInfo{};
-            variableInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
-            variableInfo.descriptorSetCount = 1;
-            variableInfo.pDescriptorCounts = &count;
-            VkDescriptorSetAllocateInfo allocateInfo{};
-            allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            allocateInfo.pNext = &variableInfo;
-            allocateInfo.descriptorPool = m_texturePool;
-            allocateInfo.descriptorSetCount = 1;
-            allocateInfo.pSetLayouts = &m_textureSetLayout;
-            CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, &m_textureSet), "Failed to allocate the ray texture table");
-            infos.reserve(m_samplerTable.size() + static_cast<size_t>(count));
-            for (const VkSampler sampler : m_samplerTable)
+            m_textureTable = m_nvrhiDevice->createDescriptorTable(m_textureSetLayout);
+            if (!m_textureTable)
             {
-                infos.push_back(VkDescriptorImageInfo{sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED});
+                throw std::runtime_error("Failed to create the ray texture table");
             }
-            writes.push_back(ImageWrite(m_textureSet, 0, VK_DESCRIPTOR_TYPE_SAMPLER, infos.data()));
-            writes.back().descriptorCount = static_cast<uint32_t>(m_samplerTable.size());
+            m_nvrhiDevice->resizeDescriptorTable(m_textureTable, count, false);
+            if (m_textureTable->getCapacity() != count)
+            {
+                throw std::runtime_error("Failed to allocate the ray texture table");
+            }
+            // The engine writes the table itself, all of a content's entries in one batch: NVRHI's
+            // writeDescriptorTable updates one descriptor a call (hundreds of thousands here).
+            m_textureSet = ToNative<VkDescriptorSet>(m_textureTable->getNativeObject(nvrhi::ObjectTypes::VK_DescriptorSet));
+            infos.reserve(static_cast<size_t>(count));
             for (uint32_t index = 0; index < m_textureCapacity; ++index)
             {
                 const bool held = index < m_materialSlots.size() && m_materialSlots[index].set != VK_NULL_HANDLE;
@@ -1024,7 +1010,7 @@ bool VulkanRayScene::IsBuilding() const
 
 VkDescriptorSetLayout VulkanRayScene::GetSetLayout() const
 {
-    return m_setLayout;
+    return ToNative<VkDescriptorSetLayout>(m_setLayout->getNativeObject(nvrhi::ObjectTypes::VK_DescriptorSetLayout));
 }
 
 VkDescriptorSet VulkanRayScene::GetSet(uint32_t frameSlot) const
@@ -1034,12 +1020,33 @@ VkDescriptorSet VulkanRayScene::GetSet(uint32_t frameSlot) const
 
 VkDescriptorSetLayout VulkanRayScene::GetTextureSetLayout() const
 {
-    return m_textureSetLayout;
+    return m_textureSetLayout ? ToNative<VkDescriptorSetLayout>(m_textureSetLayout->getNativeObject(nvrhi::ObjectTypes::VK_DescriptorSetLayout))
+                              : VK_NULL_HANDLE;
 }
 
 VkDescriptorSet VulkanRayScene::GetTextureSet() const
 {
     return m_textureSet;
+}
+
+nvrhi::IBindingLayout* VulkanRayScene::GetNvrhiSetLayout() const
+{
+    return m_setLayout;
+}
+
+nvrhi::IBindingSet* VulkanRayScene::GetBindingSet(uint32_t frameSlot) const
+{
+    return m_bindingSets[frameSlot];
+}
+
+nvrhi::IBindingLayout* VulkanRayScene::GetNvrhiTextureSetLayout() const
+{
+    return m_textureSetLayout;
+}
+
+nvrhi::IDescriptorTable* VulkanRayScene::GetTextureTable() const
+{
+    return m_textureTable;
 }
 
 void VulkanRayScene::WriteTextureSlot(
@@ -1064,7 +1071,7 @@ void VulkanRayScene::WriteTextureSlot(
     VkWriteDescriptorSet write{};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet = m_textureSet;
-    write.dstBinding = 1;
+    write.dstBinding = 0;
     write.dstArrayElement = slot * kRayTexturesPerSlot;
     write.descriptorCount = kRayTexturesPerSlot;
     write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
@@ -1169,15 +1176,20 @@ VulkanRayScene::Buffer VulkanRayScene::CreateBuffer(VkDeviceSize size, bool near
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
-    bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                       (m_bufferDeviceAddress ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &result.buffer), "Failed to create a ray scene buffer");
     try
     {
         VkMemoryRequirements requirements{};
         vkGetBufferMemoryRequirements(m_device, result.buffer, &requirements);
+        VkMemoryAllocateFlagsInfo flagsInfo{};
+        flagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+        flagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
         VkMemoryAllocateInfo allocateInfo{};
         allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocateInfo.pNext = m_bufferDeviceAddress ? &flagsInfo : nullptr;
         allocateInfo.allocationSize = requirements.size;
         // Host visible: the CPU writes the hierarchies and every frame's instances straight in. On
         // this Mac's unified memory that is also where the GPU reads fastest. On a discrete GPU with
@@ -1305,57 +1317,57 @@ void VulkanRayScene::WriteSet(uint32_t slot)
 {
     m_slotSetsGenerations.resize(m_frameCount, 0);
     m_slotSetsGenerations[slot] = m_setsGeneration;
+
+    // A new binding set for the slot (NVRHI's are not written again); the old one goes at once, as the
+    // slot's last frame has finished, which is when the native set used to be written over.
+    nvrhi::BindingSetDesc desc;
+    // The items hold raw pointers: the handles live until the binding set holds its own references.
+    std::vector<nvrhi::BufferHandle> handles;
+    nvrhi::rt::AccelStructHandle topLevel;
+    const auto raw = [&](uint32_t binding, const Buffer& buffer)
     {
-        const std::array<VkDescriptorBufferInfo, 5> infos = {
-            VkDescriptorBufferInfo{m_meshNodes.buffer, 0, VK_WHOLE_SIZE},
-            VkDescriptorBufferInfo{m_meshTriangles.buffer, 0, VK_WHOLE_SIZE},
-            VkDescriptorBufferInfo{m_instances[slot].buffer, 0, VK_WHOLE_SIZE},
-            VkDescriptorBufferInfo{m_topNodes[slot].buffer, 0, VK_WHOLE_SIZE},
-            VkDescriptorBufferInfo{m_materials.buffer, 0, VK_WHOLE_SIZE}};
-        std::array<VkWriteDescriptorSet, 5> writes{};
-        for (uint32_t binding = 0; binding < writes.size(); ++binding)
+        handles.push_back(NvrhiBuffer(buffer));
+        desc.bindings.push_back(nvrhi::BindingSetItem::RawBuffer_SRV(binding, handles.back()));
+    };
+    const std::array<const Buffer*, 5> buffers = {&m_meshNodes, &m_meshTriangles, &m_instances[slot], &m_topNodes[slot], &m_materials};
+    for (uint32_t binding = 0; binding < buffers.size(); ++binding)
+    {
+        raw(binding, *buffers[binding]);
+    }
+    if (m_acceleration)
+    {
+        nvrhi::rt::AccelStructDesc topLevelDesc;
+        topLevelDesc.isTopLevel = true;
+        topLevelDesc.debugName = "Ray scene top level";
+        topLevel = m_nvrhiVulkanDevice->createHandleForNativeAccelStruct(m_acceleration->GetTopLevel(slot), nullptr, topLevelDesc);
+        if (!topLevel)
         {
-            writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[binding].dstSet = m_sets[slot];
-            writes[binding].dstBinding = binding;
-            writes[binding].descriptorCount = 1;
-            writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[binding].pBufferInfo = &infos[binding];
+            throw std::runtime_error("Failed to name the ray scene's top level for NVRHI");
         }
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-
-        if (m_acceleration)
+        desc.bindings.push_back(nvrhi::BindingSetItem::RayTracingAccelStruct(5, topLevel));
+        raw(6, m_meshGeometry);
+        raw(7, m_sourceTriangles);
+        for (uint32_t index = 0; index < m_samplerTable.size(); ++index)
         {
-            const VkAccelerationStructureKHR topLevel = m_acceleration->GetTopLevel(slot);
-            VkWriteDescriptorSetAccelerationStructureKHR accelerationInfo{};
-            accelerationInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-            accelerationInfo.accelerationStructureCount = 1;
-            accelerationInfo.pAccelerationStructures = &topLevel;
-            VkWriteDescriptorSet write{};
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.pNext = &accelerationInfo;
-            write.dstSet = m_sets[slot];
-            write.dstBinding = 5;
-            write.descriptorCount = 1;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-            vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
-
-            const std::array<VkDescriptorBufferInfo, 2> hitInfos = {
-                VkDescriptorBufferInfo{m_meshGeometry.buffer, 0, VK_WHOLE_SIZE},
-                VkDescriptorBufferInfo{m_sourceTriangles.buffer, 0, VK_WHOLE_SIZE}};
-            std::array<VkWriteDescriptorSet, 2> hitWrites{};
-            for (uint32_t index = 0; index < hitWrites.size(); ++index)
-            {
-                hitWrites[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                hitWrites[index].dstSet = m_sets[slot];
-                hitWrites[index].dstBinding = 6 + index;
-                hitWrites[index].descriptorCount = 1;
-                hitWrites[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                hitWrites[index].pBufferInfo = &hitInfos[index];
-            }
-            vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(hitWrites.size()), hitWrites.data(), 0, nullptr);
+            desc.bindings.push_back(nvrhi::BindingSetItem::Sampler(kRaySamplerBinding, m_samplerTable[index]).setArrayElement(index));
         }
     }
+    m_bindingSets[slot] = CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create a ray scene binding set");
+    m_sets[slot] = ToNative<VkDescriptorSet>(m_bindingSets[slot]->getNativeObject(nvrhi::ObjectTypes::VK_DescriptorSet));
+}
+
+nvrhi::BufferHandle VulkanRayScene::NvrhiBuffer(const Buffer& buffer) const
+{
+    nvrhi::BufferDesc desc;
+    desc.byteSize = buffer.size;
+    desc.canHaveRawViews = true;
+    desc.debugName = "Ray scene buffer";
+    const nvrhi::BufferHandle handle = m_nvrhiDevice->createHandleForNativeBuffer(nvrhi::ObjectTypes::VK_Buffer, nvrhi::Object(buffer.buffer), desc);
+    if (!handle)
+    {
+        throw std::runtime_error("Failed to name a ray scene buffer for NVRHI");
+    }
+    return handle;
 }
 
 void VulkanRayScene::CreateMaterialPipeline(VkPipelineCache pipelineCache)
@@ -1445,17 +1457,9 @@ void VulkanRayScene::DestroyHandles()
     m_meshBuffers.clear();
     DestroyBuffer(m_materials);
     DestroyBuffer(m_materialCopy.source);
-    if (m_texturePool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_texturePool, nullptr);
-        m_texturePool = VK_NULL_HANDLE;
-        m_textureSet = VK_NULL_HANDLE;
-    }
-    if (m_textureSetLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_textureSetLayout, nullptr);
-        m_textureSetLayout = VK_NULL_HANDLE;
-    }
+    m_textureTable = nullptr;
+    m_textureSet = VK_NULL_HANDLE;
+    m_textureSetLayout = nullptr;
     for (Buffer& buffer : m_instances)
     {
         DestroyBuffer(buffer);
@@ -1464,15 +1468,8 @@ void VulkanRayScene::DestroyHandles()
     {
         DestroyBuffer(buffer);
     }
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
-    if (m_setLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
-    }
+    m_bindingSets.clear();
+    m_sets.clear();
+    m_setLayout = nullptr;
 }
 }

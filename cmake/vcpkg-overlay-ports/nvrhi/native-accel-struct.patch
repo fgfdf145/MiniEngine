@@ -1,0 +1,75 @@
+diff --git a/include/nvrhi/vulkan.h b/include/nvrhi/vulkan.h
+index 7e58df0..5118ce6 100644
+--- a/include/nvrhi/vulkan.h
++++ b/include/nvrhi/vulkan.h
+@@ -43,6 +43,11 @@ namespace nvrhi::vulkan
+         virtual void queueWaitForSemaphore(CommandQueue waitQueue, VkSemaphore semaphore, uint64_t value) = 0;
+         virtual void queueSignalSemaphore(CommandQueue executionQueue, VkSemaphore semaphore, uint64_t value) = 0;
+         virtual uint64_t queueGetCompletedInstance(CommandQueue queue) = 0;
++
++        // An acceleration structure the application built and keeps, for binding sets to name: NVRHI
++        // neither builds nor destroys it. dataBuffer, the buffer holding it, is what resource state
++        // tracking sees of it (may be null when automatic barriers stay off).
++        virtual rt::AccelStructHandle createHandleForNativeAccelStruct(VkAccelerationStructureKHR accelStruct, IBuffer* dataBuffer, const rt::AccelStructDesc& desc) = 0;
+     };
+ 
+     typedef RefCountPtr<IDevice> DeviceHandle;
+diff --git a/src/vulkan/vulkan-backend.h b/src/vulkan/vulkan-backend.h
+index 1498ecb..447d6e1 100644
+--- a/src/vulkan/vulkan-backend.h
++++ b/src/vulkan/vulkan-backend.h
+@@ -1034,6 +1034,8 @@ namespace nvrhi::vulkan
+         bool compacted = false;
+         size_t rtxmuId = ~0ull;
+         vk::Buffer rtxmuBuffer;
++        // False for createHandleForNativeAccelStruct's: the application destroys the structure.
++        bool ownsAccelStruct = true;
+ 
+ 
+         explicit AccelStruct(const VulkanContext& context)
+@@ -1186,6 +1188,7 @@ namespace nvrhi::vulkan
+         void queueWaitForSemaphore(CommandQueue waitQueue, VkSemaphore semaphore, uint64_t value) override;
+         void queueSignalSemaphore(CommandQueue executionQueue, VkSemaphore semaphore, uint64_t value) override;
+         uint64_t queueGetCompletedInstance(CommandQueue queue) override;
++        rt::AccelStructHandle createHandleForNativeAccelStruct(VkAccelerationStructureKHR accelStruct, IBuffer* dataBuffer, const rt::AccelStructDesc& desc) override;
+ 
+     private:
+         // Warning m_AftermathCrashDump helper must be first due to reverse destruction order
+diff --git a/src/vulkan/vulkan-raytracing.cpp b/src/vulkan/vulkan-raytracing.cpp
+index 866752b..21bdd42 100644
+--- a/src/vulkan/vulkan-raytracing.cpp
++++ b/src/vulkan/vulkan-raytracing.cpp
+@@ -1161,7 +1161,7 @@ namespace nvrhi::vulkan
+         bool isManaged = true;
+ #endif
+ 
+-        if (accelStruct && isManaged)
++        if (accelStruct && isManaged && ownsAccelStruct)
+         {
+             m_Context.device.destroyAccelerationStructureKHR(accelStruct, m_Context.allocationCallbacks);
+             accelStruct = nullptr;
+@@ -1184,6 +1184,24 @@ namespace nvrhi::vulkan
+         }
+     }
+ 
++    rt::AccelStructHandle Device::createHandleForNativeAccelStruct(VkAccelerationStructureKHR nativeAccelStruct, IBuffer* dataBuffer, const rt::AccelStructDesc& desc)
++    {
++        if (nativeAccelStruct == VK_NULL_HANDLE)
++            return nullptr;
++
++        AccelStruct* as = new AccelStruct(m_Context);
++        as->desc = desc;
++        as->accelStruct = vk::AccelerationStructureKHR(nativeAccelStruct);
++        as->dataBuffer = dataBuffer;
++        as->ownsAccelStruct = false;
++
++        auto addressInfo = vk::AccelerationStructureDeviceAddressInfoKHR()
++            .setAccelerationStructure(as->accelStruct);
++        as->accelStructDeviceAddress = m_Context.device.getAccelerationStructureAddressKHR(addressInfo);
++
++        return rt::AccelStructHandle::Create(as);
++    }
++
+     uint64_t AccelStruct::getDeviceAddress() const
+     {
+ #ifdef NVRHI_WITH_RTXMU

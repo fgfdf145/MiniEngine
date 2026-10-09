@@ -1,6 +1,7 @@
 #include "ao_pass.h"
 
 #include "compute_pass_util.h"
+#include "nvrhi_pass.h"
 #include "ray_scene.h"
 
 #include <algorithm>
@@ -66,6 +67,31 @@ AoPushConstants BuildPushConstants(const ScenePassFrameContext& frame)
     return constants;
 }
 
+// The trace's set (vbao_trace.comp and rt_occlusion.comp): depth and normal loaded, AoRaw written, and
+// the push constants, at descriptor set registerSpace.
+nvrhi::BindingLayoutHandle CreateTraceSetLayout(nvrhi::IDevice* device, uint32_t registerSpace)
+{
+    nvrhi::BindingLayoutDesc desc;
+    desc.visibility = nvrhi::ShaderType::Compute;
+    desc.registerSpace = registerSpace;
+    desc.registerSpaceIsDescriptorSet = true;
+    desc.bindingOffsets = ShaderBindingOffsets();
+    desc.bindings = {
+        nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::Texture_SRV(1),
+        nvrhi::BindingLayoutItem::Texture_UAV(2),
+        nvrhi::BindingLayoutItem::PushConstants(0, sizeof(AoPushConstants))};
+    return CreateNvrhiBindingLayout(device, desc, "Failed to create the AO trace binding layout");
+}
+
+void Dispatch(nvrhi::ICommandList* commandList, const nvrhi::ComputeState& state, const AoPushConstants& constants, VkExtent2D extent)
+{
+    commandList->setComputeState(state);
+    commandList->setPushConstants(&constants, sizeof(constants));
+    commandList->dispatch(
+        (extent.width + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
+        (extent.height + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize);
+}
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -73,42 +99,26 @@ AoPushConstants BuildPushConstants(const ScenePassFrameContext& frame)
 // ---------------------------------------------------------------------------------------------
 
 VulkanAoTracePass::VulkanAoTracePass(
-    VkDevice device,
-    VkPipelineCache pipelineCache,
+    nvrhi::IDevice* nvrhiDevice,
     const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout,
+    nvrhi::IBindingLayout* frameSetLayout,
     const VulkanRayScene& rayScene)
-    : m_device(device)
+    : m_nvrhiDevice(nvrhiDevice)
 {
-    try
+    m_setLayout = CreateTraceSetLayout(m_nvrhiDevice, 1);
+    m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "vbao_trace.comp.spv", {frameSetLayout, m_setLayout});
+    if (rayScene.HasHardwareRayTracing())
     {
-        static constexpr std::array<VkDescriptorType, 3> kTypes = {
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes);
-        CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "vbao_trace.comp.spv", sizeof(AoPushConstants), m_pipelineLayout, m_pipeline);
-        if (rayScene.HasHardwareRayTracing())
-        {
-            const std::array<VkDescriptorSetLayout, 4> setLayouts = {
-                frameSetLayout, rayScene.GetSetLayout(), m_setLayout, rayScene.GetTextureSetLayout()};
-            CreateComputePipeline(
-                m_device, pipelineCache, setLayouts, "rt_occlusion.comp.spv", sizeof(AoPushConstants), m_tracedPipelineLayout, m_tracedPipeline);
-        }
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 2, 1);
-        CreateDescriptorSets(targets);
+        m_tracedSetLayout = CreateTraceSetLayout(m_nvrhiDevice, 2);
+        m_tracedPipeline = CreateNvrhiComputePipeline(
+            m_nvrhiDevice,
+            "rt_occlusion.comp.spv",
+            {frameSetLayout, rayScene.GetNvrhiSetLayout(), m_tracedSetLayout, rayScene.GetNvrhiTextureSetLayout()});
     }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
-    }
+    CreateBindingSets(targets);
 }
 
-VulkanAoTracePass::~VulkanAoTracePass()
-{
-    DestroyHandles();
-}
+VulkanAoTracePass::~VulkanAoTracePass() = default;
 
 ScenePassId VulkanAoTracePass::Id() const
 {
@@ -130,7 +140,9 @@ void VulkanAoTracePass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    const bool traced = m_tracedPipeline != VK_NULL_HANDLE && (frame.rayTracing.ambientOcclusion || frame.rayTracing.probeOcclusion);
+    (void)commandBuffer;
+    const bool traced = m_tracedPipeline && frame.rayBindingSet != nullptr && frame.rayTextureTable != nullptr &&
+                        (frame.rayTracing.ambientOcclusion || frame.rayTracing.probeOcclusion);
     const bool bitmask = frame.ao.enabled && !frame.rayTracing.ambientOcclusion;
     if (!traced && !bitmask)
     {
@@ -138,18 +150,17 @@ void VulkanAoTracePass::Record(
     }
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::AoRaw, frame.imageIndex, frame.frameSlot);
     const VkExtent2D extent = targets.GetTargetExtent(RenderTargetId::AoRaw);
+    nvrhi::ITexture* aoRaw = targets.GetTexture(RenderTargetId::AoRaw, slot);
+    nvrhi::ICommandList* commandList = frame.commandList;
+    // The inputs are where the native passes left them, in the read layout; AoRaw is written in GENERAL.
+    const NvrhiPassScope scope(commandList, {{aoRaw, nvrhi::ResourceStates::UnorderedAccess}});
     AoPushConstants constants = BuildPushConstants(frame);
     if (bitmask)
     {
-        DispatchCompute(
-            commandBuffer,
-            m_pipeline,
-            m_pipelineLayout,
-            frame.frameDescriptorSet,
-            m_descriptorSets.at(slot),
-            &constants,
-            sizeof(constants),
-            extent);
+        nvrhi::ComputeState state;
+        state.pipeline = m_pipeline;
+        state.bindings = {frame.frameBindingSet, m_bindingSets.at(slot)};
+        Dispatch(commandList, state, constants, extent);
     }
     if (!traced)
     {
@@ -157,82 +168,41 @@ void VulkanAoTracePass::Record(
     }
     if (bitmask)
     {
-        // The traced pass reads the bitmask's AO back and adds the probe occlusion beside it.
-        VkMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        vkCmdPipelineBarrier(
-            commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+        // The traced pass reads the bitmask's AO back and adds the probe occlusion beside it: a UAV
+        // barrier between the two.
+        commandList->setTextureState(aoRaw, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+        commandList->commitBarriers();
     }
     // The traced rays per pixel ride in the slice count.
     constants.sliceCount = static_cast<uint32_t>(frame.rayTracing.occlusionRays);
-    const std::array<VkDescriptorSet, 4> sets = {frame.frameDescriptorSet, frame.raySet, m_descriptorSets.at(slot), frame.rayTextureSet};
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracedPipeline);
-    vkCmdBindDescriptorSets(
-        commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracedPipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
-    vkCmdPushConstants(commandBuffer, m_tracedPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
-    vkCmdDispatch(
-        commandBuffer,
-        (extent.width + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
-        (extent.height + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
-        1);
+    nvrhi::ComputeState state;
+    state.pipeline = m_tracedPipeline;
+    state.bindings = {frame.frameBindingSet, frame.rayBindingSet, m_tracedBindingSets.at(slot), frame.rayTextureTable};
+    Dispatch(commandList, state, constants, extent);
 }
 
 void VulkanAoTracePass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
-    CreateDescriptorSets(targets);
+    CreateBindingSets(targets);
 }
 
-void VulkanAoTracePass::CreateDescriptorSets(const SceneRenderTargets& targets)
+void VulkanAoTracePass::CreateBindingSets(const SceneRenderTargets& targets)
 {
-    const uint32_t copyCount = targets.GetTransientCopyCount();
-    m_descriptorSets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, copyCount);
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
+    m_bindingSets.clear();
+    m_tracedBindingSets.clear();
+    for (uint32_t slot = 0; slot < targets.GetTransientCopyCount(); ++slot)
     {
-        const VkDescriptorImageInfo depthInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-        const VkDescriptorImageInfo normalInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-        const VkDescriptorImageInfo aoInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::AoRaw, slot), VK_IMAGE_LAYOUT_GENERAL};
-        const std::array<VkWriteDescriptorSet, 3> writes = {
-            ImageWrite(m_descriptorSets[slot], 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &depthInfo),
-            ImageWrite(m_descriptorSets[slot], 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &normalInfo),
-            ImageWrite(m_descriptorSets[slot], 2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &aoInfo)};
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    }
-}
-
-void VulkanAoTracePass::DestroyHandles()
-{
-    if (m_tracedPipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_tracedPipeline, nullptr);
-        m_tracedPipeline = VK_NULL_HANDLE;
-    }
-    if (m_tracedPipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_tracedPipelineLayout, nullptr);
-        m_tracedPipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_pipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
-    m_descriptorSets.clear();
-    if (m_setLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
+        nvrhi::BindingSetDesc desc;
+        desc.bindings = {
+            nvrhi::BindingSetItem::Texture_SRV(0, targets.GetTexture(RenderTargetId::SceneDepth, slot)),
+            nvrhi::BindingSetItem::Texture_SRV(1, targets.GetTexture(RenderTargetId::GBufferNormal, slot)),
+            nvrhi::BindingSetItem::Texture_UAV(2, targets.GetTexture(RenderTargetId::AoRaw, slot)),
+            nvrhi::BindingSetItem::PushConstants(0, sizeof(AoPushConstants))};
+        m_bindingSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create an AO trace binding set"));
+        if (m_tracedSetLayout)
+        {
+            m_tracedBindingSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_tracedSetLayout, "Failed to create an AO trace binding set"));
+        }
     }
 }
 
@@ -240,45 +210,37 @@ void VulkanAoTracePass::DestroyHandles()
 // Resolve
 // ---------------------------------------------------------------------------------------------
 
-VulkanAoResolvePass::VulkanAoResolvePass(
-    VkPhysicalDevice physicalDevice,
-    VkDevice device,
-    nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
-    const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout)
-    : m_physicalDevice(physicalDevice),
-      m_device(device),
+VulkanAoResolvePass::VulkanAoResolvePass(VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout)
+    : m_device(device),
       m_nvrhiDevice(nvrhiDevice)
 {
-    try
-    {
-        m_linearSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
-        static constexpr std::array<VkDescriptorType, 6> kTypes = {
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        // The history is sampled (bilinear reprojection); the rest are loaded.
-        static constexpr std::array<uint32_t, 1> kSampled = {kHistoryReadBinding};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes, kSampled);
-        CreateComputePipeline(m_device, pipelineCache, frameSetLayout, m_setLayout, "vbao_resolve.comp.spv", sizeof(AoPushConstants), m_pipelineLayout, m_pipeline);
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 2, 1);
-        m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
-        CreateDescriptorSets(targets);
-    }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
-    }
+    m_linearSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
+    nvrhi::BindingLayoutDesc desc;
+    desc.visibility = nvrhi::ShaderType::Compute;
+    desc.registerSpace = 1;
+    desc.registerSpaceIsDescriptorSet = true;
+    desc.bindingOffsets = ShaderBindingOffsets();
+    // The raw AO, depth and velocity loaded; the history sampled (bilinear reprojection, its sampler at
+    // kHistoryReadBinding + 64); the history written and SceneAo.
+    desc.bindings = {
+        nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::Texture_SRV(1),
+        nvrhi::BindingLayoutItem::Texture_SRV(2),
+        nvrhi::BindingLayoutItem::Texture_SRV(kHistoryReadBinding),
+        nvrhi::BindingLayoutItem::Sampler(kSplitSamplerBindingOffset + kHistoryReadBinding),
+        nvrhi::BindingLayoutItem::Texture_UAV(4),
+        nvrhi::BindingLayoutItem::Texture_UAV(5),
+        nvrhi::BindingLayoutItem::PushConstants(0, sizeof(AoPushConstants))};
+    m_setLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, desc, "Failed to create the AO resolve binding layout");
+    m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "vbao_resolve.comp.spv", {frameSetLayout, m_setLayout});
+    m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
+    CreateBindingSets(targets);
 }
 
 VulkanAoResolvePass::~VulkanAoResolvePass()
 {
-    DestroyHandles();
+    m_bindingSets.clear();
+    m_history.Destroy();
 }
 
 ScenePassId VulkanAoResolvePass::Id() const
@@ -304,83 +266,55 @@ void VulkanAoResolvePass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    // Runs even with AO off: the bound descriptors name both images in GENERAL.
+    // Runs even with AO off: SceneAo must hold something. Both history images go to GENERAL first
+    // (discarded when the history is invalid), where they rest between frames.
     m_history.RecordBarrier(commandBuffer, frame.aoHistory.valid);
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneAo, frame.imageIndex, frame.frameSlot);
-    const AoPushConstants constants = BuildPushConstants(frame);
-    DispatchCompute(
-        commandBuffer,
-        m_pipeline,
-        m_pipelineLayout,
-        frame.frameDescriptorSet,
-        m_descriptorSets.at(slot * 2 + frame.aoHistory.readIndex),
-        &constants,
-        sizeof(constants),
-        frame.extent);
+    nvrhi::ITexture* historyRead = m_history.GetTexture(frame.aoHistory.readIndex);
+    nvrhi::ICommandList* commandList = frame.commandList;
+    const NvrhiPassScope scope(
+        commandList,
+        {{historyRead, nvrhi::ResourceStates::UnorderedAccess},
+         {m_history.GetTexture(1u - frame.aoHistory.readIndex), nvrhi::ResourceStates::UnorderedAccess},
+         {targets.GetTexture(RenderTargetId::SceneAo, slot), nvrhi::ResourceStates::UnorderedAccess}});
+    // The history the dispatch samples, in the read layout for it; the scope puts it back in GENERAL.
+    commandList->setTextureState(historyRead, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+    commandList->commitBarriers();
+    nvrhi::ComputeState state;
+    state.pipeline = m_pipeline;
+    state.bindings = {frame.frameBindingSet, m_bindingSets.at(slot * 2 + frame.aoHistory.readIndex)};
+    Dispatch(commandList, state, BuildPushConstants(frame), frame.extent);
 }
 
 void VulkanAoResolvePass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
     // The renderer resets TemporalHistory at the same call sites, so the next frame discards the new
     // images' undefined contents.
+    m_bindingSets.clear();
     m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
-    CreateDescriptorSets(targets);
+    CreateBindingSets(targets);
 }
 
-void VulkanAoResolvePass::CreateDescriptorSets(const SceneRenderTargets& targets)
+void VulkanAoResolvePass::CreateBindingSets(const SceneRenderTargets& targets)
 {
-    const uint32_t copyCount = targets.GetTransientCopyCount();
-    m_descriptorSets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, copyCount * 2);
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
+    m_bindingSets.clear();
+    for (uint32_t slot = 0; slot < targets.GetTransientCopyCount(); ++slot)
     {
         for (uint32_t readIndex = 0; readIndex < 2; ++readIndex)
         {
-            const VkDescriptorSet set = m_descriptorSets[slot * 2 + readIndex];
-            const VkDescriptorImageInfo aoRawInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::AoRaw, slot), kReadLayout};
-            const VkDescriptorImageInfo depthInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-            const VkDescriptorImageInfo velocityInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
-            const VkDescriptorImageInfo historyReadInfo{VK_NULL_HANDLE, m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo historySamplerInfo{NativeSampler(m_linearSampler), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
-            const VkDescriptorImageInfo historyWriteInfo{VK_NULL_HANDLE, m_history.GetView(1u - readIndex), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo aoInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneAo, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const std::array<VkWriteDescriptorSet, 7> writes = {
-                ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &aoRawInfo),
-                ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &depthInfo),
-                ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &velocityInfo),
-                ImageWrite(set, kHistoryReadBinding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &historyReadInfo),
-                ImageWrite(set, kSplitSamplerBindingOffset + kHistoryReadBinding, VK_DESCRIPTOR_TYPE_SAMPLER, &historySamplerInfo),
-                ImageWrite(set, 4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &historyWriteInfo),
-                ImageWrite(set, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &aoInfo)};
-            vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+            nvrhi::BindingSetDesc desc;
+            desc.bindings = {
+                nvrhi::BindingSetItem::Texture_SRV(0, targets.GetTexture(RenderTargetId::AoRaw, slot)),
+                nvrhi::BindingSetItem::Texture_SRV(1, targets.GetTexture(RenderTargetId::SceneDepth, slot)),
+                nvrhi::BindingSetItem::Texture_SRV(2, targets.GetTexture(RenderTargetId::GBufferVelocity, slot)),
+                nvrhi::BindingSetItem::Texture_SRV(kHistoryReadBinding, m_history.GetTexture(readIndex)),
+                nvrhi::BindingSetItem::Sampler(kSplitSamplerBindingOffset + kHistoryReadBinding, m_linearSampler),
+                nvrhi::BindingSetItem::Texture_UAV(4, m_history.GetTexture(1u - readIndex)),
+                nvrhi::BindingSetItem::Texture_UAV(5, targets.GetTexture(RenderTargetId::SceneAo, slot)),
+                nvrhi::BindingSetItem::PushConstants(0, sizeof(AoPushConstants))};
+            m_bindingSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create an AO resolve binding set"));
         }
     }
-}
-
-void VulkanAoResolvePass::DestroyHandles()
-{
-    if (m_pipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
-    m_descriptorSets.clear();
-    m_history.Destroy();
-    if (m_setLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
-    }
-    m_linearSampler = nullptr;
 }
 }

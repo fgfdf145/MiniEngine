@@ -44,6 +44,7 @@ class VulkanTaaPass : public IScenePass
     // images are recreated in OnTargetsRebuilt, so a reader must rebuild its descriptors after
     // this pass has.
     VkImageView GetHistoryView(uint32_t index) const;
+    nvrhi::ITexture* GetHistoryTexture(uint32_t index) const;
 
   private:
     // An image DLSS reads, written here at the render size: NVRHI's, kept in ShaderResource (the

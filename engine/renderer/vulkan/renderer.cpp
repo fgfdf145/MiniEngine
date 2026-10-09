@@ -2011,6 +2011,8 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     {
         frame.raySet = m_rayScene->GetSet(frame.frameSlot);
         frame.rayTextureSet = m_rayScene->GetTextureSet();
+        frame.rayBindingSet = m_rayScene->GetBindingSet(frame.frameSlot);
+        frame.rayTextureTable = m_rayScene->GetTextureTable();
     }
     frame.pathTracing = renderDebug.pathTracing;
     frame.pathTracing.enabled = features.pathTracing;
@@ -2373,12 +2375,12 @@ void VulkanRenderer::CreateDeviceResources()
     // The scene as the DDGI probe rays trace it, one instance buffer per frame in flight. With
     // hardware ray tracing its texture table names a white texture where no material's is.
     TextureDescriptorBinding rayDefaultTexture{};
-    std::vector<VkSampler> raySamplerTable;
+    std::vector<nvrhi::ISampler*> raySamplerTable;
     if (m_device->SupportsRayQuery())
     {
         for (uint32_t index = 0; index < VulkanSamplerCache::kSamplerCount; ++index)
         {
-            raySamplerTable.push_back(m_samplerCache->GetNative(VulkanSamplerCache::SamplerAt(index)));
+            raySamplerTable.push_back(m_samplerCache->Get(VulkanSamplerCache::SamplerAt(index)));
         }
         VulkanUploadBatch rayUploadBatch(
             m_device->GetHandle(),
@@ -2392,12 +2394,15 @@ void VulkanRenderer::CreateDeviceResources()
     m_rayScene = std::make_unique<VulkanRayScene>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
+        m_nvrhi->GetVulkan(),
         m_pipelineCache,
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_device->SupportsRayQuery(),
         rayDefaultTexture,
         std::move(raySamplerTable),
-        m_device->SupportsUpdateUnusedWhilePending());
+        m_device->SupportsUpdateUnusedWhilePending(),
+        m_device->BufferDeviceAddressEnabled());
     m_rayScene->SetRetire([this](std::function<void()> release)
                           {
                               Retire(std::move(release));
@@ -3127,14 +3132,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
 
     // Construction order does not matter: RecordScenePasses follows BuildScenePassOrder.
     view.passes.push_back(std::move(geometryPass));
-    view.passes.push_back(std::make_unique<VulkanRtShadowPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        *m_rayScene));
+    view.passes.push_back(std::make_unique<VulkanRtShadowPass>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_rayScene));
     auto pathTracePass = std::make_unique<VulkanPathTracePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
@@ -3186,19 +3184,8 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         *m_rayScene);
     view.restirPtPass = restirPtPass.get();
     view.passes.push_back(std::move(restirPtPass));
-    view.passes.push_back(std::make_unique<VulkanAoTracePass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        *m_rayScene));
-    view.passes.push_back(std::make_unique<VulkanAoResolvePass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle()));
+    view.passes.push_back(std::make_unique<VulkanAoTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_rayScene));
+    view.passes.push_back(std::make_unique<VulkanAoResolvePass>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanLightingPass>(
         m_device->GetHandle(),
         m_pipelineCache,
@@ -3252,21 +3239,8 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::move(taaPass));
     // After TAA in this list, whose order OnTargetsRebuilt follows: the trace names TAA's history
     // images, which TAA recreates first.
-    view.passes.push_back(std::make_unique<VulkanSsrTracePass>(
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        taa,
-        *m_rayScene));
-    view.passes.push_back(std::make_unique<VulkanSsrResolvePass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle()));
+    view.passes.push_back(std::make_unique<VulkanSsrTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), taa, *m_rayScene));
+    view.passes.push_back(std::make_unique<VulkanSsrResolvePass>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanBloomPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::move(exposurePass));
     view.passes.push_back(std::make_unique<VulkanTonemapPass>(m_nvrhi->Get(), *view.targets, view.gbufferDescriptors->GetBindingLayout()));

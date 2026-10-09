@@ -61,11 +61,13 @@ uint64_t RayDeviceAddress(uint2 address)
 [[vk::binding(6, RAY_SCENE_SET)]] StructuredBuffer<RayMeshGeometry> rayMeshGeometries : D3D_REGISTER(t, 6, RAY_SCENE_SET);
 // Each leaf triangle's index in its mesh's index list / 3, laid out as meshTriangles.
 [[vk::binding(7, RAY_SCENE_SET)]] StructuredBuffer<uint> raySourceTriangles : D3D_REGISTER(t, 7, RAY_SCENE_SET);
-// The texture table: every material sampler (VulkanSamplerCache::SamplerAt's order), then the slots'
-// textures; a texture's sampler is its slot's RayMaterial::samplers entry.
+// Every material sampler, in VulkanSamplerCache::SamplerAt's order (the ray set; NVRHI's bindless
+// tables hold no samplers), and the texture table: the slots' textures, kRayTexturesPerSlot a slot, an
+// NVRHI bindless descriptor table of its own. A texture's sampler is its slot's RayMaterial::samplers
+// entry.
 #define RAY_SAMPLER_COUNT 108
-[[vk::binding(0, RAY_TEXTURE_SET)]] SamplerState raySamplers[RAY_SAMPLER_COUNT] : D3D_REGISTER(s, 0, RAY_TEXTURE_SET);
-[[vk::binding(1, RAY_TEXTURE_SET)]] Texture2D rayTextures[] : D3D_REGISTER(t, 1, RAY_TEXTURE_SET);
+[[vk::binding(8, RAY_SCENE_SET)]] SamplerState raySamplers[RAY_SAMPLER_COUNT] : D3D_REGISTER(s, 8, RAY_SCENE_SET);
+[[vk::binding(0, RAY_TEXTURE_SET)]] Texture2D rayTextures[] : D3D_REGISTER(t, 0, RAY_TEXTURE_SET);
 
 // Slot texture slotTexture (RAY_TEXTURE_*) of draw slot drawSlot at level lod.
 float4 RayTextureSampleLevel(uint drawSlot, uint slotTexture, float2 uv, float lod)

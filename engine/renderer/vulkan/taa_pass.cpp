@@ -353,6 +353,11 @@ VkImageView VulkanTaaPass::GetHistoryView(uint32_t index) const
     return m_history.GetView(index);
 }
 
+nvrhi::ITexture* VulkanTaaPass::GetHistoryTexture(uint32_t index) const
+{
+    return m_history.GetTexture(index);
+}
+
 void VulkanTaaPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
     // The renderer resets the TAA TemporalHistory at the same call sites, so the next frame

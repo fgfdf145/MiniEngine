@@ -1,5 +1,6 @@
 #include "rt_shadow_pass.h"
 
+#include "nvrhi_pass.h"
 #include "ray_scene.h"
 
 #include <array>
@@ -27,82 +28,80 @@ constexpr uint32_t kFlagDenoise = 2u;
 constexpr uint32_t kFlagHistoryValid = 4u;
 
 constexpr VkFormat kHistoryFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-constexpr uint32_t kBindingCount = 8;
 // rt_shadow_common.slang's rtShadowHistoryRead, the one input the shaders sample rather than load.
 constexpr uint32_t kHistoryReadBinding = 4;
 
-void ComputeBarrier(VkCommandBuffer commandBuffer)
+nvrhi::BindingLayoutHandle CreateSetLayout(nvrhi::IDevice* device, uint32_t registerSpace)
 {
-    VkMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    vkCmdPipelineBarrier(
-        commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+    nvrhi::BindingLayoutDesc desc;
+    desc.visibility = nvrhi::ShaderType::Compute;
+    desc.registerSpace = registerSpace;
+    desc.registerSpaceIsDescriptorSet = true;
+    desc.bindingOffsets = ShaderBindingOffsets();
+    desc.bindings = {
+        nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::Texture_SRV(1),
+        nvrhi::BindingLayoutItem::Texture_SRV(2),
+        nvrhi::BindingLayoutItem::Texture_UAV(3),
+        nvrhi::BindingLayoutItem::Texture_SRV(kHistoryReadBinding),
+        nvrhi::BindingLayoutItem::Sampler(kSplitSamplerBindingOffset + kHistoryReadBinding),
+        nvrhi::BindingLayoutItem::Texture_UAV(5),
+        nvrhi::BindingLayoutItem::Texture_UAV(6),
+        nvrhi::BindingLayoutItem::Texture_UAV(7),
+        nvrhi::BindingLayoutItem::PushConstants(0, sizeof(RtShadowPushConstants))};
+    return CreateNvrhiBindingLayout(device, desc, "Failed to create the traced shadow binding layout");
 }
 
-void Dispatch(VkCommandBuffer commandBuffer, VkExtent2D extent)
+void Dispatch(nvrhi::ICommandList* commandList, const nvrhi::ComputeState& state, const RtShadowPushConstants& constants, VkExtent2D extent)
 {
-    vkCmdDispatch(
-        commandBuffer,
+    commandList->setComputeState(state);
+    commandList->setPushConstants(&constants, sizeof(constants));
+    commandList->dispatch(
         (extent.width + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
-        (extent.height + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
-        1);
+        (extent.height + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize);
+}
+
+// What one dispatch wrote, visible to the next: a UAV barrier on each image written.
+void UavBarrier(nvrhi::ICommandList* commandList, std::initializer_list<nvrhi::ITexture*> textures)
+{
+    for (nvrhi::ITexture* texture : textures)
+    {
+        commandList->setTextureState(texture, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+    }
+    commandList->commitBarriers();
 }
 }
 
 VulkanRtShadowPass::VulkanRtShadowPass(
-    VkPhysicalDevice physicalDevice,
     VkDevice device,
     nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout,
+    nvrhi::IBindingLayout* frameSetLayout,
     const VulkanRayScene& rayScene)
-    : m_physicalDevice(physicalDevice),
-      m_device(device),
+    : m_device(device),
       m_nvrhiDevice(nvrhiDevice)
 {
-    try
+    m_linearSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
+    m_setLayout = CreateSetLayout(m_nvrhiDevice, 1);
+    m_filterPipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "rt_shadow_filter.comp.spv", {frameSetLayout, m_setLayout});
+    if (rayScene.HasHardwareRayTracing())
     {
-        m_linearSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
-        static constexpr std::array<VkDescriptorType, kBindingCount> kTypes = {
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        // The history is sampled (bilinear reprojection); the G-buffer inputs are loaded.
-        static constexpr std::array<uint32_t, 1> kSampled = {kHistoryReadBinding};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes, kSampled);
-        const std::array<VkDescriptorSetLayout, 2> setLayouts = {frameSetLayout, m_setLayout};
-        CreateComputePipeline(
-            m_device, pipelineCache, setLayouts, "rt_shadow_filter.comp.spv", sizeof(RtShadowPushConstants), m_pipelineLayout, m_filterPipeline);
-        if (rayScene.HasHardwareRayTracing())
-        {
-            m_temporalPipeline = CreateComputeShaderPipeline(m_device, pipelineCache, m_pipelineLayout, "rt_shadow_temporal.comp.spv");
-            const std::array<VkDescriptorSetLayout, 4> traceLayouts = {
-                frameSetLayout, rayScene.GetSetLayout(), m_setLayout, rayScene.GetTextureSetLayout()};
-            CreateComputePipeline(
-                m_device, pipelineCache, traceLayouts, "rt_shadow_trace.comp.spv", sizeof(RtShadowPushConstants), m_tracePipelineLayout, m_tracePipeline);
-        }
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount() * 2, 4, 4, 1);
-        m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
-        CreateDescriptorSets(targets);
+        m_temporalPipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "rt_shadow_temporal.comp.spv", {frameSetLayout, m_setLayout});
+        m_traceSetLayout = CreateSetLayout(m_nvrhiDevice, 2);
+        m_tracePipeline = CreateNvrhiComputePipeline(
+            m_nvrhiDevice,
+            "rt_shadow_trace.comp.spv",
+            {frameSetLayout, rayScene.GetNvrhiSetLayout(), m_traceSetLayout, rayScene.GetNvrhiTextureSetLayout()});
     }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
-    }
+    m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
+    CreateBindingSets(targets);
 }
 
 VulkanRtShadowPass::~VulkanRtShadowPass()
 {
-    DestroyHandles();
+    m_traceBindingSets.clear();
+    m_bindingSets.clear();
+    m_history.Destroy();
 }
 
 ScenePassId VulkanRtShadowPass::Id() const
@@ -128,8 +127,8 @@ void VulkanRtShadowPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
-    // Even while nothing traces: the bound descriptors name both history images in GENERAL.
-    const bool traced = frame.rayTracing.sunShadows && m_tracePipeline != VK_NULL_HANDLE;
+    // Even while nothing traces: both history images rest in GENERAL.
+    const bool traced = frame.rayTracing.sunShadows && m_tracePipeline && frame.rayBindingSet != nullptr && frame.rayTextureTable != nullptr;
     m_history.RecordBarrier(commandBuffer, traced && frame.rtShadowHistory.valid);
 
     RtShadowPushConstants constants{};
@@ -140,101 +139,79 @@ void VulkanRtShadowPass::Record(
                       (frame.rtShadowHistory.valid ? kFlagHistoryValid : 0u);
 
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneShadow, frame.imageIndex, frame.frameSlot);
-    const VkDescriptorSet passSet = m_descriptorSets.at(slot * 2 + frame.rtShadowHistory.readIndex);
+    const uint32_t setIndex = slot * 2 + frame.rtShadowHistory.readIndex;
+    nvrhi::ITexture* raw = targets.GetTexture(RenderTargetId::ShadowRaw, slot);
+    nvrhi::ITexture* historyRead = m_history.GetTexture(frame.rtShadowHistory.readIndex);
+    nvrhi::ITexture* historyWrite = m_history.GetTexture(1u - frame.rtShadowHistory.readIndex);
+    nvrhi::ITexture* shadow = targets.GetTexture(RenderTargetId::SceneShadow, slot);
+    nvrhi::ICommandList* commandList = frame.commandList;
+    const NvrhiPassScope scope(
+        commandList,
+        {{raw, nvrhi::ResourceStates::UnorderedAccess},
+         {historyRead, nvrhi::ResourceStates::UnorderedAccess},
+         {historyWrite, nvrhi::ResourceStates::UnorderedAccess},
+         {shadow, nvrhi::ResourceStates::UnorderedAccess}});
+    // The history the temporal pass samples, in the read layout for it (the scope puts it back).
+    commandList->setTextureState(historyRead, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
+    commandList->commitBarriers();
     if (traced)
     {
-        const std::array<VkDescriptorSet, 4> sets = {frame.frameDescriptorSet, frame.raySet, passSet, frame.rayTextureSet};
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracePipeline);
-        vkCmdBindDescriptorSets(
-            commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_tracePipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
-        vkCmdPushConstants(commandBuffer, m_tracePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
-        Dispatch(commandBuffer, frame.extent);
-        ComputeBarrier(commandBuffer);
+        nvrhi::ComputeState state;
+        state.pipeline = m_tracePipeline;
+        state.bindings = {frame.frameBindingSet, frame.rayBindingSet, m_traceBindingSets.at(setIndex), frame.rayTextureTable};
+        Dispatch(commandList, state, constants, frame.extent);
+        UavBarrier(commandList, {raw});
     }
 
-    const std::array<VkDescriptorSet, 2> sets = {frame.frameDescriptorSet, passSet};
-    vkCmdBindDescriptorSets(
-        commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
+    nvrhi::ComputeState state;
+    state.bindings = {frame.frameBindingSet, m_bindingSets.at(setIndex)};
     if (traced && frame.rayTracing.denoise)
     {
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_temporalPipeline);
-        Dispatch(commandBuffer, frame.extent);
-        ComputeBarrier(commandBuffer);
+        state.pipeline = m_temporalPipeline;
+        Dispatch(commandList, state, constants, frame.extent);
+        UavBarrier(commandList, {historyWrite});
     }
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_filterPipeline);
-    Dispatch(commandBuffer, frame.extent);
+    state.pipeline = m_filterPipeline;
+    Dispatch(commandList, state, constants, frame.extent);
 }
 
 void VulkanRtShadowPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
     // The renderer resets the history bookkeeping at the same call sites.
+    m_traceBindingSets.clear();
+    m_bindingSets.clear();
     m_history.Create(m_nvrhiDevice, m_device, targets.GetExtent(), kHistoryFormat);
-    CreateDescriptorSets(targets);
+    CreateBindingSets(targets);
 }
 
-void VulkanRtShadowPass::CreateDescriptorSets(const SceneRenderTargets& targets)
+void VulkanRtShadowPass::CreateBindingSets(const SceneRenderTargets& targets)
 {
-    const uint32_t copyCount = targets.GetTransientCopyCount();
-    m_descriptorSets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, copyCount * 2);
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
+    m_traceBindingSets.clear();
+    m_bindingSets.clear();
+    for (uint32_t slot = 0; slot < targets.GetTransientCopyCount(); ++slot)
     {
         for (uint32_t readIndex = 0; readIndex < 2; ++readIndex)
         {
-            const VkDescriptorSet set = m_descriptorSets[slot * 2 + readIndex];
-            const VkDescriptorImageInfo depthInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::SceneDepth, slot), kReadLayout};
-            const VkDescriptorImageInfo normalInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::GBufferNormal, slot), kReadLayout};
-            const VkDescriptorImageInfo velocityInfo{VK_NULL_HANDLE, targets.GetSampledView(RenderTargetId::GBufferVelocity, slot), kReadLayout};
-            const VkDescriptorImageInfo rawInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::ShadowRaw, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo historyReadInfo{VK_NULL_HANDLE, m_history.GetView(readIndex), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo historyWriteInfo{VK_NULL_HANDLE, m_history.GetView(1u - readIndex), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo shadowInfo{VK_NULL_HANDLE, targets.GetView(RenderTargetId::SceneShadow, slot), VK_IMAGE_LAYOUT_GENERAL};
-            const VkDescriptorImageInfo linearInfo{NativeSampler(m_linearSampler), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
-            const std::array<VkWriteDescriptorSet, kBindingCount + 1> writes = {
-                ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &depthInfo),
-                ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &normalInfo),
-                ImageWrite(set, 2, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &velocityInfo),
-                ImageWrite(set, 3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &rawInfo),
-                ImageWrite(set, kHistoryReadBinding, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &historyReadInfo),
-                ImageWrite(set, 5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &historyWriteInfo),
-                ImageWrite(set, 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &shadowInfo),
-                ImageWrite(set, 7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &historyWriteInfo),
-                ImageWrite(set, kSplitSamplerBindingOffset + kHistoryReadBinding, VK_DESCRIPTOR_TYPE_SAMPLER, &linearInfo)};
-            vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+            nvrhi::ITexture* historyWrite = m_history.GetTexture(1u - readIndex);
+            nvrhi::BindingSetDesc desc;
+            desc.bindings = {
+                nvrhi::BindingSetItem::Texture_SRV(0, targets.GetTexture(RenderTargetId::SceneDepth, slot)),
+                nvrhi::BindingSetItem::Texture_SRV(1, targets.GetTexture(RenderTargetId::GBufferNormal, slot)),
+                nvrhi::BindingSetItem::Texture_SRV(2, targets.GetTexture(RenderTargetId::GBufferVelocity, slot)),
+                nvrhi::BindingSetItem::Texture_UAV(3, targets.GetTexture(RenderTargetId::ShadowRaw, slot)),
+                nvrhi::BindingSetItem::Texture_SRV(kHistoryReadBinding, m_history.GetTexture(readIndex)),
+                nvrhi::BindingSetItem::Sampler(kSplitSamplerBindingOffset + kHistoryReadBinding, m_linearSampler),
+                nvrhi::BindingSetItem::Texture_UAV(5, historyWrite),
+                nvrhi::BindingSetItem::Texture_UAV(6, targets.GetTexture(RenderTargetId::SceneShadow, slot)),
+                nvrhi::BindingSetItem::Texture_UAV(7, historyWrite),
+                nvrhi::BindingSetItem::PushConstants(0, sizeof(RtShadowPushConstants))};
+            m_bindingSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create a traced shadow binding set"));
+            if (m_traceSetLayout)
+            {
+                m_traceBindingSets.push_back(
+                    CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_traceSetLayout, "Failed to create a traced shadow binding set"));
+            }
         }
     }
-}
-
-void VulkanRtShadowPass::DestroyHandles()
-{
-    for (VkPipeline* pipeline : {&m_tracePipeline, &m_temporalPipeline, &m_filterPipeline})
-    {
-        if (*pipeline != VK_NULL_HANDLE)
-        {
-            vkDestroyPipeline(m_device, *pipeline, nullptr);
-            *pipeline = VK_NULL_HANDLE;
-        }
-    }
-    for (VkPipelineLayout* layout : {&m_tracePipelineLayout, &m_pipelineLayout})
-    {
-        if (*layout != VK_NULL_HANDLE)
-        {
-            vkDestroyPipelineLayout(m_device, *layout, nullptr);
-            *layout = VK_NULL_HANDLE;
-        }
-    }
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
-    m_descriptorSets.clear();
-    m_history.Destroy();
-    if (m_setLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
-    }
-    m_linearSampler = nullptr;
 }
 }

@@ -24,6 +24,13 @@ vcpkg_from_github(
         # pool, instead of one pool per binding set: the engine keeps a binding set per material, tens
         # of thousands on the streamed maps.
         shared-descriptor-pools.patch
+        # Binding sets can name an acceleration structure the engine built itself (the ray scene's top
+        # levels, with their compaction and batched builds), so the ray scene set can be NVRHI's.
+        native-accel-struct.patch
+        # Bindless layouts for the ray texture table: a descriptor set of their own choosing, a
+        # variable-count last array sized per table (resizeDescriptorTable), and
+        # update-unused-while-pending, so a streamed map can write new slots while frames read others.
+        bindless-table-set-and-variable-count.patch
 )
 
 if(VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")

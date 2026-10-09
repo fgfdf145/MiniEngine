@@ -29,12 +29,10 @@ class VulkanRtShadowPass : public IScenePass
 {
   public:
     VulkanRtShadowPass(
-        VkPhysicalDevice physicalDevice,
         VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
         const VulkanRayScene& rayScene);
     ~VulkanRtShadowPass() override;
 
@@ -50,27 +48,24 @@ class VulkanRtShadowPass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_linearSampler;
-    // One set for all three shaders: 0 depth, 1 G-buffer normal, 2 motion vectors, 3 ShadowRaw
-    // (storage), 4 history read (sampled), 5 history write (storage), 6 SceneShadow (storage),
-    // 7 the history just written (storage, read by the filter).
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    // Frame set, ray set, this pass's set, ray texture table (the trace); frame set and this pass's set
-    // (the other two), both with the same push constants.
-    VkPipelineLayout m_tracePipelineLayout = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_tracePipeline = VK_NULL_HANDLE;
-    VkPipeline m_temporalPipeline = VK_NULL_HANDLE;
-    VkPipeline m_filterPipeline = VK_NULL_HANDLE;
+    // One set's bindings for all three shaders: 0 depth, 1 G-buffer normal, 2 motion vectors, 3 ShadowRaw
+    // (storage), 4 history read (sampled), 5 history write (storage), 6 SceneShadow (storage), 7 the
+    // history just written (storage, read by the filter), with the push constants. The trace has it at
+    // set 2 (after the ray set, the texture table at 3), the temporal pass and the filter at set 1: a
+    // layout names its set, so each has its own layout and binding sets.
+    nvrhi::BindingLayoutHandle m_traceSetLayout;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_tracePipeline;
+    nvrhi::ComputePipelineHandle m_temporalPipeline;
+    nvrhi::ComputePipelineHandle m_filterPipeline;
     HistoryImagePair m_history;
     // Indexed by transient copy * 2 + history read index.
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    std::vector<nvrhi::BindingSetHandle> m_traceBindingSets;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
 };
 }

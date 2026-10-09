@@ -146,6 +146,9 @@ struct ScenePassFrameContext
     RayTracingSettings rayTracing;
     VkDescriptorSet raySet = VK_NULL_HANDLE;
     VkDescriptorSet rayTextureSet = VK_NULL_HANDLE;
+    // The same for the NVRHI passes.
+    nvrhi::IBindingSet* rayBindingSet = nullptr;
+    nvrhi::IDescriptorTable* rayTextureTable = nullptr;
     // The traced sun shadow's temporal filter history, as aoHistory is the AO resolve's.
     TemporalHistoryFrame rtShadowHistory;
     // Path tracing in place of the ambient terms (path_trace_pass.h). enabled only where it runs this

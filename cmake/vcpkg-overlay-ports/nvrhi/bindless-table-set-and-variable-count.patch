@@ -1,0 +1,203 @@
+diff --git a/include/nvrhi/nvrhi.h b/include/nvrhi/nvrhi.h
+index cad4824..dc8aeb4 100644
+--- a/include/nvrhi/nvrhi.h
++++ b/include/nvrhi/nvrhi.h
+@@ -2072,11 +2072,25 @@ namespace nvrhi
+ 
+         LayoutType layoutType = LayoutType::Immutable;
+ 
++        // Vulkan: the descriptor set the table occupies in pipelines whose binding layouts use
++        // registerSpaceIsDescriptorSet. By default bindless layouts go after the regular sets.
++        uint32_t descriptorSet = ~0u;
++        // Vulkan, immutable layouts: the last register space's array has a variable count. A descriptor
++        // table then holds as many of it as resizeDescriptorTable gives it (up to maxCapacity), and
++        // every other register space holds its item's size (BindingLayoutItem::size), not maxCapacity.
++        bool variableCount = false;
++        // Vulkan: VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT on every binding: the entries
++        // pending GPU work does not read may be written while it runs.
++        bool updateUnusedWhilePending = false;
++
+         BindlessLayoutDesc& setVisibility(ShaderType value) { visibility = value; return *this; }
+         BindlessLayoutDesc& setFirstSlot(uint32_t value) { firstSlot = value; return *this; }
+         BindlessLayoutDesc& setMaxCapacity(uint32_t value) { maxCapacity = value; return *this; }
+         BindlessLayoutDesc& addRegisterSpace(const BindingLayoutItem& value) { registerSpaces.push_back(value); return *this; }
+         BindlessLayoutDesc& setLayoutType(LayoutType value) { layoutType = value; return *this; }
++        BindlessLayoutDesc& setDescriptorSet(uint32_t value) { descriptorSet = value; return *this; }
++        BindlessLayoutDesc& setVariableCount(bool value) { variableCount = value; return *this; }
++        BindlessLayoutDesc& setUpdateUnusedWhilePending(bool value) { updateUnusedWhilePending = value; return *this; }
+     };
+ 
+     class IBindingLayout : public IResource
+diff --git a/src/vulkan/vulkan-resource-bindings.cpp b/src/vulkan/vulkan-resource-bindings.cpp
+index 692cabe..b5ecff4 100644
+--- a/src/vulkan/vulkan-resource-bindings.cpp
++++ b/src/vulkan/vulkan-resource-bindings.cpp
+@@ -22,6 +22,7 @@
+ 
+ #include "vulkan-backend.h"
+ #include <nvrhi/common/misc.h>
++#include <algorithm>
+ #include <sstream>
+ 
+ namespace nvrhi::vulkan
+@@ -149,9 +150,13 @@ namespace nvrhi::vulkan
+                 if (space.type == ResourceType::VolatileConstantBuffer)
+                     m_Context.error("Volatile constant buffers are not supported in bindless layouts");
+ 
++                // With a variable count, only the last register space is maxCapacity long.
++                const bool lastSpace = bindingPoint + 1 == uint32_t(bindlessDesc.registerSpaces.size());
++                const uint32_t spaceSize = (bindlessDesc.variableCount && !lastSpace) ? space.getArraySize() : arraySize;
++
+                 vk::DescriptorSetLayoutBinding descriptorSetLayoutBinding = vk::DescriptorSetLayoutBinding()
+                     .setBinding(bindingPoint)
+-                    .setDescriptorCount(arraySize)
++                    .setDescriptorCount(spaceSize)
+                     .setDescriptorType(descriptorType)
+                     .setStageFlags(shaderStageFlags);
+ 
+@@ -182,6 +187,16 @@ namespace nvrhi::vulkan
+             .setPBindings(vulkanLayoutBindings.data());
+ 
+         std::vector<vk::DescriptorBindingFlags> bindFlag(vulkanLayoutBindings.size(), vk::DescriptorBindingFlagBits::ePartiallyBound);
++        if (isBindless && !bindFlag.empty())
++        {
++            if (bindlessDesc.updateUnusedWhilePending)
++            {
++                for (vk::DescriptorBindingFlags& flags : bindFlag)
++                    flags |= vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending;
++            }
++            if (bindlessDesc.variableCount)
++                bindFlag.back() |= vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
++        }
+ 
+         auto extendedInfo = vk::DescriptorSetLayoutBindingFlagsCreateInfo()
+             .setBindingCount(uint32_t(vulkanLayoutBindings.size()))
+@@ -742,6 +757,46 @@ namespace nvrhi::vulkan
+         }
+     }
+ 
++    // A table's descriptor set (and its own pool) holding variableCount entries of a variable-count
++    // layout's last binding (BindlessLayoutDesc::variableCount).
++    static vk::Result allocateVariableDescriptorTable(const VulkanContext& context, BindingLayout* layout, uint32_t variableCount,
++        vk::DescriptorPool& outPool, vk::DescriptorSet& outSet)
++    {
++        std::vector<vk::DescriptorPoolSize> poolSizes;
++        for (size_t index = 0; index < layout->vulkanLayoutBindings.size(); ++index)
++        {
++            const vk::DescriptorSetLayoutBinding& binding = layout->vulkanLayoutBindings[index];
++            const bool last = index + 1 == layout->vulkanLayoutBindings.size();
++            const uint32_t count = last ? variableCount : binding.descriptorCount;
++            if (count > 0)
++                poolSizes.push_back(vk::DescriptorPoolSize().setType(binding.descriptorType).setDescriptorCount(count));
++        }
++
++        auto poolInfo = vk::DescriptorPoolCreateInfo()
++            .setPoolSizeCount(uint32_t(poolSizes.size()))
++            .setPPoolSizes(poolSizes.data())
++            .setMaxSets(1);
++        vk::Result res = context.device.createDescriptorPool(&poolInfo, context.allocationCallbacks, &outPool);
++        if (res != vk::Result::eSuccess)
++            return res;
++
++        auto variableInfo = vk::DescriptorSetVariableDescriptorCountAllocateInfo()
++            .setDescriptorSetCount(1)
++            .setPDescriptorCounts(&variableCount);
++        auto allocInfo = vk::DescriptorSetAllocateInfo()
++            .setDescriptorPool(outPool)
++            .setDescriptorSetCount(1)
++            .setPSetLayouts(&layout->descriptorSetLayout)
++            .setPNext(&variableInfo);
++        res = context.device.allocateDescriptorSets(&allocInfo, &outSet);
++        if (res != vk::Result::eSuccess)
++        {
++            context.device.destroyDescriptorPool(outPool, context.allocationCallbacks);
++            outPool = vk::DescriptorPool();
++        }
++        return res;
++    }
++
+     DescriptorTableHandle Device::createDescriptorTable(IBindingLayout* _layout)
+     { 
+         BindingLayout* layout = checked_cast<BindingLayout*>(_layout);
+@@ -750,6 +805,19 @@ namespace nvrhi::vulkan
+         ret->layout = layout;
+         ret->capacity = layout->vulkanLayoutBindings[0].descriptorCount;
+ 
++        if (layout->isBindless && layout->bindlessDesc.variableCount)
++        {
++            // one entry until resizeDescriptorTable gives it the size it needs
++            ret->capacity = 1;
++            const vk::Result res = allocateVariableDescriptorTable(m_Context, layout, ret->capacity, ret->descriptorPool, ret->descriptorSet);
++            if (res != vk::Result::eSuccess)
++            {
++                delete ret;
++                return nullptr;
++            }
++            return DescriptorTableHandle::Create(ret);
++        }
++
+         const auto& descriptorSetLayout = layout->descriptorSetLayout;
+         const auto& poolSizes = layout->descriptorPoolSizeInfo;
+ 
+@@ -803,7 +871,32 @@ namespace nvrhi::vulkan
+     void Device::resizeDescriptorTable(IDescriptorTable* _descriptorTable, uint32_t newSize, bool keepContents)
+     {
+         assert(newSize <= checked_cast<DescriptorTable*>(_descriptorTable)->layout->getBindlessDesc()->maxCapacity);
+-        (void)_descriptorTable;
++
++        // A variable-count table gets a new descriptor set of newSize entries. The old one is destroyed
++        // at once, so resize a table only while no pending GPU work reads it (or make a new table).
++        // Its contents are not kept: write the entries again.
++        DescriptorTable* descriptorTable = checked_cast<DescriptorTable*>(_descriptorTable);
++        BindingLayout* layout = checked_cast<BindingLayout*>(descriptorTable->layout.Get());
++        if (layout->isBindless && layout->bindlessDesc.variableCount)
++        {
++            assert(!keepContents);
++            (void)keepContents;
++
++            vk::DescriptorPool pool;
++            vk::DescriptorSet set;
++            if (allocateVariableDescriptorTable(m_Context, layout, std::max(newSize, 1u), pool, set) != vk::Result::eSuccess)
++            {
++                m_Context.error("Failed to resize a variable-count descriptor table");
++                return;
++            }
++            if (descriptorTable->descriptorPool)
++                m_Context.device.destroyDescriptorPool(descriptorTable->descriptorPool, m_Context.allocationCallbacks);
++            descriptorTable->descriptorPool = pool;
++            descriptorTable->descriptorSet = set;
++            descriptorTable->capacity = std::max(newSize, 1u);
++            return;
++        }
++
+         (void)newSize;
+         (void)keepContents;
+     }
+@@ -1123,6 +1216,11 @@ namespace nvrhi::vulkan
+                 {
+                     numRegularDescriptorSets = std::max(numRegularDescriptorSets, layout->getDesc()->registerSpace + 1);
+                 }
++                else if (layout->bindlessDesc.descriptorSet != ~0u)
++                {
++                    // a bindless layout that names its descriptor set goes there like a regular one
++                    numRegularDescriptorSets = std::max(numRegularDescriptorSets, layout->bindlessDesc.descriptorSet + 1);
++                }
+             }
+ 
+             // Now create the layout
+@@ -1135,7 +1233,14 @@ namespace nvrhi::vulkan
+             for (uint32_t i = 0; i < (uint32_t)inBindingLayouts.size(); ++i)
+             {
+                 BindingLayout* layout = checked_cast<BindingLayout*>(inBindingLayouts[i].Get());
+-                if (layout->isBindless)
++                if (layout->isBindless && layout->bindlessDesc.descriptorSet != ~0u)
++                {
++                    uint32_t const descriptorSetIdx = layout->bindlessDesc.descriptorSet;
++                    assert(outBindingLayouts[descriptorSetIdx] == nullptr);
++                    outBindingLayouts[descriptorSetIdx] = layout;
++                    outDescriptorSetIdxToBindingIdx[descriptorSetIdx] = i;
++                }
++                else if (layout->isBindless)
+                 {
+                     outBindingLayouts.push_back(layout);
+                     // Let's always put the bindless ones at the end.

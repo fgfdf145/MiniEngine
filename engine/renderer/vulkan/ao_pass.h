@@ -21,12 +21,11 @@ class VulkanRayScene;
 class VulkanAoTracePass : public IScenePass
 {
   public:
-    // rayScene's set layouts make the traced variant's pipeline when it has hardware ray tracing.
+    // rayScene's layouts make the traced variant's pipeline when it has hardware ray tracing.
     VulkanAoTracePass(
-        VkDevice device,
-        VkPipelineCache pipelineCache,
+        nvrhi::IDevice* nvrhiDevice,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
         const VulkanRayScene& rayScene);
     ~VulkanAoTracePass() override;
 
@@ -42,37 +41,31 @@ class VulkanAoTracePass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
-    // The ray traced occlusion: frame set, ray set, this pass's set, ray texture table.
-    VkPipelineLayout m_tracedPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_tracedPipeline = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    // The bitmask's set is set 1; the traced variant's the same bindings at set 2 (after the ray
+    // set), with the ray texture table at 3. A layout names its set, so each has its own.
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
+    nvrhi::BindingLayoutHandle m_tracedSetLayout;
+    nvrhi::ComputePipelineHandle m_tracedPipeline;
+    std::vector<nvrhi::BindingSetHandle> m_tracedBindingSets;
 };
 
 // Spatial filter plus temporal accumulation into SceneAo. The two history images live here rather
 // than in SceneRenderTargets because they must survive across frames, which the frame-scoped layout
 // tracker cannot describe. They stay in VK_IMAGE_LAYOUT_GENERAL, and a barrier at the head of
-// Record orders last frame's accesses against this frame's. Which image is read, which is written
-// and whether the read one is valid arrive in the frame context (see TemporalHistory), so the pass keeps
+// Record orders last frame's accesses against this frame's; the dispatch reads the history it
+// samples in SHADER_READ_ONLY_OPTIMAL and puts it back. Which image is read, which is written and
+// whether the read one is valid arrive in the frame context (see TemporalHistory), so the pass keeps
 // no per-frame state. With AO disabled it still records, writing 1.0 to SceneAo, so the lighting
 // pass and the debug view never read undefined contents.
 class VulkanAoResolvePass : public IScenePass
 {
   public:
-    VulkanAoResolvePass(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
-        nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
-        const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout);
+    VulkanAoResolvePass(VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout);
     ~VulkanAoResolvePass() override;
 
     VulkanAoResolvePass(const VulkanAoResolvePass&) = delete;
@@ -87,20 +80,16 @@ class VulkanAoResolvePass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_linearSampler;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
     HistoryImagePair m_history;
     // Indexed by frameSlot * 2 + readIndex: set r samples m_history[r] and stores to
     // m_history[1 - r].
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
 };
 }

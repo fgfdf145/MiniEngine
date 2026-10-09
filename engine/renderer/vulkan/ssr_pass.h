@@ -24,11 +24,9 @@ class VulkanSsrTracePass : public IScenePass
     // With hardware ray tracing (rayScene's) the pass also makes the ray traced variant
     // (rt_reflection_trace.comp), which replaces the march where RayTracingSettings::reflections says.
     VulkanSsrTracePass(
-        VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
         const VulkanTaaPass& taa,
         const VulkanRayScene& rayScene);
     ~VulkanSsrTracePass() override;
@@ -45,22 +43,21 @@ class VulkanSsrTracePass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     const VulkanTaaPass& m_taa;
     nvrhi::SamplerHandle m_nearestSampler;
     nvrhi::SamplerHandle m_linearSampler;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
-    // The ray traced variant: frame set, ray set, this pass's set, ray texture table.
-    VkPipelineLayout m_tracedPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_tracedPipeline = VK_NULL_HANDLE;
+    // The march's set is set 1; the ray traced variant (rt_reflection_trace.comp) has the same bindings
+    // at set 2, after the ray set, with the ray texture table at 3.
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
+    nvrhi::BindingLayoutHandle m_tracedSetLayout;
+    nvrhi::ComputePipelineHandle m_tracedPipeline;
     // Indexed by frameSlot * 2 + the TAA history index that holds last frame's image.
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
+    std::vector<nvrhi::BindingSetHandle> m_tracedBindingSets;
 };
 
 // Screen-space reflections, the resolve (shaders/vulkan/ssr_resolve.comp): a roughness-sized spatial
@@ -69,13 +66,7 @@ class VulkanSsrTracePass : public IScenePass
 class VulkanSsrResolvePass : public IScenePass
 {
   public:
-    VulkanSsrResolvePass(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
-        nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
-        const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout);
+    VulkanSsrResolvePass(VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout);
     ~VulkanSsrResolvePass() override;
 
     VulkanSsrResolvePass(const VulkanSsrResolvePass&) = delete;
@@ -90,20 +81,16 @@ class VulkanSsrResolvePass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     nvrhi::SamplerHandle m_linearSampler;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
     HistoryImagePair m_history;
     // Indexed by frameSlot * 2 + readIndex: set r samples m_history[r] and stores to m_history[1 - r].
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
 };
 
 // Whether the trace runs this frame: SSR on and last frame's anti-aliased image available.

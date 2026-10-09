@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "nvrhi_native.h"
 #include "descriptor_pool_list.h"
 #include "ray_acceleration.h"
 #include "uniform_buffer.h"
@@ -83,9 +84,13 @@ inline constexpr uint32_t kRayTexturesPerSlot = 5;
 // structure over the same instances (VulkanRayAcceleration), which the shaders' RAY_QUERY variants
 // trace instead of walking 0 to 3, 6 each mesh's vertex and index buffer addresses and 7 each leaf
 // triangle's index in its mesh's index list, which hit shading (ray_hit_common.slang) reads the hit's
-// vertices through. Hardware ray tracing also brings the texture table (GetTextureSet): every draw
-// slot's kRayTexturesPerSlot material textures in one array, which hit shading indexes by the hit's
-// slot. Nothing is traceable until the first build installs (IsReady).
+// vertices through, and 8 every material sampler (the constructor's samplerTable). Hardware ray
+// tracing also brings the texture table (GetTextureSet): every draw slot's kRayTexturesPerSlot
+// material textures in one array, which hit shading indexes by the hit's slot. Both are NVRHI's: the
+// set a binding set per frame slot, over NVRHI handles of the scene's own buffers and top levels, the
+// table a bindless descriptor table at set 3 (the overlay port's bindless-table patch), which the
+// engine fills with its own batched writes. Nothing is traceable until the first build installs
+// (IsReady).
 class VulkanRayScene
 {
   public:
@@ -95,12 +100,15 @@ class VulkanRayScene
     VulkanRayScene(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
+        nvrhi::vulkan::IDevice* nvrhiVulkanDevice,
         VkPipelineCache pipelineCache,
         uint32_t frameCount,
         bool hardwareRayTracing,
         TextureDescriptorBinding defaultTexture = {},
-        std::vector<VkSampler> samplerTable = {},
-        bool updateUnusedWhilePending = false);
+        std::vector<nvrhi::ISampler*> samplerTable = {},
+        bool updateUnusedWhilePending = false,
+        bool bufferDeviceAddress = false);
     ~VulkanRayScene();
 
     VulkanRayScene(const VulkanRayScene&) = delete;
@@ -162,12 +170,17 @@ class VulkanRayScene
     bool IsBuilding() const;
     VkDescriptorSetLayout GetSetLayout() const;
     VkDescriptorSet GetSet(uint32_t frameSlot) const;
-    // The texture table, with hardware ray tracing only (null handles without): binding 0 the sampler
-    // table (the constructor's samplerTable, every VulkanSamplerCache sampler in SamplerAt's order),
-    // binding 1 the sampled images, kRayTexturesPerSlot entries per draw slot. Each slot's ray
-    // material says which sampler each of its textures takes.
+    // The texture table, with hardware ray tracing only (null handles without): binding 0 the sampled
+    // images, kRayTexturesPerSlot entries per draw slot. Each slot's ray material says which sampler
+    // of the ray set's binding 8 each of its textures takes.
     VkDescriptorSetLayout GetTextureSetLayout() const;
     VkDescriptorSet GetTextureSet() const;
+    // The same as NVRHI sees them, for the passes' NVRHI pipelines (null without hardware ray tracing
+    // for the table, and before the first SetContent).
+    nvrhi::IBindingLayout* GetNvrhiSetLayout() const;
+    nvrhi::IBindingSet* GetBindingSet(uint32_t frameSlot) const;
+    nvrhi::IBindingLayout* GetNvrhiTextureSetLayout() const;
+    nvrhi::IDescriptorTable* GetTextureTable() const;
     // Submeshes of the installed content, in the order SetContent gave them.
     size_t GetSubmeshCount() const;
     // The installed submeshes that emit light and that every ray may meet (no Blend, no far level of
@@ -263,6 +276,9 @@ class VulkanRayScene
     std::function<void(std::function<void()>)> m_retire;
     // The texture table's binding has VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT.
     bool m_updateUnusedWhilePending = false;
+    // The device has bufferDeviceAddress on: the buffers take its usage, as NVRHI's handles of them ask
+    // for their addresses.
+    bool m_bufferDeviceAddress = false;
     std::mutex m_spareMutex;
     std::vector<Buffer> m_spareBuffers;
     void DestroyBuffer(Buffer& buffer) const;
@@ -274,12 +290,18 @@ class VulkanRayScene
     void CreateMaterialPipeline(VkPipelineCache pipelineCache);
     void DestroyHandles();
 
+    // An NVRHI handle of one of the scene's buffers, for a binding set to name.
+    nvrhi::BufferHandle NvrhiBuffer(const Buffer& buffer) const;
+
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::vulkan::IDevice* m_nvrhiVulkanDevice = nullptr;
     uint32_t m_frameCount = 0;
 
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    // Per frame slot; m_sets holds their VkDescriptorSets for the native passes.
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
     std::vector<VkDescriptorSet> m_sets;
 
     // Static per build.
@@ -374,10 +396,10 @@ class VulkanRayScene
     // RayMaterial::samplers for a slot's textures (WriteTextureSlot's, with the default's sampler where
     // the source has no texture); throws for a sampler not in the table.
     glm::uvec2 SamplerIndices(const RayMaterialSource& source) const;
-    std::vector<VkSampler> m_samplerTable;
+    std::vector<nvrhi::ISampler*> m_samplerTable;
     std::unordered_map<VkSampler, uint32_t> m_samplerIndices;
-    VkDescriptorSetLayout m_textureSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_texturePool = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_textureSetLayout;
+    nvrhi::DescriptorTableHandle m_textureTable;
     VkDescriptorSet m_textureSet = VK_NULL_HANDLE;
     uint32_t m_textureCapacity = 0;
     uint32_t m_textureLimit = 0;
