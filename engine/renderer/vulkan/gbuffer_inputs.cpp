@@ -84,12 +84,15 @@ void VulkanGBufferDescriptors::CreateSetLayouts()
         throw std::runtime_error("Failed to create G-buffer descriptor set layout");
     }
 
-    // Zero bindings: the set 1 placeholder. Nothing binds it and no shader reads it.
-    VkDescriptorSetLayoutCreateInfo emptyInfo{};
-    emptyInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    CheckVulkan(
-        vkCreateDescriptorSetLayout(m_device, &emptyInfo, nullptr, &m_emptySetLayout),
-        "Failed to create empty descriptor set layout");
+    // Zero bindings: the set 1 placeholder (Vulkan only). Nothing binds it and no shader reads it.
+    if (m_device != VK_NULL_HANDLE)
+    {
+        VkDescriptorSetLayoutCreateInfo emptyInfo{};
+        emptyInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        CheckVulkan(
+            vkCreateDescriptorSetLayout(m_device, &emptyInfo, nullptr, &m_emptySetLayout),
+            "Failed to create empty descriptor set layout");
+    }
 }
 
 void VulkanGBufferDescriptors::CreateSampler(nvrhi::IDevice* nvrhiDevice)

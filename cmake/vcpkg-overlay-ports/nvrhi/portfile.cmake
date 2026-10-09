@@ -39,6 +39,9 @@ vcpkg_from_github(
         # Upload chunks ask for the shader binding table usage only with ray tracing pipelines: with
         # acceleration structures alone (ray queries) the usage is invalid on Vulkan.
         upload-chunk-sbt-usage.patch
+        # D3D12 backend fixes the engine ran into: a texture that is not sampled denies shader access
+        # only when it is a depth target (D3D12 rejects the flag otherwise).
+        d3d12-fixes.patch
 )
 
 if(VCPKG_TARGET_IS_WINDOWS)

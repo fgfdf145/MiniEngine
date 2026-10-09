@@ -22,3 +22,15 @@ if(WIN32)
     )
 endif()
 miniengine_copy_dlss_runtime(miniengine_app)
+
+# The Agility SDK's runtime, which D3D12SDKPath (main.cpp) points the system's D3D12 at, and its debug
+# layer (MINIENGINE_NVRHI_VALIDATION).
+if(MINIENGINE_WITH_D3D12)
+    add_custom_command(TARGET miniengine_app POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:miniengine_app>/D3D12
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_PROPERTY:Microsoft::DirectX12-Core,IMPORTED_LOCATION_RELEASE>
+            $<TARGET_PROPERTY:Microsoft::DirectX12-Layers,IMPORTED_LOCATION_DEBUG>
+            $<TARGET_FILE_DIR:miniengine_app>/D3D12
+    )
+endif()

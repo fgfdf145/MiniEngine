@@ -6,11 +6,12 @@ struct ShadowConstants
     uint drawSlot;
 };
 #include "d3d_register.slang"
+#include "shader_helpers.slang"
 
 [[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData D3D_PUSH_CONSTANTS(2);
 
 [shader("vertex")]
 float4 main([[vk::location(0)]] float3 inPosition : POSITION) : SV_Position
 {
-    return mul(shadowData.lightModelViewProjection, float4(inPosition, 1.0));
+    return ClipPosition(mul(shadowData.lightModelViewProjection, float4(inPosition, 1.0)));
 }

@@ -139,6 +139,10 @@ nvrhi::ComputePipelineHandle CreateNvrhiComputePipeline(
 // down. NVRHI turns every viewport into Direct3D's (a negative height from maxY); handing it the
 // rectangle upside down (minY at the bottom edge) cancels that, and the scissor is given apart.
 nvrhi::ViewportState NativeViewportState(VkExtent2D extent);
+// Which API the native viewports are for: on Vulkan they undo NVRHI's flip; on Direct3D 12 they are
+// plain, and the vertex shaders mirror y instead (ClipPosition, shader_helpers.slang). Set by the
+// device as it is made.
+void SetNativeViewportConvention(nvrhi::GraphicsAPI api);
 // The same for a rectangle of the target (x, y its top-left texel), its scissor that rectangle.
 nvrhi::ViewportState NativeViewportRect(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 

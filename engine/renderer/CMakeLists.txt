@@ -165,6 +165,8 @@ add_library(engine_renderer
     vulkan/imgui_layer.h
     vulkan/imgui_nvrhi.cpp
     vulkan/imgui_nvrhi.h
+    vulkan/gpu_device.h
+    vulkan/vulkan_gpu_device.cpp
     vulkan/instance.cpp
     vulkan/instance.h
     vulkan/lighting_pass.cpp
@@ -350,7 +352,57 @@ function(_miniengine_add_shader_build out_list shader_name output_name ray_query
         COMMENT "Compiling ${description}"
         VERBATIM
     )
-    set(${out_list} ${${out_list}} "${shader_output}" PARENT_SCOPE)
+    set(outputs "${shader_output}")
+
+    # The same shader as DXIL for the Direct3D 12 backend: shader model 6.8, MINIENGINE_DXIL defined
+    # (shaders/vulkan/d3d_register.slang). DXIL has no specialization constants, so a shader listed in
+    # MINIENGINE_SPECIALIZED_SHADERS is also compiled once for each combination of its constants, as
+    # output_s<mask>.dxil (bit i: constant i true; specialization.slang).
+    if(MINIENGINE_WITH_D3D12)
+        get_filename_component(shader_extension "${shader_name}" LAST_EXT)
+        if(shader_extension STREQUAL ".comp")
+            set(stage compute)
+        elseif(shader_extension STREQUAL ".vert")
+            set(stage vertex)
+        else()
+            set(stage fragment)
+        endif()
+        set(masks 0)
+        if(DEFINED MINIENGINE_SPECIALIZATION_COUNT_${output_name})
+            math(EXPR last_mask "(1 << ${MINIENGINE_SPECIALIZATION_COUNT_${output_name}}) - 1")
+            foreach(mask RANGE 1 ${last_mask})
+                list(APPEND masks ${mask})
+            endforeach()
+        endif()
+        foreach(mask IN LISTS masks)
+            set(mask_flags "")
+            if(mask EQUAL 0)
+                set(dxil_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${output_name}.dxil")
+            else()
+                set(dxil_output "${MINIENGINE_SHADER_OUTPUT_DIR}/${output_name}_s${mask}.dxil")
+                foreach(bit RANGE 0 3)
+                    math(EXPR bit_set "(${mask} >> ${bit}) & 1")
+                    if(bit_set)
+                        list(APPEND mask_flags "-DSPECIALIZATION_${bit}=true")
+                    endif()
+                endforeach()
+            endif()
+            add_custom_command(
+                OUTPUT "${dxil_output}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${MINIENGINE_SHADER_OUTPUT_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E env "PATH=${MINIENGINE_DXCOMPILER_DIR}"
+                        ${MINIENGINE_SLANGC_EXECUTABLE} "${slang_source}" -target dxil -profile sm_6_8 -stage ${stage}
+                        -entry main -matrix-layout-column-major -warnings-disable 41012 -DMINIENGINE_DXIL
+                        ${define_flags} ${mask_flags} -depfile "${dxil_output}.d" -o "${dxil_output}"
+                DEPENDS "${slang_source}"
+                DEPFILE "${dxil_output}.d"
+                COMMENT "Compiling ${description} to DXIL ${mask_flags}"
+                VERBATIM
+            )
+            list(APPEND outputs "${dxil_output}")
+        endforeach()
+    endif()
+    set(${out_list} ${${out_list}} ${outputs} PARENT_SCOPE)
 endfunction()
 
 function(miniengine_add_shaders shader_target)
@@ -394,6 +446,16 @@ function(miniengine_add_shaders shader_target)
 
     add_custom_target(${shader_target} DEPENDS ${spv_outputs})
 endfunction()
+
+# Shaders with specialization constants (shaders/vulkan/specialization.slang), by output name: how
+# many, for their DXIL permutations. The material fragment shaders take constants 0 to 3
+# (VulkanPipelineSet), the toon shaders constant 0 (the outline).
+foreach(_miniengine_specialized IN ITEMS triangle.frag gbuffer.frag path_trace_layer_depth.frag path_trace_layer_surface.frag)
+    set(MINIENGINE_SPECIALIZATION_COUNT_${_miniengine_specialized} 4)
+endforeach()
+foreach(_miniengine_specialized IN ITEMS toon.vert toon.frag toon_prepass.frag)
+    set(MINIENGINE_SPECIALIZATION_COUNT_${_miniengine_specialized} 1)
+endforeach()
 
 # Vertex shaders whose position must be invariant: the toon pass draws the characters' opaque
 # surfaces again on the depth the geometry pass wrote for them.
@@ -462,6 +524,13 @@ target_link_libraries(engine_renderer
 )
 if(MINIENGINE_DLSS_FOUND)
     target_link_libraries(engine_renderer PRIVATE miniengine_ngx)
+endif()
+if(MINIENGINE_WITH_D3D12)
+    target_sources(engine_renderer PRIVATE vulkan/d3d12_gpu_device.cpp)
+    # Its own Windows and DirectX headers, in an order the shared precompiled header would upset.
+    set_source_files_properties(vulkan/d3d12_gpu_device.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_link_libraries(engine_renderer PRIVATE Microsoft::DirectX-Headers Microsoft::DirectX-Guids d3d12 dxgi)
+    target_compile_definitions(engine_renderer PUBLIC MINIENGINE_WITH_D3D12=1)
 endif()
 target_include_directories(engine_renderer PRIVATE "${Stb_INCLUDE_DIR}")
 # A static NVRHI leaves vulkan.hpp's dispatcher to the program (nvrhi_device.cpp); a shared one owns it.

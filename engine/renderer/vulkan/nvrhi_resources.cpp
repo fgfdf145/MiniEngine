@@ -127,7 +127,8 @@ nvrhi::BufferHandle CreateNvrhiBuffer(
     VkMemoryPropertyFlags properties,
     VkBuffer& buffer,
     const char* failureMessage,
-    void** mapped)
+    void** mapped,
+    uint32_t structStride)
 {
     constexpr VkBufferUsageFlags kKnownUsage =
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
@@ -143,6 +144,7 @@ nvrhi::BufferHandle CreateNvrhiBuffer(
 
     nvrhi::BufferDesc desc;
     desc.byteSize = info.size;
+    desc.structStride = structStride;
     desc.isVertexBuffer = (info.usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0;
     desc.isIndexBuffer = (info.usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0;
     desc.isConstantBuffer = (info.usage & VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) != 0;
@@ -169,6 +171,12 @@ nvrhi::BufferHandle CreateNvrhiBuffer(
         throw std::runtime_error(std::string(failureMessage) + ": a memory kind NVRHI cannot allocate");
     }
     desc.debugName = DebugName(failureMessage);
+    // Shaders only read a host-visible buffer (D3D12's upload and readback heaps take no unordered
+    // access); its storage usage on Vulkan comes with its raw views.
+    if (desc.cpuAccess != nvrhi::CpuAccessMode::None)
+    {
+        desc.canHaveUAVs = false;
+    }
     // A device-local buffer rests where its readers want it between command lists (NVRHI moves it
     // back there at the end of each); a host-visible one never changes state.
     if (desc.cpuAccess == nvrhi::CpuAccessMode::None)

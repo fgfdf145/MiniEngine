@@ -1,0 +1,14 @@
+diff --git a/src/d3d12/d3d12-texture.cpp b/src/d3d12/d3d12-texture.cpp
+index f127265..a63239d 100644
+--- a/src/d3d12/d3d12-texture.cpp
++++ b/src/d3d12/d3d12-texture.cpp
+@@ -267,7 +267,8 @@ namespace nvrhi::d3d12
+             break;
+         }
+ 
+-        if (!d.isShaderResource)
++        // D3D12 takes the flag only together with ALLOW_DEPTH_STENCIL.
++        if (!d.isShaderResource && d.isRenderTarget && getFormatInfo(d.format).hasDepth)
+             desc.Flags |= D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
+ 
+         if (d.isRenderTarget)

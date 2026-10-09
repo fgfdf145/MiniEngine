@@ -156,9 +156,58 @@ void ClearDepth(nvrhi::ICommandList* commandList, nvrhi::ITexture* texture, floa
     commandList->setEnableAutomaticBarriers(false);
 }
 
+namespace
+{
+// The compiled module for the device's API: name.spv for Vulkan, name.dxil for D3D12 (the same shader
+// compiled with MINIENGINE_DXIL, engine/renderer/CMakeLists.txt).
+std::string ShaderFileFor(nvrhi::IDevice* device, std::string name)
+{
+    if (device->getGraphicsAPI() != nvrhi::GraphicsAPI::VULKAN && name.ends_with(".spv"))
+    {
+        name.replace(name.size() - 4, 4, ".dxil");
+    }
+    return name;
+}
+
+nvrhi::ShaderHandle LoadShader(nvrhi::IDevice* device, nvrhi::ShaderType type, const std::string& file, const char* debugName)
+{
+    const std::vector<char> code = ReadSpirvFile(EnginePaths::ShaderRoot() / file);
+    nvrhi::ShaderDesc desc;
+    desc.shaderType = type;
+    desc.debugName = debugName;
+    desc.entryName = "main";
+    nvrhi::ShaderHandle shader = device->createShader(desc, code.data(), code.size());
+    if (!shader)
+    {
+        throw std::runtime_error("Failed to create the shader " + file);
+    }
+    return shader;
+}
+}
+
 nvrhi::ShaderHandle SpecializeShader(
     nvrhi::IDevice* device, nvrhi::IShader* shader, std::span<const nvrhi::ShaderSpecialization> constants, const char* name)
 {
+    if (device->getGraphicsAPI() != nvrhi::GraphicsAPI::VULKAN)
+    {
+        // DXIL has no specialization constants: each combination of true constants is a module of its
+        // own, name_s<mask>.dxil (bit i: constant i), the base module with none.
+        uint32_t mask = 0;
+        for (const nvrhi::ShaderSpecialization& constant : constants)
+        {
+            if (constant.value.u != 0)
+            {
+                mask |= 1u << constant.constantID;
+            }
+        }
+        if (mask == 0)
+        {
+            return shader;
+        }
+        std::string file = ShaderFileFor(device, shader->getDesc().debugName);
+        file.insert(file.size() - 5, "_s" + std::to_string(mask));
+        return LoadShader(device, shader->getDesc().shaderType, file, name);
+    }
     nvrhi::ShaderHandle specialized = device->createShaderSpecialization(shader, constants.data(), static_cast<uint32_t>(constants.size()));
     if (!specialized)
     {
@@ -310,17 +359,7 @@ nvrhi::BufferHandle CreateReadbackBuffer(nvrhi::IDevice* device, uint64_t byteSi
 
 nvrhi::ShaderHandle CreateNvrhiShader(nvrhi::IDevice* device, nvrhi::ShaderType type, const char* shaderName)
 {
-    const std::vector<char> code = ReadSpirvFile(EnginePaths::ShaderRoot() / shaderName);
-    nvrhi::ShaderDesc desc;
-    desc.shaderType = type;
-    desc.debugName = shaderName;
-    desc.entryName = "main";
-    nvrhi::ShaderHandle shader = device->createShader(desc, code.data(), code.size());
-    if (!shader)
-    {
-        throw std::runtime_error(std::string("Failed to create the shader ") + shaderName);
-    }
-    return shader;
+    return LoadShader(device, type, ShaderFileFor(device, shaderName), shaderName);
 }
 
 nvrhi::ComputePipelineHandle CreateNvrhiComputePipeline(
@@ -342,12 +381,22 @@ nvrhi::ComputePipelineHandle CreateNvrhiComputePipeline(
     return pipeline;
 }
 
+namespace
+{
+bool g_flipNativeViewports = true;
+}
+
+void SetNativeViewportConvention(nvrhi::GraphicsAPI api)
+{
+    g_flipNativeViewports = api == nvrhi::GraphicsAPI::VULKAN;
+}
+
 nvrhi::ViewportState NativeViewportState(VkExtent2D extent)
 {
     const float width = static_cast<float>(extent.width);
     const float height = static_cast<float>(extent.height);
     nvrhi::ViewportState state;
-    state.addViewport(nvrhi::Viewport(0.0f, width, height, 0.0f, 0.0f, 1.0f));
+    state.addViewport(g_flipNativeViewports ? nvrhi::Viewport(0.0f, width, height, 0.0f, 0.0f, 1.0f) : nvrhi::Viewport(0.0f, width, 0.0f, height, 0.0f, 1.0f));
     state.addScissorRect(nvrhi::Rect(0, static_cast<int>(extent.width), 0, static_cast<int>(extent.height)));
     return state;
 }
@@ -357,7 +406,9 @@ nvrhi::ViewportState NativeViewportRect(uint32_t x, uint32_t y, uint32_t width, 
     const float left = static_cast<float>(x);
     const float top = static_cast<float>(y);
     nvrhi::ViewportState state;
-    state.addViewport(nvrhi::Viewport(left, left + static_cast<float>(width), top + static_cast<float>(height), top, 0.0f, 1.0f));
+    const float bottom = top + static_cast<float>(height);
+    state.addViewport(g_flipNativeViewports ? nvrhi::Viewport(left, left + static_cast<float>(width), bottom, top, 0.0f, 1.0f)
+                                            : nvrhi::Viewport(left, left + static_cast<float>(width), top, bottom, 0.0f, 1.0f));
     state.addScissorRect(nvrhi::Rect(static_cast<int>(x), static_cast<int>(x + width), static_cast<int>(y), static_cast<int>(y + height)));
     return state;
 }

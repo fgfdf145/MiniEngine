@@ -20,7 +20,8 @@ struct SkyConstants
 [[vk::binding(28, 0)]] Texture2D cloudTarget : register(t28, space0);
 
 [shader("fragment")]
-float4 main([[vk::location(0)]] float2 fragTexCoord : TEXCOORD0, float4 fragCoord : SV_Position) : SV_Target0
+// sky.vert's outputs in its order (Direct3D matches the stages by signature position).
+float4 main(float4 fragCoord : SV_Position, [[vk::location(0)]] float2 fragTexCoord : TEXCOORD0) : SV_Target0
 {
     uint mode = EnvironmentMode();
     if (mode == ENVIRONMENT_NONE)

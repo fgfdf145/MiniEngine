@@ -2,6 +2,7 @@
 // needs no vertex buffer and no vertex input state. Vertices land at (-1,-1), (3,-1), (-1,3),
 // which clips to exactly the [-1,1] square.
 
+#include "shader_helpers.slang"
 #include "draw_parameters.slang"
 struct VertexOutput
 {
@@ -20,6 +21,6 @@ VertexOutput main(DRAW_VERTEX_INDEX_PARAMETERS)
     // (see the Vulkan UV note in README): NDC y = -1 is the image's top row.
     VertexOutput output;
     output.fragTexCoord = position * 0.5 + 0.5;
-    output.position = float4(position, 0.0, 1.0);
+    output.position = ClipPosition(float4(position, 0.0, 1.0));
     return output;
 }

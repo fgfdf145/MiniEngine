@@ -23,7 +23,8 @@ float3 SrgbToLinear(float3 encoded)
 #endif
 
 [shader("fragment")]
-float4 main([[vk::location(0)]] float4 inColor : COLOR0, [[vk::location(1)]] float2 inUV : TEXCOORD0) : SV_Target0
+// imgui.vert's outputs in its order (Direct3D matches the stages by signature position).
+float4 main(float4 fragCoord : SV_Position, [[vk::location(0)]] float4 inColor : COLOR0, [[vk::location(1)]] float2 inUV : TEXCOORD0) : SV_Target0
 {
 #ifdef IMGUI_HDR10
     float4 color = float4(SrgbToLinear(inColor.rgb), inColor.a) * imguiTexture.Sample(imguiSampler, inUV);

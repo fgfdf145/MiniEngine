@@ -229,6 +229,9 @@ void VulkanBuffer::CreateDeviceLocalBuffer(
     desc.canHaveRawViews = desc.canHaveUAVs;
     desc.isAccelStructBuildInput = (usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR) != 0;
     desc.isVirtual = true;
+    // The skinning pass and the hit shading read and write the posed buffers as floats and words
+    // (StructuredBuffer<float>, <uint>).
+    desc.structStride = desc.canHaveUAVs ? 4 : 0;
     desc.debugName = "Mesh buffer";
     // At rest every reader's state at once: vertex input, the hit shading's and the skinning's reads,
     // the ray tracing builds. Only the upload and the skinning's writes move it out (and back).

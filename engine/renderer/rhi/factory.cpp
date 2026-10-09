@@ -69,6 +69,10 @@ RenderBackendDescriptor GetRenderBackendDescriptor(RenderBackendType backendType
     {
     case RenderBackendType::Vulkan:
         return DescribeVulkanBackend();
+#if MINIENGINE_WITH_D3D12
+    case RenderBackendType::D3D12:
+        return RenderBackendDescriptor{RenderBackendType::D3D12, ToString(RenderBackendType::D3D12), true, nullptr};
+#endif
     default:
         return RenderBackendDescriptor{
             backendType,
@@ -127,7 +131,8 @@ std::unique_ptr<IRenderBackend> CreateRenderBackend(
     switch (backendType)
     {
     case RenderBackendType::Vulkan:
-        return std::make_unique<VulkanRenderer>(window, std::move(sharedState), std::move(startupModelPath));
+    case RenderBackendType::D3D12:
+        return std::make_unique<VulkanRenderer>(window, std::move(sharedState), std::move(startupModelPath), backendType);
     default:
         throw std::runtime_error("Unsupported render backend");
     }

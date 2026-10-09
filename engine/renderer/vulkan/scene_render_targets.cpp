@@ -203,9 +203,44 @@ void SceneRenderTargets::Rebuild(VkExtent2D renderExtent, VkExtent2D outputExten
 
 VkFormatFeatureFlags SceneRenderTargets::QueryFormatFeatures(VkFormat format) const
 {
-    VkFormatProperties properties{};
-    vkGetPhysicalDeviceFormatProperties(m_physicalDevice, format, &properties);
-    return properties.optimalTilingFeatures;
+    if (m_physicalDevice != VK_NULL_HANDLE)
+    {
+        VkFormatProperties properties{};
+        vkGetPhysicalDeviceFormatProperties(m_physicalDevice, format, &properties);
+        return properties.optimalTilingFeatures;
+    }
+    // D3D12: NVRHI's answer in Vulkan's terms, which the format choices are written in.
+    const nvrhi::FormatSupport support = m_nvrhiDevice->queryFormatSupport(ToNvrhiFormat(format));
+    const auto has = [support](nvrhi::FormatSupport bit)
+    {
+        return (support & bit) == bit;
+    };
+    VkFormatFeatureFlags features = VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    if (has(nvrhi::FormatSupport::Texture))
+    {
+        features |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+    }
+    if (has(nvrhi::FormatSupport::ShaderSample))
+    {
+        features |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    }
+    if (has(nvrhi::FormatSupport::ShaderUavStore))
+    {
+        features |= VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+    }
+    if (has(nvrhi::FormatSupport::RenderTarget))
+    {
+        features |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+    }
+    if (has(nvrhi::FormatSupport::Blendable))
+    {
+        features |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
+    }
+    if (has(nvrhi::FormatSupport::DepthStencil))
+    {
+        features |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    }
+    return features;
 }
 
 void SceneRenderTargets::SelectFormats(VkFormat ldrFormat)
@@ -465,11 +500,11 @@ void SceneRenderTargets::DestroyImages(std::array<TargetDescription, kRenderTarg
             }
             if (image.sampledView != VK_NULL_HANDLE)
             {
-                vkDestroyImageView(m_device, image.sampledView, nullptr);
+                DestroyNativeImageView(m_device, image.sampledView, nullptr);
             }
             if (image.view != VK_NULL_HANDLE)
             {
-                vkDestroyImageView(m_device, image.view, nullptr);
+                DestroyNativeImageView(m_device, image.view, nullptr);
             }
             // The image and its memory go with NVRHI's texture.
             image.texture = nullptr;
@@ -497,9 +532,16 @@ void SceneRenderTargets::CreateImage(VkFormat format, VkImageUsageFlags usage, V
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     target.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, target.image, "Failed to create viewport image");
 
-    VkMemoryRequirements memoryRequirements{};
-    vkGetImageMemoryRequirements(m_device, target.image, &memoryRequirements);
-    target.bytes = memoryRequirements.size;
+    if (m_device != VK_NULL_HANDLE)
+    {
+        VkMemoryRequirements memoryRequirements{};
+        vkGetImageMemoryRequirements(m_device, target.image, &memoryRequirements);
+        target.bytes = memoryRequirements.size;
+    }
+    else
+    {
+        target.bytes = m_nvrhiDevice->getTextureMemoryRequirements(target.texture).size;
+    }
 }
 
 VkImageView SceneRenderTargets::CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspect) const
@@ -516,7 +558,7 @@ VkImageView SceneRenderTargets::CreateImageView(VkImage image, VkFormat format, 
     viewInfo.subresourceRange.layerCount = 1;
 
     VkImageView imageView = VK_NULL_HANDLE;
-    CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &imageView), "Failed to create viewport image view");
+    CheckVulkan(CreateNativeImageView(m_device, &viewInfo, nullptr, &imageView), "Failed to create viewport image view");
     return imageView;
 }
 

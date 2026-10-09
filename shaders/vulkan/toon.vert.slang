@@ -97,11 +97,11 @@ VertexOutput main(VertexInput input)
         float4 clip = mul(ubo.proj, viewPosition);
         float zOffset = lerp(material.outline.y, material.outline.z, faceMask) * max(scale * 0.02, 1.0) + material.depthTexRim2.z;
         float4 pushed = mul(ubo.proj, float4(viewPosition.xy, viewPosition.z - zOffset, 1.0));
-        output.position = float4(clip.xy, pushed.z / pushed.w * clip.w, clip.w);
+        output.position = ClipPosition(float4(clip.xy, pushed.z / pushed.w * clip.w, clip.w));
     }
     else
     {
-        output.position = mul(mul(ubo.proj, ubo.view), worldPosition);
+        output.position = ClipPosition(mul(mul(ubo.proj, ubo.view), worldPosition));
     }
 
     output.fragWorldPosition = worldPosition.xyz;

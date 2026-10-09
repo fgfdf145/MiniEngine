@@ -184,3 +184,35 @@ if(NOT MINIENGINE_SLANGC_EXECUTABLE)
         "slangc was not found. Install the Vulkan SDK or restore the vcpkg shader-slang host dependency."
     )
 endif()
+
+# The Direct3D 12 backend (docs/design/2026-10-09-d3d12-backend-design.md): the DirectX headers, the
+# Agility SDK's D3D12Core.dll, and dxcompiler.dll, which slangc loads to make DXIL (the shaders are
+# compiled to SPIR-V and DXIL alike).
+set(MINIENGINE_WITH_D3D12 OFF)
+if(WIN32)
+    find_package(directx-headers CONFIG REQUIRED)
+    # The Agility SDK's config looks for the Windows SDK's d3d12.lib, which the Visual Studio
+    # generator leaves off find_library's paths during configure.
+    if(NOT D3D12_LIB)
+        get_filename_component(_miniengine_kits_root
+            "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots;KitsRoot10]" ABSOLUTE)
+        set(_miniengine_sdk_version "${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+        if("${_miniengine_sdk_version}" STREQUAL "")
+            set(_miniengine_sdk_version "${CMAKE_SYSTEM_VERSION}")
+        endif()
+        find_library(D3D12_LIB NAMES d3d12 HINTS "${_miniengine_kits_root}/Lib/${_miniengine_sdk_version}/um/x64")
+    endif()
+    find_package(directx12-agility CONFIG REQUIRED)
+    set(_miniengine_dxc_hints "")
+    foreach(_miniengine_triplet IN ITEMS "${VCPKG_HOST_TRIPLET}" "${VCPKG_TARGET_TRIPLET}")
+        if(NOT "${_miniengine_triplet}" STREQUAL "")
+            list(APPEND _miniengine_dxc_hints "${VCPKG_INSTALLED_DIR}/${_miniengine_triplet}/tools/directx-dxc")
+        endif()
+    endforeach()
+    get_filename_component(_miniengine_slangc_dir "${MINIENGINE_SLANGC_EXECUTABLE}" DIRECTORY)
+    find_path(MINIENGINE_DXCOMPILER_DIR NAMES dxcompiler.dll HINTS ${_miniengine_dxc_hints} "${_miniengine_slangc_dir}")
+    if(NOT MINIENGINE_DXCOMPILER_DIR)
+        message(FATAL_ERROR "dxcompiler.dll was not found: restore the vcpkg directx-dxc dependency")
+    endif()
+    set(MINIENGINE_WITH_D3D12 ON)
+endif()

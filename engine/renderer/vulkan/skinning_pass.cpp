@@ -45,14 +45,14 @@ VulkanSkinningPass::VulkanSkinningPass(nvrhi::IDevice* nvrhiDevice, uint32_t fra
     using Item = nvrhi::BindingLayoutItem;
     m_meshSetLayout = layout(
         0,
-        {Item::RawBuffer_SRV(0),
-         Item::RawBuffer_SRV(1),
-         Item::RawBuffer_UAV(2),
-         Item::RawBuffer_UAV(3),
-         Item::RawBuffer_UAV(4),
+        {Item::StructuredBuffer_SRV(0),
+         Item::StructuredBuffer_SRV(1),
+         Item::StructuredBuffer_UAV(2),
+         Item::StructuredBuffer_UAV(3),
+         Item::StructuredBuffer_UAV(4),
          Item::PushConstants(0, sizeof(SkinningConstants))},
         "Failed to create the skinning mesh binding layout");
-    m_paletteSetLayout = layout(1, {Item::RawBuffer_SRV(0)}, "Failed to create the skinning palette binding layout");
+    m_paletteSetLayout = layout(1, {Item::StructuredBuffer_SRV(0)}, "Failed to create the skinning palette binding layout");
     m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "skin.comp.spv", {m_meshSetLayout, m_paletteSetLayout});
     m_tyrePipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "tyre_deform.comp.spv", {m_meshSetLayout, m_paletteSetLayout});
 
@@ -72,10 +72,11 @@ VulkanSkinningPass::VulkanSkinningPass(nvrhi::IDevice* nvrhiDevice, uint32_t fra
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             buffer,
             "Failed to create joint palette buffer",
-            &mapped));
+            &mapped,
+            static_cast<uint32_t>(sizeof(glm::mat4))));
         m_paletteMapped.push_back(mapped);
         nvrhi::BindingSetDesc desc;
-        desc.bindings = {nvrhi::BindingSetItem::RawBuffer_SRV(0, m_paletteHandles.back())};
+        desc.bindings = {nvrhi::BindingSetItem::StructuredBuffer_SRV(0, m_paletteHandles.back())};
         m_paletteSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_paletteSetLayout, "Failed to create a joint palette binding set"));
     }
 }
@@ -86,11 +87,11 @@ nvrhi::BindingSetHandle VulkanSkinningPass::Acquire(const VulkanBuffer& buffer) 
 {
     nvrhi::BindingSetDesc desc;
     desc.bindings = {
-        nvrhi::BindingSetItem::RawBuffer_SRV(0, buffer.GetBindPoseBuffer()),
-        nvrhi::BindingSetItem::RawBuffer_SRV(1, buffer.IsSkinned() ? buffer.GetSkinBuffer() : buffer.GetBindPoseBuffer()),
-        nvrhi::BindingSetItem::RawBuffer_UAV(2, buffer.GetVertexBuffer()),
-        nvrhi::BindingSetItem::RawBuffer_UAV(3, buffer.GetPositionBuffer()),
-        nvrhi::BindingSetItem::RawBuffer_UAV(4, buffer.GetPreviousPositionBuffer()),
+        nvrhi::BindingSetItem::StructuredBuffer_SRV(0, buffer.GetBindPoseBuffer()),
+        nvrhi::BindingSetItem::StructuredBuffer_SRV(1, buffer.IsSkinned() ? buffer.GetSkinBuffer() : buffer.GetBindPoseBuffer()),
+        nvrhi::BindingSetItem::StructuredBuffer_UAV(2, buffer.GetVertexBuffer()),
+        nvrhi::BindingSetItem::StructuredBuffer_UAV(3, buffer.GetPositionBuffer()),
+        nvrhi::BindingSetItem::StructuredBuffer_UAV(4, buffer.GetPreviousPositionBuffer()),
         nvrhi::BindingSetItem::PushConstants(0, sizeof(SkinningConstants))};
     return CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_meshSetLayout, "Failed to create a skinning binding set");
 }

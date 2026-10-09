@@ -53,15 +53,12 @@ VulkanTransmissionImage::VulkanTransmissionImage(VkPhysicalDevice physicalDevice
 {
     try
     {
-        // The mip chain is built with linear blits, which the format must support.
-        VkFormatProperties properties{};
-        vkGetPhysicalDeviceFormatProperties(physicalDevice, kCopyFormat, &properties);
-        constexpr VkFormatFeatureFlags kRequired = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
-                                                   VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
-                                                   VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
-        if ((properties.optimalTilingFeatures & kRequired) != kRequired)
+        // The copy and its mip chain are written by compute shaders and sampled filtered.
+        (void)physicalDevice;
+        const nvrhi::FormatSupport needed = nvrhi::FormatSupport::ShaderSample | nvrhi::FormatSupport::ShaderUavStore;
+        if ((m_nvrhiDevice->queryFormatSupport(ToNvrhiFormat(kCopyFormat)) & needed) != needed)
         {
-            throw std::runtime_error("RGBA16F cannot be blitted, filtered and stored on this device; transmission needs it");
+            throw std::runtime_error("RGBA16F cannot be filtered and stored on this device; transmission needs it");
         }
 
         VkImageCreateInfo imageInfo{};
@@ -85,7 +82,7 @@ VulkanTransmissionImage::VulkanTransmissionImage(VkPhysicalDevice physicalDevice
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = kCopyFormat;
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, kMipLevels, 0, 1};
-        CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_view), "Failed to create the transmission copy view");
+        CheckVulkan(CreateNativeImageView(m_device, &viewInfo, nullptr, &m_view), "Failed to create the transmission copy view");
 
         nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(true);
         samplerDesc.mipFilter = true;
@@ -124,7 +121,7 @@ void VulkanTransmissionImage::Destroy()
     m_sampler = nullptr;
     if (m_view != VK_NULL_HANDLE)
     {
-        vkDestroyImageView(m_device, m_view, nullptr);
+        DestroyNativeImageView(m_device, m_view, nullptr);
         m_view = VK_NULL_HANDLE;
     }
     // The image and its memory go with the texture.

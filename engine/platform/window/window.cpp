@@ -179,6 +179,9 @@ void Window::CreateNativeWindow()
     case RenderBackendType::Vulkan:
         flags |= SDL_WINDOW_VULKAN;
         break;
+    case RenderBackendType::D3D12:
+        // DXGI makes its swapchain on the window's HWND; SDL needs to know nothing.
+        break;
     default:
         throw std::runtime_error("Unsupported window backend type");
     }

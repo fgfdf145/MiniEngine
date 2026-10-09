@@ -29,7 +29,10 @@ static const float kVisibleDepthRatio = 0.995;
 
 struct FragmentInput
 {
+    // fullscreen.vert's outputs, all of them in its order: Direct3D matches the stages by signature
+    // position (Vulkan by location), so the fragment stage declares what the vertex stage writes.
     float4 fragCoord : SV_Position;
+    [[vk::location(0)]] float2 fragTexCoord : TEXCOORD0;
 };
 
 struct FragmentOutput

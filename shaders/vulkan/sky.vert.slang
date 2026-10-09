@@ -1,3 +1,4 @@
+#include "shader_helpers.slang"
 #include "draw_parameters.slang"
 #include "reverse_depth.slang"
 
@@ -17,6 +18,6 @@ VertexOutput main(DRAW_VERTEX_INDEX_PARAMETERS)
         (DRAW_VERTEX_INDEX == 2) ? 3.0 : -1.0);
     VertexOutput output;
     output.fragTexCoord = position * 0.5 + 0.5;
-    output.position = float4(position, DEPTH_FAR, 1.0);
+    output.position = ClipPosition(float4(position, DEPTH_FAR, 1.0));
     return output;
 }

@@ -66,16 +66,20 @@ static const float PATH_TRACE_LAYER_MIN_ALPHA = 0.05;
 // lighting pass reconstructs it from depth, so the input is deliberately not declared here.
 struct FragmentInput
 {
+    // triangle.vert's outputs, all of them in its order: Direct3D matches the stages by signature
+    // position (Vulkan by location), so the fragment stage declares what the vertex stage writes.
+    float4 fragCoord : SV_Position;
     [[vk::location(0)]] float3 fragColor : TEXCOORD0;
     [[vk::location(1)]] float2 fragTexCoord : TEXCOORD1;
     [[vk::location(2)]] float3 fragWorldNormal : TEXCOORD2;
     [[vk::location(3)]] float4 fragWorldTangent : TEXCOORD3;
+    [[vk::location(4)]] float3 fragWorldPosition : TEXCOORD4;
     [[vk::location(5)]] float4 fragCurrClip : TEXCOORD5;
     [[vk::location(6)]] float4 fragPrevClip : TEXCOORD6;
     [[vk::location(7)]] nointerpolation uint fragDrawSlot : TEXCOORD7;
     [[vk::location(8)]] float2 fragTexCoord1 : TEXCOORD8;
+    [[vk::location(9)]] nointerpolation float3 fragModelScale : TEXCOORD9;
     [[vk::location(10)]] float3 fragObjectPosition : TEXCOORD10;
-    float4 fragCoord : SV_Position;
     bool frontFacing : SV_IsFrontFace;
 };
 

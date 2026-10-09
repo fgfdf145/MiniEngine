@@ -437,7 +437,8 @@ class VulkanUniformBuffer
         VkBuffer& buffer,
         nvrhi::BufferHandle& handle,
         void*& mapped,
-        const char* failureMessage);
+        const char* failureMessage,
+        uint32_t structStride = 0);
     // One NVRHI binding set per swapchain image from the buffers and the bindings this object holds;
     // throws, leaving the previous sets, when one cannot be made.
     void BuildFrameBindingSets();

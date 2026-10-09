@@ -252,10 +252,11 @@ VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(nvrhi::IDevice* d
         desc.bindings.push_back(nvrhi::BindingLayoutItem::Texture_SRV(binding));
         desc.bindings.push_back(nvrhi::BindingLayoutItem::Sampler(binding + kFrameSamplerBindingOffset));
     };
-    // The shaders' StructuredBuffers: storage buffers, as NVRHI's raw buffer views are on Vulkan.
+    // The shaders' StructuredBuffers: structured views (their element size from the buffer), storage
+    // buffers on Vulkan.
     const auto buffer = [&desc](uint32_t binding)
     {
-        desc.bindings.push_back(nvrhi::BindingLayoutItem::RawBuffer_SRV(binding));
+        desc.bindings.push_back(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(binding));
     };
     // The camera block; the AO passes reconstruct view-space positions from it.
     desc.bindings.push_back(nvrhi::BindingLayoutItem::ConstantBuffer(0));
@@ -382,7 +383,7 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
     for (uint32_t i = 0; i < imageCount; ++i)
     {
         CreateMappedBuffer(
-            motionBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_motionBuffers[i], m_motionHandles[i], m_mappedMotionBuffers[i], "Failed to create previous model buffer");
+            motionBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_motionBuffers[i], m_motionHandles[i], m_mappedMotionBuffers[i], "Failed to create previous model buffer", sizeof(glm::mat4));
 
         // Identity until the first Update, so nothing ever reads uninitialised memory.
         const std::vector<glm::mat4> identities(m_motionSlotCount, glm::mat4(1.0f));
@@ -404,10 +405,10 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
     m_mappedShadowTileBuffers.assign(imageCount, nullptr);
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        CreateMappedBuffer(kShadowTileBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_shadowTileBuffers[i], m_shadowTileHandles[i], m_mappedShadowTileBuffers[i], "Failed to create the local shadow tile buffer");
+        CreateMappedBuffer(kShadowTileBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_shadowTileBuffers[i], m_shadowTileHandles[i], m_mappedShadowTileBuffers[i], "Failed to create the local shadow tile buffer", sizeof(GpuLocalShadowTile));
         std::memset(m_mappedShadowTileBuffers[i], 0, static_cast<size_t>(kShadowTileBytes));
-        CreateMappedBuffer(kLightBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_lightBuffers[i], m_lightHandles[i], m_mappedLightBuffers[i], "Failed to create light buffer");
-        CreateMappedBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_clusterBuffers[i], m_clusterHandles[i], m_mappedClusterBuffers[i], "Failed to create the light cluster buffer");
+        CreateMappedBuffer(kLightBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_lightBuffers[i], m_lightHandles[i], m_mappedLightBuffers[i], "Failed to create light buffer", sizeof(GpuLightData));
+        CreateMappedBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_clusterBuffers[i], m_clusterHandles[i], m_mappedClusterBuffers[i], "Failed to create the light cluster buffer", sizeof(uint32_t));
         // Empty until the first Update: no light, no cluster lists anything.
         std::memset(m_mappedLightBuffers[i], 0, static_cast<size_t>(kLightBytes));
         std::memset(m_mappedClusterBuffers[i], 0, static_cast<size_t>(kClusterBytes));
@@ -417,9 +418,9 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
     // is left as it is (filling a map's tens of thousands of slots with defaults took tens of
     // milliseconds whenever the buffers grew).
     const VkDeviceSize materialBytes = sizeof(GpuMaterialData) * m_motionSlotCount;
-    CreateMappedBuffer(materialBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_materialBuffer, m_materialHandle, m_mappedMaterialBuffer, "Failed to create the material buffer");
+    CreateMappedBuffer(materialBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_materialBuffer, m_materialHandle, m_mappedMaterialBuffer, "Failed to create the material buffer", sizeof(GpuMaterialData));
     const VkDeviceSize transformBytes = sizeof(GpuTextureTransforms) * m_motionSlotCount;
-    CreateMappedBuffer(transformBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_textureTransformBuffer, m_textureTransformHandle, m_mappedTextureTransformBuffer, "Failed to create the texture transform buffer");
+    CreateMappedBuffer(transformBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_textureTransformBuffer, m_textureTransformHandle, m_mappedTextureTransformBuffer, "Failed to create the texture transform buffer", sizeof(glm::vec4));
 }
 
 uint32_t VulkanUniformBuffer::GetDrawCapacity() const
@@ -443,7 +444,8 @@ void VulkanUniformBuffer::CreateMappedBuffer(
     VkBuffer& buffer,
     nvrhi::BufferHandle& handle,
     void*& mapped,
-    const char* failureMessage)
+    const char* failureMessage,
+    uint32_t structStride)
 {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -451,7 +453,7 @@ void VulkanUniformBuffer::CreateMappedBuffer(
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     handle = CreateNvrhiBuffer(
-        m_nvrhiDevice, bufferInfo, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buffer, failureMessage, &mapped);
+        m_nvrhiDevice, bufferInfo, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buffer, failureMessage, &mapped, structStride);
 }
 
 void VulkanUniformBuffer::BuildFrameBindingSets()
@@ -476,7 +478,7 @@ void VulkanUniformBuffer::BuildFrameBindingSets()
             {
                 throw std::runtime_error("Set 0 binding " + std::to_string(binding) + " has no NVRHI buffer");
             }
-            desc.bindings.push_back(nvrhi::BindingSetItem::RawBuffer_SRV(binding, source));
+            desc.bindings.push_back(nvrhi::BindingSetItem::StructuredBuffer_SRV(binding, source));
         };
         // The camera block, written once per image here, into the set for that image: not once per
         // material, which is what made the old single-set layout wasteful and is the whole point of

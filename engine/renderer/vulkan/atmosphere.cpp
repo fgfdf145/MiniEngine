@@ -179,7 +179,7 @@ void VulkanAtmosphere::DestroyImage(VkDevice device, LutImage& image)
 {
     if (image.view != VK_NULL_HANDLE)
     {
-        vkDestroyImageView(device, image.view, nullptr);
+        DestroyNativeImageView(device, image.view, nullptr);
     }
     // The image and its memory go with the texture, released with the rest below.
     image = LutImage{};
@@ -222,9 +222,7 @@ void VulkanAtmosphere::InitializeView(nvrhi::ICommandList* commandList, View& vi
     // Inside a scope that brings the volume out of UNDEFINED (Common) and leaves it where set 0
     // samples it.
     nvrhi::ITexture* volume = view.m_aerialPerspective.texture;
-    commandList->setTextureState(volume, nvrhi::AllSubresources, nvrhi::ResourceStates::CopyDest);
-    commandList->commitBarriers();
-    commandList->clearTextureFloat(volume, nvrhi::AllSubresources, nvrhi::Color(0.0f));
+    ClearTextureFloat(commandList, volume, nvrhi::Color(0.0f));
     commandList->setTextureState(volume, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
     view.m_initialized = true;
 }
@@ -345,7 +343,7 @@ void VulkanAtmosphere::CreateCloudImage(LutImage& image, VkExtent2D extent, VkIm
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = kCloudTargetFormat;
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &image.view), (std::string("Failed to create the view of the ") + name).c_str());
+    CheckVulkan(CreateNativeImageView(m_device, &viewInfo, nullptr, &image.view), (std::string("Failed to create the view of the ") + name).c_str());
 }
 
 void VulkanAtmosphere::CreateCloudTargets(View& view, VkExtent2D sceneExtent)
@@ -374,7 +372,7 @@ void VulkanAtmosphere::CreateViewBindingSet(View& view)
         Item::Sampler(kTransmittanceSampledBinding + kSamplerBindingOffset, m_sampler),
         Item::Texture_SRV(kMultiScatteringSampledBinding, m_images[kMultiScattering].texture),
         Item::Sampler(kMultiScatteringSampledBinding + kSamplerBindingOffset, m_sampler),
-        Item::RawBuffer_UAV(kIrradianceBinding, m_irradianceHandle),
+        Item::StructuredBuffer_UAV(kIrradianceBinding, m_irradianceHandle),
         Item::Texture_UAV(7, m_cloudNoise[kCloudShape].texture),
         Item::Texture_UAV(8, m_cloudNoise[kCloudDetail].texture),
         Item::Texture_UAV(9, m_cloudShadow.texture),
@@ -383,7 +381,7 @@ void VulkanAtmosphere::CreateViewBindingSet(View& view)
         Item::Texture_UAV(kCloudResolvedBinding, view.m_cloudResolved.texture),
         Item::Texture_SRV(kCloudHistoryBinding, view.m_cloudHistory.texture),
         Item::Sampler(kCloudHistoryBinding + kSamplerBindingOffset, m_sampler),
-        Item::RawBuffer_SRV(kPlumeBinding, m_plumeHandle),
+        Item::StructuredBuffer_SRV(kPlumeBinding, m_plumeHandle),
         Item::PushConstants(0, kPushConstantBytes)};
     view.m_bindingSet = CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create an atmosphere view's binding set");
 }
@@ -457,22 +455,17 @@ void VulkanAtmosphere::Record(
         {
             images.push_back(image.texture);
         }
+        // The clears in each API's clear state (ClearTextureFloat).
         for (nvrhi::ITexture* image : images)
         {
-            commandList->setTextureState(image, nvrhi::AllSubresources, States::CopyDest);
+            ClearTextureFloat(commandList, image, nvrhi::Color(0.0f));
         }
-        commandList->setTextureState(shadow, nvrhi::AllSubresources, States::CopyDest);
-        commandList->setBufferState(m_irradianceHandle, States::CopyDest);
+        // No clouds, no shadow: the map starts fully lit.
+        ClearTextureFloat(commandList, shadow, nvrhi::Color(1.0f));
+        ClearBufferUInt(commandList, m_irradianceHandle, 0);
         commandList->setBufferState(m_plumeHandle, States::CopyDest);
         commandList->setBufferState(m_plumeStagingHandle, States::CopySource);
         commandList->commitBarriers();
-        for (nvrhi::ITexture* image : images)
-        {
-            commandList->clearTextureFloat(image, nvrhi::AllSubresources, nvrhi::Color(0.0f));
-        }
-        // No clouds, no shadow: the map starts fully lit.
-        commandList->clearTextureFloat(shadow, nvrhi::AllSubresources, nvrhi::Color(1.0f));
-        commandList->clearBufferUInt(m_irradianceHandle, 0);
         // The plume table, before the plume map is first built below.
         commandList->copyBuffer(m_plumeHandle, 0, m_plumeStagingHandle, 0, static_cast<uint64_t>(kCloudPlumeTableSize) * sizeof(CloudPlumeCell));
         for (nvrhi::ITexture* image : images)
@@ -604,7 +597,7 @@ void VulkanAtmosphere::CreateLutImage(LutImage& image, VkExtent3D extent)
     viewInfo.viewType = volume ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = kLutFormat;
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &image.view), "Failed to create an atmosphere LUT view");
+    CheckVulkan(CreateNativeImageView(m_device, &viewInfo, nullptr, &image.view), "Failed to create an atmosphere LUT view");
 }
 
 void VulkanAtmosphere::CreateImages()
@@ -644,7 +637,7 @@ void VulkanAtmosphere::CreateImages()
         viewInfo.viewType = volume ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = kCloudNoiseFormats[noise];
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &image.view), "Failed to create a cloud noise view");
+        CheckVulkan(CreateNativeImageView(m_device, &viewInfo, nullptr, &image.view), "Failed to create a cloud noise view");
     }
 
     {
@@ -668,7 +661,7 @@ void VulkanAtmosphere::CreateImages()
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = kLutFormat;
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_cloudShadow.view), "Failed to create the cloud shadow map view");
+        CheckVulkan(CreateNativeImageView(m_device, &viewInfo, nullptr, &m_cloudShadow.view), "Failed to create the cloud shadow map view");
     }
 
     VkBufferCreateInfo bufferInfo{};
@@ -676,7 +669,8 @@ void VulkanAtmosphere::CreateImages()
     bufferInfo.size = kIrradianceBytes;
     bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    m_irradianceHandle = CreateNvrhiBuffer(m_nvrhiDevice, bufferInfo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_irradianceBuffer, "Failed to create the sky irradiance buffer");
+    m_irradianceHandle = CreateNvrhiBuffer(
+        m_nvrhiDevice, bufferInfo, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_irradianceBuffer, "Failed to create the sky irradiance buffer", nullptr, static_cast<uint32_t>(kIrradianceBytes));
 
     // The plume table: drawn once on the CPU, staged, copied by the first Record.
     {
@@ -689,7 +683,8 @@ void VulkanAtmosphere::CreateImages()
             info.size = bytes;
             info.usage = usage;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            return CreateNvrhiBuffer(m_nvrhiDevice, info, properties, buffer, (std::string("Failed to create the ") + name).c_str(), mapped);
+            return CreateNvrhiBuffer(
+                m_nvrhiDevice, info, properties, buffer, (std::string("Failed to create the ") + name).c_str(), mapped, static_cast<uint32_t>(sizeof(CloudPlumeCell)));
         };
         m_plumeHandle = createBuffer(
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -720,7 +715,8 @@ void VulkanAtmosphere::CreateImages()
         readback.handle = CreateNvrhiBuffer(
             m_nvrhiDevice,
             readbackInfo,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            // Read by the CPU (NVRHI's read access): D3D12's readback heap, which copies may write.
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
             readback.buffer,
             "Failed to create a sky readback buffer",
             &mapped);
@@ -752,7 +748,7 @@ void VulkanAtmosphere::CreateBindingLayout()
         Item::Sampler(kTransmittanceSampledBinding + kSamplerBindingOffset),
         Item::Texture_SRV(kMultiScatteringSampledBinding),
         Item::Sampler(kMultiScatteringSampledBinding + kSamplerBindingOffset),
-        Item::RawBuffer_UAV(kIrradianceBinding),
+        Item::StructuredBuffer_UAV(kIrradianceBinding),
         Item::Texture_UAV(7),
         Item::Texture_UAV(8),
         Item::Texture_UAV(9),
@@ -761,7 +757,7 @@ void VulkanAtmosphere::CreateBindingLayout()
         Item::Texture_UAV(kCloudResolvedBinding),
         Item::Texture_SRV(kCloudHistoryBinding),
         Item::Sampler(kCloudHistoryBinding + kSamplerBindingOffset),
-        Item::RawBuffer_SRV(kPlumeBinding),
+        Item::StructuredBuffer_SRV(kPlumeBinding),
         Item::PushConstants(0, kPushConstantBytes)};
     m_setLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, desc, "Failed to create the atmosphere binding layout");
 }
@@ -790,7 +786,7 @@ void VulkanAtmosphere::DestroyHandles()
     m_plumeBuffer = VK_NULL_HANDLE;
     if (m_cloudShadow.view != VK_NULL_HANDLE)
     {
-        vkDestroyImageView(m_device, m_cloudShadow.view, nullptr);
+        DestroyNativeImageView(m_device, m_cloudShadow.view, nullptr);
     }
     // The image and its memory go with the texture, released with the rest below.
     m_cloudShadow = LutImage{};
@@ -798,7 +794,7 @@ void VulkanAtmosphere::DestroyHandles()
     {
         if (image.view != VK_NULL_HANDLE)
         {
-            vkDestroyImageView(m_device, image.view, nullptr);
+            DestroyNativeImageView(m_device, image.view, nullptr);
         }
         // The image and its memory go with the texture, released with the rest below.
         image = LutImage{};
@@ -807,7 +803,7 @@ void VulkanAtmosphere::DestroyHandles()
     {
         if (image.view != VK_NULL_HANDLE)
         {
-            vkDestroyImageView(m_device, image.view, nullptr);
+            DestroyNativeImageView(m_device, image.view, nullptr);
         }
         // The image and its memory go with the texture, released with the rest below.
         image = LutImage{};

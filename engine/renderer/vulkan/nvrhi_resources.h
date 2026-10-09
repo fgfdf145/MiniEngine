@@ -29,5 +29,7 @@ nvrhi::BufferHandle CreateNvrhiBuffer(
     VkMemoryPropertyFlags properties,
     VkBuffer& buffer,
     const char* failureMessage,
-    void** mapped = nullptr);
+    void** mapped = nullptr,
+    // The element size the shaders declare it with (StructuredBuffer<T>), which D3D12's views need.
+    uint32_t structStride = 0);
 }

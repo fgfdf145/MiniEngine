@@ -51,11 +51,11 @@ struct VulkanDrawItem
     std::array<uint32_t, 8> samplerIndices{};
 };
 
-class NvrhiDevice;
+class GpuSwapchain;
+enum class SwapchainStatus;
 
-// The frame's command list and its submission: one NVRHI command list, opened each frame, whose
-// Vulkan command buffer the passes still record into directly while they move to NVRHI
-// (docs/design/2026-10-08-nvrhi-backend-design.md); the swapchain's acquire and present stay native.
+// The frame's command list and its submission: one NVRHI command list, opened each frame, executed
+// against the swapchain's image (GpuSwapchain's acquire, submit and present, Vulkan's or D3D12's).
 class VulkanCommandContext
 {
   public:
@@ -64,16 +64,18 @@ class VulkanCommandContext
     // for reuse once that call returns. SceneRenderTargets sizes its transient targets against this.
     static constexpr size_t kMaxFramesInFlight = 2;
 
-    VulkanCommandContext(NvrhiDevice& nvrhi, VkDevice device, size_t swapchainImageCount);
+    VulkanCommandContext(nvrhi::IDevice* device, GpuSwapchain& swapchain);
     ~VulkanCommandContext();
 
     VulkanCommandContext(const VulkanCommandContext&) = delete;
     VulkanCommandContext& operator=(const VulkanCommandContext&) = delete;
 
-    VkResult AcquireNextImage(VkSwapchainKHR swapchain, uint32_t& imageIndex);
+    SwapchainStatus AcquireNextImage(uint32_t& imageIndex);
+    // Opens the frame's command list, runs recorder (with its native Vulkan command buffer, null on
+    // D3D12) and closes it.
     void RecordCommandBuffer(uint32_t imageIndex, const std::function<void(VkCommandBuffer)>& recorder);
-    void Submit(VkQueue graphicsQueue, uint32_t imageIndex);
-    VkResult Present(VkQueue presentQueue, VkSwapchainKHR swapchain, uint32_t imageIndex);
+    void Submit(uint32_t imageIndex);
+    SwapchainStatus Present(uint32_t imageIndex);
     void WaitForAllFrames();
     // Frames counted by Submit, 1 for the first. A resource the frames submitted so far may use is
     // free once CompletedSubmits() reaches LastSubmit() as it was then (VulkanRetireQueue).
@@ -81,8 +83,7 @@ class VulkanCommandContext
     // The last submit known to have finished: polls the frame slots' event queries.
     uint64_t CompletedSubmits();
 
-    // The frame's NVRHI command list, open while RecordCommandBuffer's recorder runs: the recorder's
-    // command buffer is its native one.
+    // The frame's NVRHI command list, open while RecordCommandBuffer's recorder runs.
     nvrhi::ICommandList* GetCommandList() const;
 
     // The slot the frame being recorded belongs to. Advances in Present, so it is stable for the
@@ -90,18 +91,11 @@ class VulkanCommandContext
     uint32_t GetCurrentFrame() const;
 
   private:
-    NvrhiDevice& m_nvrhi;
-    VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_device = nullptr;
+    GpuSwapchain& m_swapchain;
     nvrhi::CommandListHandle m_commandList;
-    // Per frame slot: the semaphore the swapchain signals when the acquired image is free, and the
-    // query that completes with the slot's last submit.
-    std::vector<VkSemaphore> m_imageAvailableSemaphores;
+    // Per frame slot: the query that completes with the slot's last submit.
     std::vector<nvrhi::EventQueryHandle> m_frameQueries;
-    // Signaled by Submit and waited on by Present. Indexed by swapchain image (not by frame in
-    // flight): the presentation engine may still be waiting on the semaphore after the frame has
-    // finished, so a per-frame semaphore could be reused while still in use. Reuse per image is safe
-    // because reacquiring an image implies its previous present consumed the wait.
-    std::vector<VkSemaphore> m_renderFinishedSemaphores;
     // Per swapchain image: the frame slot whose submit last rendered to it, -1 for none.
     std::vector<int> m_imagesInFlight;
     uint32_t m_currentFrame = 0;

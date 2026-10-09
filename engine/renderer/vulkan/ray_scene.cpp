@@ -157,7 +157,9 @@ VulkanRayScene::VulkanRayScene(
     // set's own samplers; each content allocates what its slots need. One binding with a variable count
     // (partially bound): a table is allocated for the slots' needs. A new draw's textures go into slots
     // no frame in flight reads, while the frames read others.
-    uint32_t limit = 1u << 20;
+    // D3D12: a share of the shader-visible heap (a million descriptors), which the material sets
+    // and every other binding set share.
+    uint32_t limit = m_physicalDevice != VK_NULL_HANDLE ? 1u << 20 : 1u << 18;
     if (m_physicalDevice != VK_NULL_HANDLE)
     {
         VkPhysicalDeviceProperties properties{};
@@ -168,7 +170,10 @@ VulkanRayScene::VulkanRayScene(
     nvrhi::BindlessLayoutDesc tableDesc;
     tableDesc.visibility = nvrhi::ShaderType::Compute | nvrhi::ShaderType::Pixel;
     tableDesc.maxCapacity = m_textureLimit;
-    tableDesc.registerSpaces.push_back(nvrhi::BindingLayoutItem::Texture_SRV(0));
+    // The table's item names binding 0 of its set on Vulkan, and its register space on D3D12 (t0 in
+    // space kRayTextureSet, as the shaders declare rayTextures).
+    tableDesc.registerSpaces.push_back(
+        nvrhi::BindingLayoutItem::Texture_SRV(m_nvrhiDevice->getGraphicsAPI() == nvrhi::GraphicsAPI::VULKAN ? 0 : kRayTextureSet));
     tableDesc.descriptorSet = kRayTextureSet;
     tableDesc.variableCount = true;
     tableDesc.updateUnusedWhilePending = m_updateUnusedWhilePending;

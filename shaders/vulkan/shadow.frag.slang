@@ -25,7 +25,8 @@ struct ShadowConstants
 [[vk::binding(17, 0)]] StructuredBuffer<float4> materialTextureTransforms : register(t17, space0);
 
 [shader("fragment")]
-void main([[vk::location(0)]] float2 fragTexCoord : TEXCOORD0, [[vk::location(1)]] float2 fragTexCoord1 : TEXCOORD1)
+// shadow.vert's outputs in its order (Direct3D matches the stages by signature position).
+void main(float4 fragCoord : SV_Position, [[vk::location(0)]] float2 fragTexCoord : TEXCOORD0, [[vk::location(1)]] float2 fragTexCoord1 : TEXCOORD1)
 {
     MaterialData material = materials[shadowData.drawSlot];
     LoadMaterialSamplers(material.samplerIndices);

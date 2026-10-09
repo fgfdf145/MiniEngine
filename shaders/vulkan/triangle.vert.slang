@@ -74,7 +74,7 @@ VertexOutput main(VertexInput input)
 
     float3 worldTangent = normalize(mul((float3x3)drawData.model, input.inTangent.xyz));
 
-    output.position = mul(mul(ubo.proj, ubo.view), worldPosition);
+    output.position = ClipPosition(mul(mul(ubo.proj, ubo.view), worldPosition));
     // Unjittered, like prevViewProj, so motion vectors measure motion and not the TAA jitter.
     output.fragCurrClip = mul(ubo.viewProjNoJitter, worldPosition);
     output.fragPrevClip = mul(ubo.prevViewProj, mul(previousModels[DRAW_INSTANCE_INDEX(input)], float4(input.inPreviousPosition, 1.0)));

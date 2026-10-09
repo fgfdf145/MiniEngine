@@ -103,7 +103,7 @@ RenderBackendType ParseRenderBackend(std::string_view value)
     if (!TryParseRenderBackendType(value, backendType))
     {
         throw std::runtime_error(
-            "Unknown backend: " + std::string(value) + ". Supported values: vulkan");
+            "Unknown backend: " + std::string(value) + ". Supported values: vulkan, d3d12");
     }
 
     if (const std::optional<std::string> runtimeError = GetRenderBackendRuntimeError(backendType); runtimeError.has_value())

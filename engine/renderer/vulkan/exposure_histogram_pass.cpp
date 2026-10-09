@@ -48,7 +48,7 @@ VulkanExposureHistogramPass::VulkanExposureHistogramPass(nvrhi::IDevice* nvrhiDe
     layoutDesc.bindings = {
         nvrhi::BindingLayoutItem::Texture_SRV(0),
         nvrhi::BindingLayoutItem::Texture_SRV(1),
-        nvrhi::BindingLayoutItem::RawBuffer_UAV(2),
+        nvrhi::BindingLayoutItem::StructuredBuffer_UAV(2),
         nvrhi::BindingLayoutItem::PushConstants(0, sizeof(HistogramPushConstants))};
     m_setLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, layoutDesc, "Failed to create the exposure histogram binding layout");
     m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "exposure_histogram.comp.spv", {m_setLayout});
@@ -142,7 +142,7 @@ void VulkanExposureHistogramPass::CreateHistogramBuffers(uint32_t count)
     for (uint32_t slot = 0; slot < count; ++slot)
     {
         HistogramBuffer& histogram = m_histograms.emplace_back();
-        histogram.handle = CreateDeviceBuffer(m_nvrhiDevice, kHistogramBytes, 0, true, "Exposure histogram");
+        histogram.handle = CreateDeviceBuffer(m_nvrhiDevice, kHistogramBytes, static_cast<uint32_t>(kHistogramBytes), true, "Exposure histogram");
         void* mapped = nullptr;
         histogram.readback = CreateReadbackBuffer(m_nvrhiDevice, kHistogramBytes, "Exposure histogram readback", &mapped);
         // Zeroed so a slot that has never been recorded reads as an empty histogram.
@@ -162,7 +162,7 @@ void VulkanExposureHistogramPass::CreateBindingSets(const SceneRenderTargets& ta
         desc.bindings = {
             nvrhi::BindingSetItem::Texture_SRV(0, targets.GetTexture(RenderTargetId::SceneTaa, slot)),
             nvrhi::BindingSetItem::Texture_SRV(1, targets.GetTexture(RenderTargetId::SceneDepth, slot)),
-            nvrhi::BindingSetItem::RawBuffer_UAV(2, m_histograms.at(slot).handle, nvrhi::BufferRange(0, kHistogramBytes)),
+            nvrhi::BindingSetItem::StructuredBuffer_UAV(2, m_histograms.at(slot).handle, nvrhi::Format::UNKNOWN, nvrhi::BufferRange(0, kHistogramBytes)),
             nvrhi::BindingSetItem::PushConstants(0, sizeof(HistogramPushConstants))};
         m_bindingSets.push_back(
             CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create an exposure histogram binding set"));

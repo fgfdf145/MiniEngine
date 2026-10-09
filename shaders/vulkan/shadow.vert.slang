@@ -6,6 +6,7 @@ struct ShadowConstants
     float4x4 lightModelViewProjection;
     uint drawSlot;
 };
+#include "shader_helpers.slang"
 #include "d3d_register.slang"
 
 [[vk::push_constant]] ConstantBuffer<ShadowConstants> shadowData D3D_PUSH_CONSTANTS(2);
@@ -29,7 +30,7 @@ struct VertexOutput
 VertexOutput main(VertexInput input)
 {
     VertexOutput output;
-    output.position = mul(shadowData.lightModelViewProjection, float4(input.inPosition, 1.0));
+    output.position = ClipPosition(mul(shadowData.lightModelViewProjection, float4(input.inPosition, 1.0)));
     output.fragTexCoord = input.inTexCoord;
     output.fragTexCoord1 = input.inTexCoord1;
     return output;

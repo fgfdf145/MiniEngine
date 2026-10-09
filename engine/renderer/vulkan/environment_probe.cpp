@@ -144,11 +144,8 @@ void VulkanEnvironmentProbe::Record(
     if (initializing)
     {
         // Set 0 binding 8 names the prefiltered cube for every draw: both start black.
-        commandList->setTextureState(radiance, nvrhi::AllSubresources, States::CopyDest);
-        commandList->setTextureState(prefiltered, nvrhi::AllSubresources, States::CopyDest);
-        commandList->commitBarriers();
-        commandList->clearTextureFloat(radiance, nvrhi::AllSubresources, nvrhi::Color(0.0f));
-        commandList->clearTextureFloat(prefiltered, nvrhi::AllSubresources, nvrhi::Color(0.0f));
+        ClearTextureFloat(commandList, radiance, nvrhi::Color(0.0f));
+        ClearTextureFloat(commandList, prefiltered, nvrhi::Color(0.0f));
         m_imagesInitialized = true;
     }
     if (!capture)
@@ -211,7 +208,7 @@ VulkanEnvironmentProbe::CubeImage VulkanEnvironmentProbe::CreateCube(uint32_t mi
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
     viewInfo.format = kCubeFormat;
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mipCount, 0, 6};
-    CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &cube.cubeView), "Failed to create an environment cube view");
+    CheckVulkan(CreateNativeImageView(m_device, &viewInfo, nullptr, &cube.cubeView), "Failed to create an environment cube view");
     return cube;
 }
 
@@ -263,7 +260,7 @@ void VulkanEnvironmentProbe::DestroyHandles()
     {
         if (cube->cubeView != VK_NULL_HANDLE)
         {
-            vkDestroyImageView(m_device, cube->cubeView, nullptr);
+            DestroyNativeImageView(m_device, cube->cubeView, nullptr);
         }
         // The image and its memory go with the texture.
         *cube = CubeImage{};

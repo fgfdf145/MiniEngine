@@ -550,61 +550,47 @@ VkPipelineStageFlags StageMaskForLayout(VkImageLayout layout)
     }
 }
 
-void LogVulkanRuntimeInfo()
-{
-    uint32_t apiVersion = 0;
-    CheckVulkan(vkEnumerateInstanceVersion(&apiVersion), "Failed to query Vulkan runtime version");
-    LOG_INFO(
-        "Vulkan runtime API version: {}.{}.{}",
-        VK_API_VERSION_MAJOR(apiVersion),
-        VK_API_VERSION_MINOR(apiVersion),
-        VK_API_VERSION_PATCH(apiVersion));
-}
 }
 
 VulkanRenderer::VulkanRenderer(
     Window& window,
     std::shared_ptr<RendererSharedState> sharedState,
-    std::optional<std::string> startupModelPath)
-    : EditorRenderBackendBase(window, std::move(sharedState), RenderBackendType::Vulkan, std::move(startupModelPath))
+    std::optional<std::string> startupModelPath,
+    RenderBackendType backendType)
+    : EditorRenderBackendBase(window, std::move(sharedState), backendType, std::move(startupModelPath))
 {
-    LogVulkanRuntimeInfo();
-
-    // DLSS's extensions are asked for as the instance and the device are made; without all of them
-    // DLSS stays off and nothing else changes.
-    const std::vector<std::string> dlssInstanceExtensions = VulkanDlss::RequiredInstanceExtensions();
-    m_instance = std::make_unique<VulkanInstance>(GetWindow().GetSDLWindow(), dlssInstanceExtensions);
-    const VkInstance instance = m_instance->GetHandle();
-    m_device = std::make_unique<VulkanDevice>(
-        instance,
-        m_instance->GetSurface(),
-        [instance](VkPhysicalDevice physicalDevice)
-        {
-            return VulkanDlss::RequiredDeviceExtensions(instance, physicalDevice);
-        },
-        State().rayQuery);
-    m_nvrhi = std::make_unique<NvrhiDevice>(*m_instance, *m_device);
-    m_dlss = std::make_unique<VulkanDlss>(
-        instance,
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_device->GetQueueFamilies().graphicsFamily.value(),
-        m_device->GetGraphicsQueue(),
-        m_instance->OptionalExtensionsEnabled() && m_device->OptionalExtensionsEnabled());
+    // The graphics API's device (docs/design/2026-10-09-d3d12-backend-design.md); everything after it
+    // is the same on both, but for the Vulkan-only pieces (NGX's Vulkan entry points, the Vulkan
+    // acceleration structures), which ask the device for Vulkan's objects.
+#if MINIENGINE_WITH_D3D12
+    m_nvrhi = backendType == RenderBackendType::D3D12 ? CreateD3D12GpuDevice(State().rayQuery)
+                                                      : CreateVulkanGpuDevice(GetWindow().GetSDLWindow(), State().rayQuery);
+#else
+    m_nvrhi = CreateVulkanGpuDevice(GetWindow().GetSDLWindow(), State().rayQuery);
+#endif
+    LOG_INFO("Rendering with {} on {}", m_nvrhi->IsVulkan() ? "Vulkan" : "Direct3D 12", m_nvrhi->GetAdapterName());
+    if (VulkanDevice* vulkanDevice = m_nvrhi->GetVulkanDevice(); vulkanDevice != nullptr)
+    {
+        VulkanInstance* vulkanInstance = m_nvrhi->GetVulkanInstance();
+        m_dlss = std::make_unique<VulkanDlss>(
+            vulkanInstance->GetHandle(),
+            vulkanDevice->GetPhysicalDevice(),
+            vulkanDevice->GetHandle(),
+            vulkanDevice->GetQueueFamilies().graphicsFamily.value(),
+            vulkanDevice->GetGraphicsQueue(),
+            vulkanInstance->OptionalExtensionsEnabled() && vulkanDevice->OptionalExtensionsEnabled());
+    }
+    else
+    {
+        m_dlss = std::make_unique<VulkanDlss>(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, false);
+    }
     m_imguiLayer = std::make_unique<VulkanImGuiLayer>(
         GetWindow().GetSDLWindow(), m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
-    {
-        VkPhysicalDeviceFeatures features{};
-        vkGetPhysicalDeviceFeatures(m_device->GetPhysicalDevice(), &features);
-        VkPhysicalDeviceProperties properties{};
-        vkGetPhysicalDeviceProperties(m_device->GetPhysicalDevice(), &properties);
-        const float maxAnisotropy = features.samplerAnisotropy ? std::min(16.0f, properties.limits.maxSamplerAnisotropy) : 0.0f;
-        m_samplerCache = std::make_unique<VulkanSamplerCache>(m_nvrhi->Get(), maxAnisotropy);
-    }
+    m_samplerCache = std::make_unique<VulkanSamplerCache>(m_nvrhi->Get(), m_nvrhi->GetMaxSamplerAnisotropy());
     CreateDeviceResources();
     // Half the hardware threads: the rest stay free for the frame loop and for the band-parallel
     // encoding inside each texture.
-    const bool compressTextures = m_device->SupportsBlockCompression();
+    const bool compressTextures = m_nvrhi->SupportsBlockCompression();
     m_texturePreparation = std::make_unique<TexturePreparationQueue>(
         [compressTextures, cacheDirectory = DefaultTextureCacheDirectory()](const std::string& path, TextureUsage usage)
         {
@@ -656,7 +642,7 @@ VulkanRenderer::~VulkanRenderer()
     // Joins the workers before anything they might still be preparing for is torn down.
     m_texturePreparation.reset();
 
-    if (m_device)
+    if (m_nvrhi)
     {
         m_nvrhi->Get()->waitForIdle();
     }
@@ -689,8 +675,6 @@ VulkanRenderer::~VulkanRenderer()
     m_dlss.reset();
     m_uploadPool.reset();
     m_nvrhi.reset();
-    m_device.reset();
-    m_instance.reset();
 }
 
 void VulkanRenderer::DrawFrame()
@@ -966,19 +950,14 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
 
     uint32_t imageIndex = 0;
     const auto waitStart = std::chrono::steady_clock::now();
-    const VkResult acquireResult = m_commandContext->AcquireNextImage(m_swapchain->GetHandle(), imageIndex);
+    const SwapchainStatus acquireResult = m_commandContext->AcquireNextImage(imageIndex);
     const double waitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
     m_cpuStages.Mark("Acquire");
-    if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+    if (acquireResult == SwapchainStatus::OutOfDate)
     {
         m_swapchainOutOfDate = true;
         PublishFeedback(packet);
         return;
-    }
-
-    if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
-    {
-        CheckVulkan(acquireResult, "Failed to acquire swapchain image");
     }
     // AcquireNextImage waited on this slot's fence: the video frames its last use copied are ready.
     SubmitVideoFrame(m_commandContext->GetCurrentFrame());
@@ -1579,7 +1558,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               }
                                           });
     m_cpuStages.Mark("RecordRest");
-    m_commandContext->Submit(m_device->GetGraphicsQueue(), imageIndex);
+    m_commandContext->Submit(imageIndex);
     m_cpuStages.Mark("Submit");
     m_lastRecordedImageIndex = imageIndex;
     {
@@ -1628,16 +1607,12 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         }
     }
 
-    const VkResult presentResult = m_commandContext->Present(m_device->GetPresentQueue(), m_swapchain->GetHandle(), imageIndex);
+    const SwapchainStatus presentResult = m_commandContext->Present(imageIndex);
     m_cpuStages.Mark("Present");
-    if (acquireResult == VK_SUBOPTIMAL_KHR || presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
+    if (acquireResult != SwapchainStatus::Ok || presentResult != SwapchainStatus::Ok)
     {
         // The main thread rebuilds it before its next frame.
         m_swapchainOutOfDate = true;
-    }
-    else if (presentResult != VK_SUCCESS)
-    {
-        CheckVulkan(presentResult, "Failed to present swapchain image");
     }
     PublishFeedback(packet);
 }
@@ -2182,7 +2157,7 @@ void VulkanRenderer::PublishFeedback(const RenderFramePacket& frame)
 
 GpuMemoryReport VulkanRenderer::MeasureGpuMemory(const RenderFramePacket& frame) const
 {
-    const VulkanDevice::LocalMemory local = m_device->QueryLocalMemory();
+    const GpuLocalMemory local = m_nvrhi->QueryLocalMemory();
     const uint64_t targetBytes = m_view.targets ? m_view.targets->GetAllocatedBytes() : 0;
     GpuMemoryReport report;
     report.serial = frame.serial;
@@ -2237,36 +2212,18 @@ bool VulkanRenderer::WantsKeyboardCapture() const
 
 void VulkanRenderer::CreateSwapchainResources()
 {
-    const SwapchainSupportDetails supportDetails = m_device->QuerySwapchainSupport();
-    m_swapchain = std::make_unique<VulkanSwapchain>(
-        GetWindow().GetSDLWindow(),
-        m_device->GetHandle(),
-        m_instance->GetSurface(),
-        m_device->GetQueueFamilies(),
-        supportDetails,
-        State().renderDebug.hdrOutput);
+    m_swapchain = m_nvrhi->CreateSwapchain(GetWindow().GetSDLWindow(), State().renderDebug.hdrOutput);
     m_swapchainHdrRequested = State().renderDebug.hdrOutput;
     // The swapchain's images as NVRHI textures, which ImGui draws into (RecordEditorLayer).
     m_backBuffers.clear();
     m_backBufferFramebuffers.clear();
-    for (const VkImage image : m_swapchain->GetImages())
+    for (uint32_t index = 0; index < m_swapchain->GetImageCount(); ++index)
     {
-        nvrhi::TextureDesc desc;
-        desc.width = m_swapchain->GetExtent().width;
-        desc.height = m_swapchain->GetExtent().height;
-        desc.format = ToNvrhiFormat(m_swapchain->GetImageFormat());
-        desc.dimension = nvrhi::TextureDimension::Texture2D;
-        desc.isRenderTarget = true;
-        desc.debugName = "Swapchain image";
-        nvrhi::TextureHandle texture = m_nvrhi->Get()->createHandleForNativeTexture(nvrhi::ObjectTypes::VK_Image, nvrhi::Object(image), desc);
-        if (!texture)
-        {
-            throw std::runtime_error("Failed to wrap a swapchain image for NVRHI");
-        }
+        nvrhi::ITexture* texture = m_swapchain->GetImage(index);
         m_backBufferFramebuffers.push_back(CreateNvrhiFramebuffer(m_nvrhi->Get(), {texture}));
-        m_backBuffers.push_back(std::move(texture));
+        m_backBuffers.push_back(texture);
     }
-    m_commandContext = std::make_unique<VulkanCommandContext>(*m_nvrhi, m_device->GetHandle(), m_backBuffers.size());
+    m_commandContext = std::make_unique<VulkanCommandContext>(m_nvrhi->Get(), *m_swapchain);
     if (!State().requestedViewportExtent.IsValid())
     {
         State().requestedViewportExtent = FromVkExtent(m_swapchain->GetExtent());
@@ -2277,7 +2234,7 @@ void VulkanRenderer::CreateSwapchainResources()
     // SceneRenderTargets does not unwind the images it already created when its constructor
     // throws, so recovering in place here is not possible; failing loudly is the whole handling.
     const VkExtent2D viewportExtent = ToVkExtent(State().requestedViewportExtent);
-    const uint32_t swapchainImageCount = static_cast<uint32_t>(m_swapchain->GetImageViews().size());
+    const uint32_t swapchainImageCount = static_cast<uint32_t>(m_swapchain->GetImageCount());
     // Rebuild re-creates the images at a new size and image count but never re-runs format
     // selection, so it can only carry the target set across a swapchain recreate while the LDR
     // target's format still matches the swapchain's. A surface format change is rare but real,
@@ -2288,7 +2245,7 @@ void VulkanRenderer::CreateSwapchainResources()
     // format keeps; ImGui's HDR shader encodes them for the swapchain. Without it the target is the
     // swapchain's format made sRGB: tone mapping writes linear light and the image encodes it, and
     // ImGui, which draws in sRGB space into a UNORM swapchain, reads those bytes through a UNORM view.
-    const VkFormat ldrFormat = m_swapchain->IsHdr() ? VK_FORMAT_R16G16B16A16_SFLOAT : SrgbFormatOf(m_swapchain->GetImageFormat());
+    const VkFormat ldrFormat = m_swapchain->IsHdr() ? VK_FORMAT_R16G16B16A16_SFLOAT : SrgbFormatOf(m_swapchain->GetFormat());
     const bool ldrFormatMatchesSwapchain =
         m_view.targets != nullptr && m_view.targets->GetFormat(RenderTargetId::SceneLdr) == ldrFormat;
     // At the viewport's size: SyncSceneTargets moves the render size to DLSS's before a frame draws.
@@ -2299,8 +2256,8 @@ void VulkanRenderer::CreateSwapchainResources()
     else
     {
         m_view.targets = std::make_unique<SceneRenderTargets>(
-            m_device->GetPhysicalDevice(),
-            m_device->GetHandle(),
+            NativePhysicalDevice(),
+            NativeDevice(),
             m_nvrhi->Get(),
             ldrFormat,
             viewportExtent,
@@ -2362,18 +2319,12 @@ void VulkanRenderer::CreateDeviceResources()
     m_materialDrawConstants = std::make_unique<MaterialDrawConstants>(m_nvrhi->Get());
     m_uploadPool = std::make_unique<GpuUploadPool>(m_nvrhi->Get());
 
-    VkPipelineCacheCreateInfo cacheInfo{};
-    cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-    CheckVulkan(
-        vkCreatePipelineCache(m_device->GetHandle(), &cacheInfo, nullptr, &m_pipelineCache),
-        "Failed to create pipeline cache");
-
     m_view.shadowPass = std::make_unique<VulkanShadowPass>(
         m_nvrhi->Get(), m_frameSetLayout->Get(), m_materialSetLayout->Get(), kShadowMapResolution);
     m_localShadowPass = std::make_unique<VulkanLocalShadowPass>(m_nvrhi->Get(), m_frameSetLayout->Get(), m_materialSetLayout->Get());
-    m_transmissionImage = std::make_unique<VulkanTransmissionImage>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get());
+    m_transmissionImage = std::make_unique<VulkanTransmissionImage>(NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get());
 
-    m_atmosphere = std::make_unique<VulkanAtmosphere>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), m_frameSetLayout->Get());
+    m_atmosphere = std::make_unique<VulkanAtmosphere>(NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(), m_frameSetLayout->Get());
     m_view.atmosphere = m_atmosphere->CreateView();
     // The scene as the DDGI probe rays trace it, one instance buffer per frame in flight. Its texture
     // table names a white texture where no material's is, and every material sampler is in its sets.
@@ -2385,22 +2336,22 @@ void VulkanRenderer::CreateDeviceResources()
     {
         VulkanUploadBatch rayUploadBatch(m_nvrhi->Get());
         m_rayDefaultTexture = std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), CreateSolidTexture(255, 255, 255, 255), rayUploadBatch, VulkanTextureFormat::LinearData);
+            NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(), CreateSolidTexture(255, 255, 255, 255), rayUploadBatch, VulkanTextureFormat::LinearData);
         rayUploadBatch.Flush();
     }
     const TextureDescriptorBinding rayDefaultTexture =
         BindTexture(m_rayDefaultTexture->GetImageView(), m_rayDefaultTexture->GetNvrhiTexture(), m_samplerCache->Get(TextureSampler{}));
     m_rayScene = std::make_unique<VulkanRayScene>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
+        NativePhysicalDevice(),
+        NativeDevice(),
         m_nvrhi->Get(),
-        m_nvrhi->GetVulkan(),
+        m_nvrhi->GetNvrhiVulkan(),
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
-        m_device->SupportsRayQuery(),
+        m_nvrhi->SupportsRayQuery(),
         rayDefaultTexture,
         std::move(raySamplerTable),
-        m_device->SupportsUpdateUnusedWhilePending(),
-        m_device->HasLargeHostVisibleDeviceMemory());
+        m_nvrhi->SupportsUpdateUnusedWhilePending(),
+        m_nvrhi->HasLargeHostVisibleDeviceMemory());
     m_rayScene->SetRetire([this](std::function<void()> release)
                           {
                               Retire(std::move(release));
@@ -2413,7 +2364,7 @@ void VulkanRenderer::CreateDeviceResources()
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_rayScene->HasHardwareRayTracing());
     m_environmentProbe = std::make_unique<VulkanEnvironmentProbe>(
-        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), m_frameSetLayout->Get());
+        NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(), m_frameSetLayout->Get());
 
     // Set 0 binding 6 must name a valid image even when no HDRI is loaded.
     VulkanUploadBatch uploadBatch(m_nvrhi->Get());
@@ -2422,16 +2373,16 @@ void VulkanRenderer::CreateDeviceResources()
     black.height = 1;
     black.pixels = {0.0f, 0.0f, 0.0f, 1.0f};
     m_defaultEnvironmentMap = std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
+        NativePhysicalDevice(),
+        NativeDevice(),
         m_nvrhi->Get(),
         black,
         uploadBatch);
     // The DFG table, one mip, RGBA32F; the shader clamps its lookups to texel centres, so the
     // equirectangular sampler's u repeat never shows.
     m_environmentBrdfLut = std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
+        NativePhysicalDevice(),
+        NativeDevice(),
         m_nvrhi->Get(),
         BuildEnvironmentBrdfLut(kEnvironmentBrdfLutSize, kEnvironmentBrdfSampleCount),
         uploadBatch);
@@ -2445,17 +2396,18 @@ void VulkanRenderer::CreateDeviceResources()
         return data;
     };
     m_ltcInverseMatrices = std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), ltcTexture(kLtcInverseMatrices), uploadBatch);
+        NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(), ltcTexture(kLtcInverseMatrices), uploadBatch);
     m_ltcAmplitudes = std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), ltcTexture(kLtcAmplitudes), uploadBatch);
+        NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(), ltcTexture(kLtcAmplitudes), uploadBatch);
     uploadBatch.Flush();
 
     m_gpuTimer = std::make_unique<VulkanGpuTimer>(m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
-    if (State().parallelRecording)
+    // Secondary command buffers are Vulkan's (and no pass records into them at present).
+    if (State().parallelRecording && m_nvrhi->GetVulkanDevice() != nullptr)
     {
         m_parallelRecorder = std::make_unique<VulkanParallelRecorder>(
-            m_device->GetHandle(),
-            m_device->GetQueueFamilies().graphicsFamily.value(),
+            NativeDevice(),
+            m_nvrhi->GetVulkanDevice()->GetQueueFamilies().graphicsFamily.value(),
             static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     }
 }
@@ -2743,6 +2695,16 @@ std::vector<VulkanVideoReadback::MosaicTile> VulkanRenderer::BuildQuadMosaicTile
     return tiles;
 }
 
+VkDevice VulkanRenderer::NativeDevice() const
+{
+    return m_nvrhi->GetVulkanDevice() != nullptr ? m_nvrhi->GetVulkanDevice()->GetHandle() : VK_NULL_HANDLE;
+}
+
+VkPhysicalDevice VulkanRenderer::NativePhysicalDevice() const
+{
+    return m_nvrhi->GetVulkanDevice() != nullptr ? m_nvrhi->GetVulkanDevice()->GetPhysicalDevice() : VK_NULL_HANDLE;
+}
+
 void VulkanRenderer::DestroyDeviceResources()
 {
     m_parallelRecorder.reset();
@@ -2765,11 +2727,6 @@ void VulkanRenderer::DestroyDeviceResources()
     m_view.shadowPass.reset();
     m_localShadowPass.reset();
     m_transmissionImage.reset();
-    if (m_pipelineCache != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineCache(m_device->GetHandle(), m_pipelineCache, nullptr);
-        m_pipelineCache = VK_NULL_HANDLE;
-    }
     // The cached material sets come from pools made against the layout; content that named them is gone.
     m_renderSubmeshes.clear();
     m_liveSubmeshes.clear();
@@ -2924,8 +2881,8 @@ void VulkanRenderer::UpdateMinimapTexture(const std::string& path)
                 VulkanUploadBatch uploadBatch(m_nvrhi->Get());
                 // Read as UNORM: only ImGui shows it, and ImGui works on sRGB values as they are.
                 m_minimapTexture = std::make_unique<VulkanTexture>(
-                    m_device->GetPhysicalDevice(),
-                    m_device->GetHandle(),
+                    NativePhysicalDevice(),
+                    NativeDevice(),
                     m_nvrhi->Get(),
                     file.string(),
                     uploadBatch,
@@ -2984,7 +2941,7 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
             {
                 VulkanUploadBatch uploadBatch(m_nvrhi->Get());
                 auto texture = std::make_unique<VulkanTexture>(
-                    m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), image, uploadBatch);
+                    NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(), image, uploadBatch);
                 uploadBatch.Flush();
                 // The frame sets name the old map until rewritten, and may be in use.
                 m_commandContext->WaitForAllFrames();
@@ -3035,8 +2992,8 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
 {
     // Passes are built fresh here rather than carried across a swapchain recreate. The tone
     // mapping pass could never survive a swapchain format change anyway, and rebuilding the
-    // material pipelines alongside them costs almost nothing: m_pipelineCache outlives every
-    // pipeline set, so the driver reuses its earlier shader compilation. What that buys is the
+    // material pipelines alongside them costs little: the driver keeps its own cache of the shader
+    // compilations. What that buys is the
     // disappearance of every construct-or-rebuild branch, and with it the window in which the
     // pass list held passes whose framebuffers referenced destroyed views.
     //
@@ -3056,7 +3013,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_pathTraceLayerDepthPipelines.reset();
         m_pathTraceLayerSurfacePipelines.reset();
     }
-    view.gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets);
+    view.gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(NativeDevice(), m_nvrhi->Get(), *view.targets);
 
     auto geometryPass = std::make_unique<VulkanGeometryPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get());
     auto forwardPass = std::make_unique<VulkanForwardPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), ForwardPassPart::OpaqueAndSky);
@@ -3079,7 +3036,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
             m_materialSetLayout->Get(),
             m_materialDrawConstants->layout,
             geometryConfig);
-        if (m_device->SupportsIndependentBlend())
+        if (m_nvrhi->SupportsIndependentBlend())
         {
             MaterialPipelineSetConfig decalConfig = geometryConfig;
             decalConfig.allowBlending = true;
@@ -3129,9 +3086,9 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
 
     // Construction order does not matter: RecordScenePasses follows BuildScenePassOrder.
     view.passes.push_back(std::move(geometryPass));
-    view.passes.push_back(std::make_unique<VulkanRtShadowPass>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_rayScene));
+    view.passes.push_back(std::make_unique<VulkanRtShadowPass>(NativeDevice(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_rayScene));
     auto pathTracePass = std::make_unique<VulkanPathTracePass>(
-        m_device->GetHandle(),
+        NativeDevice(),
         m_nvrhi->Get(),
         *view.targets,
         m_frameSetLayout->Get(),
@@ -3173,11 +3130,11 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.restirPtPass = restirPtPass.get();
     view.passes.push_back(std::move(restirPtPass));
     view.passes.push_back(std::make_unique<VulkanAoTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_rayScene));
-    view.passes.push_back(std::make_unique<VulkanAoResolvePass>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
+    view.passes.push_back(std::make_unique<VulkanAoResolvePass>(NativeDevice(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanLightingPass>(
         m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), view.gbufferDescriptors->GetBindingLayout(), *m_rayScene));
     view.passes.push_back(std::make_unique<VulkanGiTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
-    view.passes.push_back(std::make_unique<VulkanGiResolvePass>(m_nvrhi->Get(), m_device->GetHandle(), *view.targets, m_frameSetLayout->Get()));
+    view.passes.push_back(std::make_unique<VulkanGiResolvePass>(m_nvrhi->Get(), NativeDevice(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanGiCompositePass>(
         m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), view.gbufferDescriptors->GetBindingLayout()));
     view.passes.push_back(std::make_unique<VulkanDdgiDebugPass>(
@@ -3198,13 +3155,13 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanTransmissionCopyPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_transmissionImage));
     // The opaque half's attachment formats, so the same forward pipelines draw in it.
     view.passes.push_back(std::make_unique<VulkanForwardPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), ForwardPassPart::Translucent));
-    auto taaPass = std::make_unique<VulkanTaaPass>(m_nvrhi->Get(), m_device->GetHandle(), *view.targets, m_frameSetLayout->Get());
+    auto taaPass = std::make_unique<VulkanTaaPass>(m_nvrhi->Get(), NativeDevice(), *view.targets, m_frameSetLayout->Get());
     const VulkanTaaPass& taa = *taaPass;
     view.passes.push_back(std::move(taaPass));
     // After TAA in this list, whose order OnTargetsRebuilt follows: the trace names TAA's history
     // images, which TAA recreates first.
     view.passes.push_back(std::make_unique<VulkanSsrTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), taa, *m_rayScene));
-    view.passes.push_back(std::make_unique<VulkanSsrResolvePass>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
+    view.passes.push_back(std::make_unique<VulkanSsrResolvePass>(NativeDevice(), m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanBloomPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::move(exposurePass));
     view.passes.push_back(std::make_unique<VulkanTonemapPass>(m_nvrhi->Get(), *view.targets, view.gbufferDescriptors->GetBindingLayout()));
@@ -3220,10 +3177,10 @@ void VulkanRenderer::CreateDescriptorResources()
 std::unique_ptr<VulkanUniformBuffer> VulkanRenderer::CreateViewUniformBuffer(const VulkanSceneView& view, uint32_t drawCapacity) const
 {
     auto uniformBuffer = std::make_unique<VulkanUniformBuffer>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
+        NativePhysicalDevice(),
+        NativeDevice(),
         m_nvrhi->Get(),
-        static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
+        static_cast<uint32_t>(m_swapchain->GetImageCount()),
         m_frameSetLayout->Get(),
         view.shadowPass->GetSampledBinding(),
         m_localShadowPass->GetSampledBinding(),
@@ -3305,9 +3262,7 @@ void VulkanRenderer::RecreateSwapchain()
 
 VkExtent2D VulkanRenderer::WantedSwapchainExtent() const
 {
-    return VulkanSwapchain::ChooseExtent(
-        GetWindow().GetSDLWindow(),
-        m_device->QuerySurfaceCapabilities());
+    return m_nvrhi->GetSwapchainExtent(GetWindow().GetSDLWindow());
 }
 
 VulkanRenderer::SceneExtents VulkanRenderer::ResolveSceneExtents(RenderExtent viewportExtent, const RenderDebugSettings& renderDebug)
@@ -3376,7 +3331,7 @@ void VulkanRenderer::RebuildViewTargets(VulkanSceneView& view, VkExtent2D render
     // viewport/scissor state, so neither they nor the uniform buffer have to be rebuilt while the
     // user drags the viewport edge. The images are new, so the tracker goes back to undefined.
     m_nvrhi->Get()->waitForIdle();
-    view.targets->Rebuild(render, output, static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
+    view.targets->Rebuild(render, output, static_cast<uint32_t>(m_swapchain->GetImageCount()));
     view.gbufferDescriptors->OnTargetsRebuilt(*view.targets);
     for (const std::unique_ptr<IScenePass>& pass : view.passes)
     {
@@ -3509,13 +3464,13 @@ std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D re
     // material pipelines (made against the viewport's passes) draw into them.
     auto view = std::make_unique<VulkanSceneView>();
     view->targets = std::make_unique<SceneRenderTargets>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
+        NativePhysicalDevice(),
+        NativeDevice(),
         m_nvrhi->Get(),
         m_view.targets->GetFormat(RenderTargetId::SceneLdr),
         render,
         output,
-        static_cast<uint32_t>(m_swapchain->GetImageViews().size()));
+        static_cast<uint32_t>(m_swapchain->GetImageCount()));
     view->shadowPass = std::make_unique<VulkanShadowPass>(
         m_nvrhi->Get(), m_frameSetLayout->Get(), m_materialSetLayout->Get(), kShadowMapResolution);
     view->atmosphere = m_atmosphere->CreateView();
@@ -3577,7 +3532,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
     };
 
     // Material texture files are uploaded block-compressed whenever the device allows it.
-    const bool compressTextures = m_device->SupportsBlockCompression();
+    const bool compressTextures = m_nvrhi->SupportsBlockCompression();
 
     auto indexOf = [&](const std::string& key, const VulkanTexture* texture) -> uint32_t
     {
@@ -3603,7 +3558,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             return it->second;
         if (auto stored = m_textureStore.find(key); stored != m_textureStore.end())
             return indexOf(key, stored->second.texture.get());
-        auto texture = std::make_unique<VulkanTexture>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), data, *uploadBatch, fmt);
+        auto texture = std::make_unique<VulkanTexture>(NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(), data, *uploadBatch, fmt);
         flushUploadBatchIfNeeded();
         return indexOf(key, store(key, std::move(texture), true));
     };
@@ -3796,8 +3751,8 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             {
                 // Addressable for the ray scene's hit shading when rays run on the hardware.
                 renderSubmesh->buffer = std::make_shared<VulkanBuffer>(
-                    m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
-                    *cpuRenderSubmesh.mesh, *uploadBatch, m_device->SupportsRayQuery());
+                    NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(),
+                    *cpuRenderSubmesh.mesh, *uploadBatch, m_nvrhi->SupportsRayQuery());
                 if (!cpuRenderSubmesh.mesh->IsPosed())
                 {
                     m_meshBuffers[cpuRenderSubmesh.mesh.get()] = MeshBuffers{cpuRenderSubmesh.mesh, renderSubmesh->buffer};
@@ -4140,7 +4095,7 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
                 // Addressable for the ray scene's hit shading when rays run on the hardware.
                 m_preparedBuffers[mesh.get()] = PreparedBuffers{
                     mesh,
-                    std::make_shared<VulkanBuffer>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), *mesh, batch(), m_device->SupportsRayQuery())};
+                    std::make_shared<VulkanBuffer>(NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(), *mesh, batch(), m_nvrhi->SupportsRayQuery())};
             }
             // A backlog as large as a map's first load stages for longer, though never without a limit:
             // 64 large textures took over 50 ms of one frame.
@@ -4259,14 +4214,14 @@ std::unique_ptr<VulkanTexture> VulkanRenderer::UploadPreparedTexture(
     {
         ++stats.floatTextures;
         return std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
+            NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(),
             *prepared.halfFloat, uploadBatch);
     }
     if (!prepared.compressed)
     {
         ++stats.uncompressed;
         return std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
+            NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(),
             prepared.rgba, uploadBatch, ToVulkanTextureFormat(usage));
     }
     if (prepared.fromCache)
@@ -4279,7 +4234,7 @@ std::unique_ptr<VulkanTexture> VulkanRenderer::UploadPreparedTexture(
         stats.compressSeconds += prepared.compressSeconds;
     }
     return std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
+        NativePhysicalDevice(), NativeDevice(), m_nvrhi->Get(),
         *prepared.compressed, uploadBatch);
 }
 

@@ -6,6 +6,7 @@
 #include "environment_probe.h"
 #include "buffer.h"
 #include "command.h"
+#include "gpu_device.h"
 #include "device.h"
 #include "dlss.h"
 #include "exposure_histogram_pass.h"
@@ -192,7 +193,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     VulkanRenderer(
         Window& window,
         std::shared_ptr<RendererSharedState> sharedState,
-        std::optional<std::string> startupModelPath = std::nullopt);
+        std::optional<std::string> startupModelPath = std::nullopt,
+        RenderBackendType backendType = RenderBackendType::Vulkan);
     ~VulkanRenderer();
 
     VulkanRenderer(const VulkanRenderer&) = delete;
@@ -463,14 +465,15 @@ class VulkanRenderer : public EditorRenderBackendBase
     // tone mapping pass applies (identity when auto white balance is off).
     glm::mat3 UpdateWhiteBalance(RenderFramePacket& frame);
     // Logs when the number of lights left out by the light limit changes.
+    // Vulkan's device for the code that is still Vulkan's alone; null on D3D12.
+    VkDevice NativeDevice() const;
+    VkPhysicalDevice NativePhysicalDevice() const;
     void ReportDroppedLights(uint32_t droppedCount);
     void ReportDroppedClusterLights(uint32_t droppedCount);
     void ReportDroppedLocalShadows(uint32_t droppedCount);
 
-    std::unique_ptr<VulkanInstance> m_instance;
-    std::unique_ptr<VulkanDevice> m_device;
-    // NVRHI over m_device (docs/design/2026-10-08-nvrhi-backend-design.md).
-    std::unique_ptr<NvrhiDevice> m_nvrhi;
+    // The graphics API's NVRHI device, Vulkan's or D3D12's (docs/design/2026-10-09-d3d12-backend-design.md).
+    std::unique_ptr<GpuDevice> m_nvrhi;
     // NVIDIA DLSS: always made, available only with the SDK on a device and driver that run it.
     std::unique_ptr<VulkanDlss> m_dlss;
     // The DLSS mode, model and denoiser the viewport's targets were last sized for (Off while the
@@ -562,7 +565,6 @@ class VulkanRenderer : public EditorRenderBackendBase
     // cache all outlive every swapchain, viewport and scene reload (see CreateDeviceResources).
     std::unique_ptr<VulkanFrameDescriptorSetLayout> m_frameSetLayout;
     std::unique_ptr<VulkanMaterialDescriptorSetLayout> m_materialSetLayout;
-    VkPipelineCache m_pipelineCache = VK_NULL_HANDLE;
     // Device lifetime too: its image has a fixed size and is shared by every frame in flight and
     // every view, and every VulkanUniformBuffer binds it into set 0.
     std::unique_ptr<VulkanLocalShadowPass> m_localShadowPass;
@@ -669,7 +671,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     std::unique_ptr<VulkanSamplerCache> m_samplerCache;
     // The scene behind transmissive surfaces, bound in set 0 (VulkanTransmissionCopyPass fills it).
     std::unique_ptr<VulkanTransmissionImage> m_transmissionImage;
-    std::unique_ptr<VulkanSwapchain> m_swapchain;
+    std::unique_ptr<GpuSwapchain> m_swapchain;
     // The swapchain's images as NVRHI textures, and a framebuffer on each.
     std::vector<nvrhi::TextureHandle> m_backBuffers;
     std::vector<nvrhi::FramebufferHandle> m_backBufferFramebuffers;

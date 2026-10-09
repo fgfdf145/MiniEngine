@@ -295,7 +295,7 @@ void HistoryImagePair::Create(nvrhi::IDevice* nvrhiDevice, VkDevice device, VkEx
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = format;
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &history.view), "Failed to create a history image view");
+        CheckVulkan(CreateNativeImageView(m_device, &viewInfo, nullptr, &history.view), "Failed to create a history image view");
     }
 }
 
@@ -305,7 +305,7 @@ void HistoryImagePair::Destroy()
     {
         if (history.view != VK_NULL_HANDLE)
         {
-            vkDestroyImageView(m_device, history.view, nullptr);
+            DestroyNativeImageView(m_device, history.view, nullptr);
         }
         // The image and its memory go with NVRHI's texture.
         history = Image{};

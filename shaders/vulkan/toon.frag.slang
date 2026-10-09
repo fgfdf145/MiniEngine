@@ -22,6 +22,9 @@ SPECIALIZATION_BOOL(0, kOutline);
 
 struct FragmentInput
 {
+    // toon.vert's outputs, all of them in its order: Direct3D matches the stages by signature
+    // position (Vulkan by location), so the fragment stage declares what the vertex stage writes.
+    float4 fragCoord : SV_Position;
     [[vk::location(0)]] float3 fragWorldPosition : TEXCOORD0;
     [[vk::location(1)]] float3 fragWorldNormal : TEXCOORD1;
     [[vk::location(2)]] float2 fragTexCoord : TEXCOORD2;
@@ -31,7 +34,6 @@ struct FragmentInput
     [[vk::location(6)]] nointerpolation uint fragToonIndex : TEXCOORD6;
     [[vk::location(7)]] float4 fragCurrClip : TEXCOORD7;
     [[vk::location(8)]] float4 fragPrevClip : TEXCOORD8;
-    float4 fragCoord : SV_Position;
     bool frontFacing : SV_IsFrontFace;
 };
 
