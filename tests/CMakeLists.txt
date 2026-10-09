@@ -2136,6 +2136,25 @@ add_test(
 
 set_target_properties(miniengine_vehicle_brush_tyre_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_vehicle_reset_tests
+    vehicle_reset_tests.cpp
+    gtr_car_spec.h
+)
+miniengine_group_target_sources(miniengine_vehicle_reset_tests)
+
+target_link_libraries(miniengine_vehicle_reset_tests
+    PRIVATE
+        engine_core
+        engine_physics
+)
+
+add_test(
+    NAME miniengine.vehicle_reset
+    COMMAND miniengine_vehicle_reset_tests
+)
+
+set_target_properties(miniengine_vehicle_reset_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_vehicle_overlay_tests
     vehicle_overlay_tests.cpp
     gtr_car_spec.h

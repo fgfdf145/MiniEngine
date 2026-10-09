@@ -68,7 +68,8 @@ std::string FreeName(const std::vector<SceneDrivePath>& paths, const std::string
 }
 
 // Where the mouse ray meets the level plane at `height`, if in front of the camera and within 5 km.
-std::optional<glm::dvec3> MouseOnPlane(const glm::mat4& viewProjection, const ImVec2& origin, const ImVec2& size, double height)
+// The ray through the mouse: from the near plane, unit direction.
+std::pair<glm::dvec3, glm::dvec3> MouseRay(const glm::mat4& viewProjection, const ImVec2& origin, const ImVec2& size)
 {
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     const float ndcX = (mouse.x - origin.x) / size.x * 2.0f - 1.0f;
@@ -78,17 +79,22 @@ std::optional<glm::dvec3> MouseOnPlane(const glm::mat4& viewProjection, const Im
     const glm::vec4 farClip = inverse * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
     const glm::dvec3 nearWorld = glm::dvec3(glm::vec3(nearClip) / nearClip.w);
     const glm::dvec3 farWorld = glm::dvec3(glm::vec3(farClip) / farClip.w);
-    const glm::dvec3 direction = glm::normalize(farWorld - nearWorld);
+    return {nearWorld, glm::normalize(farWorld - nearWorld)};
+}
+
+// Where the mouse's ray meets the level plane at `height`, within 5 km.
+std::optional<glm::dvec3> RayOnPlane(const glm::dvec3& from, const glm::dvec3& direction, double height)
+{
     if (std::abs(direction.y) < 1.0e-4)
     {
         return std::nullopt;
     }
-    const double t = (height - nearWorld.y) / direction.y;
+    const double t = (height - from.y) / direction.y;
     if (t <= 0.0 || t > 5000.0)
     {
         return std::nullopt;
     }
-    return nearWorld + direction * t;
+    return from + direction * t;
 }
 
 std::string DescribeAutomation(const VehicleAutomationStatus& automation)
@@ -257,8 +263,8 @@ void DrivePathsPanel::DrawPathEditor(EditorContext& context, std::vector<SceneDr
     if (ImGui::IsItemHovered())
     {
         ImGui::SetTooltip(
-            "Clicking in the viewport adds a point after the selected one (or at the end), level with it:\n"
-            "on the ground the path lies on. The first point goes level with the car, else at height 0.");
+            "Clicking in the viewport adds a point after the selected one (or at the end), on the ground or\n"
+            "whatever else is clicked (the driven car excepted). Clicking the sky puts it level with the selected point.");
     }
     ImGui::BeginDisabled(!status.active);
     if (ImGui::Button(ICON_PH_MAP_PIN " Add at Car"))
@@ -468,7 +474,8 @@ void DrivePathsPanel::DrawDriveLog(EditorContext& context)
         {
             ImGui::SetTooltip(
                 "Puts the car back at its start and writes every frame down (captures/drive_*.csv):\n"
-                "position, speed, controls, g, slip, and the path's error while following one. Replay it to drive it again exactly.");
+                "the body's position and rotation, speed, controls, g, slip, each wheel's pose, load, travel and slip, and the\n"
+                "path's error while following one. Replay plays it back frame by frame, exactly where it went.");
         }
     }
     else
@@ -670,8 +677,7 @@ bool DrivePathsPanel::DrawViewportOverlay(EditorContext& context, ImDrawList& dr
     {
         return false;
     }
-    std::vector<SceneDrivePath> edited = paths;
-    SceneDrivePath& path = edited[static_cast<size_t>(m_selectedPath)];
+    const SceneDrivePath& path = paths[static_cast<size_t>(m_selectedPath)];
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     float nearest = kPointPickRadius * uiScale;
     int picked = -1;
@@ -697,7 +703,8 @@ bool DrivePathsPanel::DrawViewportOverlay(EditorContext& context, ImDrawList& dr
     {
         return false;
     }
-    // Level with the selected point, else the last, else the car, else the ground at 0.
+    // The point goes on whatever the click is on (the backend casts the ray into the scene); where the ray
+    // meets nothing, level with the selected point, else the last, else the car, else the ground at 0.
     double height = 0.0;
     if (m_selectedPoint >= 0 && m_selectedPoint < static_cast<int>(path.points.size()))
     {
@@ -711,16 +718,17 @@ bool DrivePathsPanel::DrawViewportOverlay(EditorContext& context, ImDrawList& dr
     {
         height = status.pose.position.y;
     }
-    const std::optional<glm::dvec3> placed = MouseOnPlane(viewProjection, origin, size, height);
-    if (!placed.has_value())
-    {
-        return true;
-    }
+    const auto [rayOrigin, rayDirection] = MouseRay(viewProjection, origin, size);
     const size_t at = m_selectedPoint >= 0 && m_selectedPoint < static_cast<int>(path.points.size()) ? static_cast<size_t>(m_selectedPoint) + 1
                                                                                                      : path.points.size();
-    path.points.insert(path.points.begin() + static_cast<std::ptrdiff_t>(at), SceneDrivePathPoint{*placed, 0.0f});
+    EditorUiActions::DrivePathPointPlacement placement;
+    placement.path = static_cast<size_t>(m_selectedPath);
+    placement.index = at;
+    placement.rayOrigin = rayOrigin;
+    placement.rayDirection = rayDirection;
+    placement.fallback = RayOnPlane(rayOrigin, rayDirection, height);
+    context.result.actions.placeDrivePathPoint = placement;
     m_selectedPoint = static_cast<int>(at);
-    scene.SetDrivePaths(std::move(edited));
     return true;
 }
 

@@ -30,6 +30,7 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/StateRecorderImpl.h>
 #include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
 #include <Jolt/Physics/Vehicle/VehicleConstraint.h>
 #include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
@@ -1288,6 +1289,11 @@ struct PhysicsWorld::Impl
         JPH::Ref<JPH::VehicleCollisionTester> collisionTester;
         VehicleCollisionTesterDisc* discTester = nullptr; // the same, owned by collisionTester
         std::unique_ptr<WheelBodyFilter> wheelFilter;
+        // The constraint's state (the wheels' spin, the engine, the gearbox, its solver's impulses) and the
+        // wheels' settings (which the suspension and brakes change each step) as the car was made:
+        // ResetVehicle puts them back, so a reset car drives as a new one.
+        std::string madeConstraintState;
+        std::vector<JPH::WheelSettingsWV> madeWheelSettings;
         VehicleControls controls;
         // In water (ApplyWater): the share of the body's shape under the surface, the seconds it has
         // spent filling (weighted by that share), and whether the engine has drowned.
@@ -3610,6 +3616,15 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
             });
     }
 
+    {
+        JPH::StateRecorderImpl made;
+        vehicle.constraint->SaveState(made);
+        vehicle.madeConstraintState = made.GetData();
+        for (const JPH::WheelSettingsWV* wheelSettings : vehicle.wheelSettings)
+        {
+            vehicle.madeWheelSettings.push_back(*wheelSettings);
+        }
+    }
     vehicle.current = impl.Capture(vehicle);
     vehicle.previous = vehicle.current;
     impl.vehicles.push_back(std::move(vehicle));
@@ -3643,13 +3658,34 @@ void PhysicsWorld::SetVehicleDriverAids(VehicleId id, bool abs, bool tractionCon
     vehicle.tractionControlGrip = tractionControl ? std::max(vehicle.settings.tractionControlGrip, 0.0f) : 0.0f;
 }
 
-void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
+void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose, bool keepTyres)
 {
     Impl::Vehicle& vehicle = m_impl->GetVehicle(id);
     JPH::BodyInterface& bodies = m_impl->physicsSystem.GetBodyInterface();
     const JPH::BodyID body = vehicle.body->GetID();
     bodies.SetPositionAndRotation(body, ToJoltPosition(pose.position), ToJolt(pose.rotation), JPH::EActivation::Activate);
     bodies.SetLinearAndAngularVelocity(body, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+    // Nothing the car did before carries over: a replayed drive, given only the recording's controls,
+    // drives the line it did only from the very state it started in. The contacts the body had are
+    // forgotten, and the physics engine's side of the car goes back to as it was made.
+    bodies.InvalidateContactCache(body);
+    {
+        JPH::StateRecorderImpl made;
+        made.WriteBytes(vehicle.madeConstraintState.data(), vehicle.madeConstraintState.size());
+        made.Rewind();
+        vehicle.constraint->RestoreState(made);
+    }
+    for (size_t index = 0; index < vehicle.wheelSettings.size() && index < vehicle.madeWheelSettings.size(); ++index)
+    {
+        *vehicle.wheelSettings[index] = vehicle.madeWheelSettings[index];
+    }
+    if (vehicle.discTester != nullptr)
+    {
+        for (size_t index = 0; index < kVehicleWheelCount; ++index)
+        {
+            vehicle.discTester->SetFaceLength(index, 0.0f);
+        }
+    }
     for (JPH::Wheel* wheel : vehicle.constraint->GetWheels())
     {
         wheel->SetAngularVelocity(0.0f);
@@ -3657,17 +3693,51 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose)
     auto* controller = static_cast<JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
     controller->GetEngine().SetCurrentRPM(controller->GetEngine().mMinRPM);
     controller->SetDriverInput(0.0f, 0.0f, 0.0f, 0.0f);
+    controller->GetTransmission().mClutchStrength = vehicle.defaultClutchStrength;
     vehicle.controls = {};
     vehicle.direction = 1.0f;
     vehicle.gearboxState = {};
     vehicle.pendingGearShifts = 0;
     vehicle.turboBoost.clear();
+    vehicle.pedal = 0.0f;
+    vehicle.filteredLoad = {};
     vehicle.filteredLoadValid = false;
-    for (tyre::BrushTyre& tyre : vehicle.brushTyres)
+    vehicle.absReleased = {};
+    vehicle.absClock = 0.0f;
+    vehicle.tcCut = false;
+    vehicle.tcClock = 0.0f;
+    vehicle.centreCouplingTorque = 0.0f;
+    vehicle.drivetrainMeshLoss = 0.0f;
+    vehicle.drivetrainSpinLoss = 0.0f;
+    vehicle.rearSteerFiltered.clear();
+    vehicle.rearSteerAngle = 0.0f;
+    vehicle.controllerLastVelocity = JPH::Vec3::sZero();
+    vehicle.controllerLastVelocityValid = false;
+    vehicle.axleTorqueReaction = {};
+    vehicle.lastLinearVelocity = JPH::Vec3::sZero();
+    vehicle.lastAngularVelocity = JPH::Vec3::sZero();
+    vehicle.lastVelocityValid = false;
+    // The tyres' bristles at rest; new tyres, cold and unworn, unless they are kept.
+    for (size_t index = 0; index < vehicle.brushTyres.size(); ++index)
     {
-        tyre.Reset();
+        vehicle.brushTyres[index] = tyre::BrushTyre(BuildBrushTyreParameters(vehicle.settings, index));
+        if (keepTyres)
+        {
+            continue;
+        }
+        if (vehicle.thermals[index].has_value())
+        {
+            vehicle.thermals[index].emplace(vehicle.settings.tyres[index].thermal, vehicle.settings.tyreStartTemperature);
+        }
+        if (vehicle.wears[index].has_value())
+        {
+            vehicle.wears[index].emplace(vehicle.settings.tyres[index].wear);
+        }
     }
+    vehicle.tyreSlips = {};
     vehicle.brushWheels = {};
+    vehicle.droppedRotation = {};
+    vehicle.spinAngleBefore = {};
     vehicle.submergedShare = 0.0f;
     vehicle.floodSeconds = 0.0f;
     vehicle.engineDrowned = false;

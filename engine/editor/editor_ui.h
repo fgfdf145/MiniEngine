@@ -167,6 +167,18 @@ struct EditorUiActions
         DrivePathTrackSettings track;
     };
     std::optional<DrivePathFollow> followDrivePath;
+    // A point clicked into a drive path: inserted at `index` of the scene's path `path`, where the ray
+    // through the click first meets the scene (RaycastScene), else at `fallback` (the panel's level
+    // plane), else not at all.
+    struct DrivePathPointPlacement
+    {
+        size_t path = 0;
+        size_t index = 0;
+        glm::dvec3 rayOrigin{0.0};
+        glm::dvec3 rayDirection{0.0, -1.0, 0.0};
+        std::optional<glm::dvec3> fallback;
+    };
+    std::optional<DrivePathPointPlacement> placeDrivePathPoint;
     std::optional<std::string> replayDriveLog;
     bool stopDriveAutomation = false;
     std::optional<bool> driveLog;

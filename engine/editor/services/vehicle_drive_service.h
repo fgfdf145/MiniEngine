@@ -218,17 +218,16 @@ struct VehiclePathFollowRun
     PathFollowerOutput output;
 };
 
-// A drive log being replayed, frame by frame.
+// A drive log being played back: the body and wheels put where the log has them, time slice by time
+// slice, while the physics stands still. Played back, a drive goes exactly where it went.
 struct VehicleReplayRun
 {
     std::string name;
     DriveReplay replay;
-    size_t frame = 0;
-    // In real time: the time gone that the next frame has not yet been played for.
-    float clock = 0.0f;
-    // The time the recording's physics carried over after the last frame played (its frames' times less
-    // its steps'), so the poses read back fall between steps where the recording's did.
-    float carry = 0.0f;
+    // How far into the drive (s, on the log's time), the log's frame at or before it, and the drive then.
+    double seconds = 0.0;
+    size_t cursor = 0;
+    DriveLogSample sample;
 };
 
 // A model being driven as a car: the physics world built for it, and what to put back when it stops.
@@ -336,6 +335,7 @@ struct VehicleDriveSession
     // The body's velocity and heading after the last logged frame, for its accelerations and yaw rate.
     std::optional<glm::vec3> lastVelocity;
     float lastYaw = 0.0f;
+    double lastHeight = 0.0;
 };
 
 struct VehicleDriveState

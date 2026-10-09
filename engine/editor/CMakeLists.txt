@@ -36,6 +36,8 @@ add_library(engine_editor
     services/vehicle_drive_service.h
     services/vehicle_drive_log.cpp
     services/vehicle_drive_log.h
+    services/scene_raycast.cpp
+    services/scene_raycast.h
     services/vehicle_path_follower.cpp
     services/vehicle_path_follower.h
     services/vehicle_driver_service.cpp

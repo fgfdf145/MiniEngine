@@ -1,10 +1,14 @@
+#include <engine/core/threading/task_system.h>
+#include <engine/editor/services/scene_raycast.h>
 #include <engine/editor/services/vehicle_drive_log.h>
 #include <engine/editor/services/vehicle_path_follower.h>
 #include <engine/logic/editor_world.h>
+#include <engine/renderer/renderer_world.h>
 
 #include <glm/gtc/constants.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -282,6 +286,16 @@ void DriveLogRoundTrips(const std::filesystem::path& folder)
         sample.controls.brake = frame == 2 ? 1.0f : 0.0f;
         sample.controls.gearShifts = frame == 1 ? 1 : 0;
         sample.controls.manualGearbox = true;
+        sample.position = glm::dvec3(10.0 * frame, 100.25, -3.5);
+        sample.rotation = glm::normalize(glm::quat(0.9f, 0.01f * frame, 0.4f, -0.02f));
+        for (size_t wheel = 0; wheel < sample.wheels.size(); ++wheel)
+        {
+            DriveLogWheel& logged = sample.wheels[wheel];
+            logged.position = sample.position + glm::dvec3(0.8 * static_cast<double>(wheel), -0.3, 1.25);
+            logged.rotation = glm::normalize(glm::quat(0.5f, 0.5f, 0.1f * static_cast<float>(wheel + frame), 0.3f));
+            logged.inContact = wheel != 3;
+            logged.load = 3000.5f + 100.0f * static_cast<float>(wheel);
+        }
         writer.Write(sample);
     }
     writer.Close("done");
@@ -291,17 +305,35 @@ void DriveLogRoundTrips(const std::filesystem::path& folder)
     Require(std::count(columns.begin(), columns.end(), ',') == std::count(row.begin(), row.end(), ','), "a row's cells do not match the columns");
 
     const DriveReplay replay = ReadDriveLog(file);
-    Require(replay.frames.size() == 3, "the log reads back " + std::to_string(replay.frames.size()) + " frames");
+    Require(replay.samples.size() == 3, "the log reads back " + std::to_string(replay.samples.size()) + " frames");
     Require(replay.header.car == "skyline_r34_vspec" && replay.header.path == "lane change 2", "the header reads back wrong");
     Require(replay.header.startPosition == header.startPosition && replay.header.startRotation == header.startRotation, "the start reads back wrong");
     Require(replay.header.stepSeconds == header.stepSeconds, "the step reads back wrong");
     for (int frame = 0; frame < 3; ++frame)
     {
-        const DriveReplayFrame& read = replay.frames[frame];
+        const DriveLogSample& read = replay.samples[frame];
         Require(read.deltaSeconds == kFrame * (1.0f + 0.1f * frame) && read.physicsSteps == 16 + frame, "dt is not read back exactly");
         Require(read.controls.throttle == 0.123456789f * frame && read.controls.steering == -0.333333343f, "controls are not read back exactly");
         Require(read.controls.gearShifts == (frame == 1 ? 1 : 0) && read.controls.manualGearbox, "the gearbox is not read back");
+        const glm::quat rotation = glm::normalize(glm::quat(0.9f, 0.01f * frame, 0.4f, -0.02f));
+        Require(read.rotation == rotation && read.position == glm::dvec3(10.0 * frame, 100.25, -3.5), "the body is not read back exactly");
+        for (size_t wheel = 0; wheel < read.wheels.size(); ++wheel)
+        {
+            const DriveLogWheel& logged = read.wheels[wheel];
+            Require(logged.rotation == glm::normalize(glm::quat(0.5f, 0.5f, 0.1f * static_cast<float>(wheel + frame), 0.3f)), "a wheel's rotation reads back wrong");
+            Require(glm::length(logged.position - (read.position + glm::dvec3(0.8 * static_cast<double>(wheel), -0.3, 1.25))) < 1e-4, "a wheel's place reads back wrong");
+            Require(logged.inContact == (wheel != 3) && logged.load == 3000.5f + 100.0f * static_cast<float>(wheel), "a wheel's contact reads back wrong");
+        }
     }
+
+    // Played back between two frames, the body is between them; before the first and after the last, at them.
+    size_t cursor = 0;
+    const double between = 0.25 * replay.samples[0].time + 0.75 * replay.samples[1].time;
+    const DriveLogSample played = SampleDriveAt(replay.samples, between, cursor);
+    Require(cursor == 0 && std::abs(played.position.x - 7.5) < 1e-9, "a quarter from the second frame, x = " + std::to_string(played.position.x));
+    Require(SampleDriveAt(replay.samples, -1.0, cursor).position == replay.samples.front().position, "before the drive, its first frame");
+    Require(SampleDriveAt(replay.samples, 99.0, cursor).position == replay.samples.back().position && cursor == 2, "after it, its last");
+    Require(SampleDriveAt(replay.samples, 0.0, cursor).position == replay.samples.front().position && cursor == 0, "and back to the start");
     std::filesystem::remove(file);
 }
 
@@ -323,6 +355,124 @@ void ScenePathsRoundTrip(const std::filesystem::path& folder)
 }
 }
 
+// A 20 m square in the entity's XZ plane at its origin, as a render submesh of `entity`.
+CpuRenderSubmesh Square(entt::entity entity)
+{
+    auto mesh = std::make_shared<MeshData>();
+    for (const auto& [x, z] : {std::pair{-10.0f, -10.0f}, std::pair{10.0f, -10.0f}, std::pair{10.0f, 10.0f}, std::pair{-10.0f, 10.0f}})
+    {
+        Vertex vertex{};
+        vertex.position[0] = x;
+        vertex.position[2] = z;
+        mesh->vertices.push_back(vertex);
+    }
+    mesh->indices = {0, 1, 2, 0, 2, 3};
+    CpuRenderSubmesh submesh;
+    submesh.entity = entity;
+    submesh.mesh = mesh;
+    submesh.localBoundsRadius = 15.0f;
+    return submesh;
+}
+
+entt::entity PlaceEntity(IEditorWorld& world, const char* name, glm::vec3 translation, glm::vec3 scale = glm::vec3(1.0f))
+{
+    SerializedEntityData data{};
+    data.tagName = name;
+    data.transform.translation = translation;
+    data.transform.scale = scale;
+    return world.CreateEntity(data);
+}
+
+// A click puts a drive path's point on what it is on: the ground far from the origin, a lifted floor over
+// it, not a decal, the top of water or the driven car, and nothing past the scene.
+void RayFindsTheGround()
+{
+    std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
+    RendererWorld renderWorld;
+    renderWorld.SetSceneWorld(*world);
+    // The ground at y = 100 out at x = 6000, scaled up 10 times (200 m across).
+    const entt::entity ground = PlaceEntity(*world, "Ground", glm::vec3(6000.0f, 100.0f, 0.0f), glm::vec3(10.0f));
+    const entt::entity decal = PlaceEntity(*world, "Decal", glm::vec3(6000.0f, 100.05f, 0.0f));
+    const entt::entity water = PlaceEntity(*world, "Water", glm::vec3(6000.0f, 100.5f, 0.0f));
+    const entt::entity car = PlaceEntity(*world, "Car", glm::vec3(6000.0f, 101.5f, 0.0f));
+    const entt::entity deck = PlaceEntity(*world, "Deck", glm::vec3(6050.0f, 110.0f, 0.0f));
+    std::vector<CpuRenderSubmesh> submeshes = {Square(ground), Square(decal), Square(water), Square(car), Square(deck)};
+    submeshes[1].decal = true;
+    submeshes[2].water = true;
+    renderWorld.SetRenderSubmeshes(std::move(submeshes));
+
+    // Slanting down from a camera up and to the side, at a point near the middle.
+    const glm::dvec3 eye(5980.0, 140.0, -30.0);
+    const glm::dvec3 target(6003.0, 100.0, 4.0);
+    std::optional<SceneRayHit> hit = RaycastScene(renderWorld, *world, eye, target - eye, 20000.0, car);
+    Require(hit.has_value() && hit->entity == ground, "the ray falls through the decal, the water and the driven car to the ground");
+    Require(glm::length(hit->position - target) < 1e-6, "on the ground where it was clicked, off by " + std::to_string(glm::length(hit->position - target)));
+    hit = RaycastScene(renderWorld, *world, eye, target - eye, 20000.0);
+    Require(hit.has_value() && hit->entity == car && std::abs(hit->position.y - 101.5) < 1e-6, "a car not being driven is clicked on");
+    hit = RaycastScene(renderWorld, *world, glm::dvec3(6052.0, 150.0, 3.0), glm::dvec3(0.0, -1.0, 0.0), 20000.0, car);
+    Require(hit.has_value() && hit->entity == deck && std::abs(hit->position.y - 110.0) < 1e-6, "the deck over the ground is the first thing met");
+    Require(!RaycastScene(renderWorld, *world, eye, glm::dvec3(0.0, 1.0, 0.0), 20000.0, car).has_value(), "the sky meets nothing");
+    Require(!RaycastScene(renderWorld, *world, glm::dvec3(6400.0, 150.0, 0.0), glm::dvec3(0.0, -1.0, 0.0), 20000.0, car).has_value(),
+            "past the ground's edge, nothing");
+}
+
+// A click on a big map's ground (2 million triangles in one mesh) finds it on one thread and on all
+// the workers alike; prints how long each took.
+void RayCostOnABigGround()
+{
+    constexpr int kCells = 1000;
+    auto mesh = std::make_shared<MeshData>();
+    mesh->vertices.reserve((kCells + 1) * (kCells + 1));
+    for (int z = 0; z <= kCells; ++z)
+    {
+        for (int x = 0; x <= kCells; ++x)
+        {
+            Vertex vertex{};
+            vertex.position[0] = static_cast<float>(x) - kCells * 0.5f;
+            vertex.position[1] = 0.25f * std::sin(0.1f * static_cast<float>(x + z));
+            vertex.position[2] = static_cast<float>(z) - kCells * 0.5f;
+            mesh->vertices.push_back(vertex);
+        }
+    }
+    for (uint32_t z = 0; z < kCells; ++z)
+    {
+        for (uint32_t x = 0; x < kCells; ++x)
+        {
+            const uint32_t a = z * (kCells + 1) + x;
+            const uint32_t b = a + 1;
+            const uint32_t c = a + kCells + 1;
+            const uint32_t d = c + 1;
+            mesh->indices.insert(mesh->indices.end(), {a, c, b, b, c, d});
+        }
+    }
+    std::unique_ptr<IEditorWorld> world = CreateEditorWorld();
+    RendererWorld renderWorld;
+    renderWorld.SetSceneWorld(*world);
+    const entt::entity ground = PlaceEntity(*world, "Ground", glm::vec3(0.0f, 100.0f, 0.0f));
+    CpuRenderSubmesh submesh;
+    submesh.entity = ground;
+    submesh.mesh = mesh;
+    submesh.localBoundsRadius = kCells * 0.75f;
+    renderWorld.SetRenderSubmeshes({submesh});
+
+    const glm::dvec3 eye(-300.0, 160.0, -250.0);
+    const glm::dvec3 direction = glm::dvec3(120.0, 100.0, 90.0) - eye;
+    const auto cast = [&](const char* how)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        const std::optional<SceneRayHit> hit = RaycastScene(renderWorld, *world, eye, direction, 20000.0);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        std::cout << "a click on 2 million triangles, " << how << ": " << ms << " ms\n";
+        Require(hit.has_value() && std::abs(hit->position.y - 100.0) < 0.3, std::string("the big ground is found ") + how);
+        return hit->position;
+    };
+    const glm::dvec3 alone = cast("one thread");
+    TaskSystem::Initialize();
+    const glm::dvec3 shared = cast("all workers");
+    TaskSystem::Shutdown();
+    Require(alone == shared, "the workers find the same point");
+}
+
 int main()
 {
     try
@@ -338,6 +488,8 @@ int main()
         StartJustBehindAClosedStartCountsNoLap();
         DriveLogRoundTrips(folder);
         ScenePathsRoundTrip(folder);
+        RayFindsTheGround();
+        RayCostOnABigGround();
     }
     catch (const std::exception& exception)
     {
