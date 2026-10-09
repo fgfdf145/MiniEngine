@@ -10,7 +10,7 @@ namespace me
 
 // What fills the pixels no geometry covers, and whether the atmosphere tints the sun and fogs the
 // scene. The values reach the shaders through the camera uniform block and must match the
-// ENVIRONMENT_* constants in shaders/vulkan/atmosphere_common.glsl.
+// ENVIRONMENT_* constants in shaders/vulkan/atmosphere_common.slang.
 enum class EnvironmentMode : uint32_t
 {
     // The flat viewport background, standing for no physical light.

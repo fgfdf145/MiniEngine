@@ -37,7 +37,7 @@ bool IsBgra(VkFormat format)
     return format == VK_FORMAT_B8G8R8A8_SRGB || format == VK_FORMAT_B8G8R8A8_UNORM;
 }
 
-// The HDR output's LDR target: display-linear, 1.0 being UI white (see hdr_output.glsl).
+// The HDR output's LDR target: display-linear, 1.0 being UI white (see hdr_output.slang).
 bool IsHalfFloat(VkFormat format)
 {
     return format == VK_FORMAT_R16G16B16A16_SFLOAT || format == VK_FORMAT_R16G16_SFLOAT;

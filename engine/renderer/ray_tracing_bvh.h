@@ -13,7 +13,7 @@ namespace me
 
 // The scene as the DDGI probe rays see it (docs/design/2026-09-27-ddgi-design.md): a bounding volume
 // hierarchy per mesh (the bottom level), and one over the mesh instances rebuilt every frame (the top
-// level). The GPU walks the same arrays byte for byte (shaders/vulkan/ray_tracing_common.glsl);
+// level). The GPU walks the same arrays byte for byte (shaders/vulkan/ray_tracing_common.slang);
 // TraceRay below is the CPU walk the tests and tools use.
 
 // 32 bytes. An inner node (count 0) has its two children at first and first + 1; a leaf holds count

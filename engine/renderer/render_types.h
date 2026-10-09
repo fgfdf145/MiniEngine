@@ -158,7 +158,7 @@ struct BloomSettings
     float strength = 1.0f;
 };
 
-// Screen-space reflections (see ssr_common.glsl): replace the environment's specular radiance where
+// Screen-space reflections (see ssr_common.slang): replace the environment's specular radiance where
 // the screen shows what a glossy surface reflects.
 struct SsrSettings
 {
@@ -266,7 +266,7 @@ struct RestirPtSettings
     // reference to compare against.
     bool accumulate = false;
     // 0 the image; 1 the duplication map, 2 the reconnection vertex's index, 3 the confidence (log2),
-    // 4 the path length, 5 green where the pairing textures' links are mutual (restir_pt_common.glsl's
+    // 4 the path length, 5 green where the pairing textures' links are mutual (restir_pt_common.slang's
     // PT_DEBUG_*).
     int debugView = 0;
 };
@@ -362,7 +362,7 @@ struct PathTracingSettings
 // The numeric values are not the tonemap.frag push constant: VulkanTonemapPass maps them.
 enum class ToneMapper : uint32_t
 {
-    // GT7's operator, SDR or HDR10 (gt7_tonemap.glsl).
+    // GT7's operator, SDR or HDR10 (gt7_tonemap.slang).
     Gt7 = 0,
     // Khronos PBR Neutral on the exposed value, without the Khronos reference view's viewer encoding.
     PbrNeutral = 1,
@@ -464,7 +464,7 @@ struct RenderDebugSettings
     bool specularAntiAliasing = true;
     BloomSettings bloom;
     SsrSettings ssr;
-    // Presents to an HDR10 swapchain when the display offers one (see hdr_output.glsl), tone mapped
+    // Presents to an HDR10 swapchain when the display offers one (see hdr_output.slang), tone mapped
     // with GT7's HDR curve for this peak luminance in cd/m^2, which Vulkan cannot query.
     bool hdrOutput = false;
     float hdrPeakNits = 1000.0f;

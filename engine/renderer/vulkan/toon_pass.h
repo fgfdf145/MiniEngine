@@ -28,7 +28,7 @@ namespace me
 
 // The toon materials of a frame's toon draws, in the order of ScenePassFrameContext::toonDrawItems,
 // in a host-visible storage buffer per frame slot (set 2 of the toon pipelines; ToonMaterialBuffer in
-// shaders/vulkan/toon_common.glsl).
+// shaders/vulkan/toon_common.slang).
 class VulkanToonMaterials
 {
   public:
@@ -60,7 +60,7 @@ class VulkanToonMaterials
     std::vector<VkDescriptorSet> m_sets;
 };
 
-// The push constants of every toon pipeline (DrawConstants in toon_common.glsl): the model matrix,
+// The push constants of every toon pipeline (DrawConstants in toon_common.slang): the model matrix,
 // the draw's index in VulkanToonMaterials and the frame's toon exposure scale.
 struct ToonPushConstants
 {
@@ -69,7 +69,7 @@ struct ToonPushConstants
     float exposureScale = 1.0f;
     uint32_t padding[2] = {};
 };
-static_assert(sizeof(ToonPushConstants) == 80, "ToonPushConstants must match toon_common.glsl's block");
+static_assert(sizeof(ToonPushConstants) == 80, "ToonPushConstants must match toon_common.slang's block");
 
 class VulkanToonPrepass : public IScenePass
 {

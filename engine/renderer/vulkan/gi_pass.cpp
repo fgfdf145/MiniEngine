@@ -18,7 +18,7 @@ constexpr float kMaxPixelRadius = 256.0f;
 // rgb plus the packed distance and sample count, which half floats cannot hold exactly.
 constexpr VkFormat kHistoryFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
 
-// Must match AoConstants in shaders/vulkan/vbao_common.glsl, which the GI shaders share.
+// Must match AoConstants in shaders/vulkan/vbao_common.slang, which the GI shaders share.
 struct GiPushConstants
 {
     glm::vec2 extent{0.0f};
@@ -32,9 +32,9 @@ struct GiPushConstants
     uint32_t frameIndex = 0;
     uint32_t flags = 0;
 };
-static_assert(sizeof(GiPushConstants) == 48, "GiPushConstants must match vbao_common.glsl");
+static_assert(sizeof(GiPushConstants) == 48, "GiPushConstants must match vbao_common.slang");
 
-// Must match the AO_FLAG_* constants in vbao_common.glsl.
+// Must match the AO_FLAG_* constants in vbao_common.slang.
 constexpr uint32_t kFlagEnabled = 1u;
 constexpr uint32_t kFlagSpatial = 2u;
 constexpr uint32_t kFlagTemporal = 4u;

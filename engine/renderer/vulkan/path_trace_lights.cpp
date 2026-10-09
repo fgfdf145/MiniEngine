@@ -25,15 +25,15 @@ struct EmissiveBuildConstants
 };
 
 constexpr uint32_t kBindingCount = 6;
-// Must match the LIGHT_GRID_* constants in shaders/vulkan/light_grid_common.glsl.
+// Must match the LIGHT_GRID_* constants in shaders/vulkan/light_grid_common.slang.
 constexpr uint32_t kLightGridCells = 64u * 16u * 64u;
 constexpr uint32_t kLightGridSlots = 32u;
 constexpr VkDeviceSize kLightGridBytes = VkDeviceSize{kLightGridCells} * (1u + kLightGridSlots / 2u) * sizeof(uint32_t);
 constexpr uint32_t kWorkgroupSize = 64;
-// EmissiveTriangle in emissive_lights_common.glsl.
+// EmissiveTriangle in emissive_lights_common.slang.
 constexpr VkDeviceSize kTriangleBytes = 96;
 
-// EmissiveTreeLevelStart in emissive_lights_common.glsl: floats before level `level`.
+// EmissiveTreeLevelStart in emissive_lights_common.slang: floats before level `level`.
 uint32_t TreeLevelStart(uint32_t level)
 {
     return 4u + ((1u << (2u * level)) - 4u) / 3u;

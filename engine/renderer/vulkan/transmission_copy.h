@@ -11,7 +11,7 @@ namespace me
 
 // The scene behind transmissive surfaces (KHR_materials_transmission): a fixed 1024 x 1024 RGBA16F
 // image with its full mip chain, as the Khronos glTF Sample Viewer keeps it, so the LOD rule in
-// transmission_common.glsl is the viewer's and the frame descriptor that binds it (set 0, binding
+// transmission_common.slang is the viewer's and the frame descriptor that binds it (set 0, binding
 // 18) never changes on a resize. Device lifetime. It rests in SHADER_READ_ONLY_OPTIMAL, which the
 // forward pipelines' descriptor names; only VulkanTransmissionCopyPass moves it out and back.
 class VulkanTransmissionImage

@@ -13,7 +13,7 @@ namespace me
 {
 
 // The ozone layer's tent profile (Hillaire 2020): density 1 at 25 km, falling linearly to 0 at 10
-// and 40 km. Mirrored by OZONE_* in shaders/vulkan/atmosphere_common.glsl.
+// and 40 km. Mirrored by OZONE_* in shaders/vulkan/atmosphere_common.slang.
 inline constexpr float kOzoneCenterAltitudeKm = 25.0f;
 inline constexpr float kOzoneHalfWidthKm = 15.0f;
 
@@ -62,7 +62,7 @@ struct AtmosphereSun
     glm::vec3 illuminance{0.0f};
 };
 
-// The environment block at the end of CameraBuffer in shaders/vulkan/scene_common.glsl, member for
+// The environment block at the end of CameraBuffer in shaders/vulkan/scene_common.slang, member for
 // member. Every member is a vec4 so the C++ layout is the std140 layout.
 struct EnvironmentUniformData
 {

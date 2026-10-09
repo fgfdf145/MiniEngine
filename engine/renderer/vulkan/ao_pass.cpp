@@ -19,7 +19,7 @@ constexpr VkFormat kHistoryFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 // vbao_resolve.comp's historyTexture, the one input it samples rather than loads.
 constexpr uint32_t kHistoryReadBinding = 3;
 
-// Must match AoConstants in shaders/vulkan/vbao_common.glsl.
+// Must match AoConstants in shaders/vulkan/vbao_common.slang.
 struct AoPushConstants
 {
     glm::vec2 extent{0.0f};
@@ -33,9 +33,9 @@ struct AoPushConstants
     uint32_t frameIndex = 0;
     uint32_t flags = 0;
 };
-static_assert(sizeof(AoPushConstants) == 48, "AoPushConstants must match vbao_common.glsl");
+static_assert(sizeof(AoPushConstants) == 48, "AoPushConstants must match vbao_common.slang");
 
-// Must match the AO_FLAG_* constants in vbao_common.glsl.
+// Must match the AO_FLAG_* constants in vbao_common.slang.
 constexpr uint32_t kFlagEnabled = 1u;
 constexpr uint32_t kFlagSpatial = 2u;
 constexpr uint32_t kFlagTemporal = 4u;

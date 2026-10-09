@@ -15,7 +15,7 @@ namespace me
 
 namespace
 {
-// Must match RestirPtConstants in shaders/vulkan/restir_pt_common.glsl.
+// Must match RestirPtConstants in shaders/vulkan/restir_pt_common.slang.
 struct RestirPtPushConstants
 {
     glm::uvec2 extent{0u};
@@ -35,9 +35,9 @@ struct RestirPtPushConstants
     uint32_t unused1 = 0;
     glm::vec4 previousCamera{0.0f};
 };
-static_assert(sizeof(RestirPtPushConstants) == 80, "RestirPtPushConstants must match restir_pt_common.glsl");
+static_assert(sizeof(RestirPtPushConstants) == 80, "RestirPtPushConstants must match restir_pt_common.slang");
 
-// The PT_FLAG_* constants in restir_pt_common.glsl.
+// The PT_FLAG_* constants in restir_pt_common.slang.
 constexpr uint32_t kFlagTemporal = 1u;
 constexpr uint32_t kFlagSpatial = 2u;
 constexpr uint32_t kFlagFootprint = 4u;

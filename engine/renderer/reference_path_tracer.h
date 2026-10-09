@@ -16,7 +16,7 @@ namespace me
 // coverage says; a single-sided surface's back is black, as the probe rays see it. Directional lights
 // reach every hit through a shadow ray; the sky is one uniform radiance.
 
-// What a ray sees of one submesh (RayMaterial in shaders/vulkan/ray_tracing_common.glsl), indexed by
+// What a ray sees of one submesh (RayMaterial in shaders/vulkan/ray_tracing_common.slang), indexed by
 // RayInstance::data.z.
 struct ReferenceMaterial
 {

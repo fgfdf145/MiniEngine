@@ -13,12 +13,12 @@ class VulkanRayScene;
 
 // The lights as the path tracer's next event estimation picks them, beyond the scene light list
 // (docs/design/2026-10-08-path-tracing-remaining-work-design.md), both built on the GPU every frame:
-//   - the emissive triangles (shaders/vulkan/emissive_lights_common.glsl): every triangle of the ray
+//   - the emissive triangles (shaders/vulkan/emissive_lights_common.slang): every triangle of the ray
 //     scene's installed submeshes whose material emits (VulkanRayScene::GetEmissiveSubmeshes), put in
 //     world space with a four-way tree of their powers to pick one from. Per frame slot: the list of
 //     (draw slot, triangle) and each slot's first light, written from the CPU when the ray scene's
 //     emissive submeshes change; and what the GPU builds from them;
-//   - the local lights' world grid (light_grid_common.glsl): around the camera, each cell's local
+//   - the local lights' world grid (light_grid_common.slang): around the camera, each cell's local
 //     lights, from which the vertices draw their candidates.
 // Each frame slot's own set binds them (the trace's set 4).
 class VulkanPathTraceLights

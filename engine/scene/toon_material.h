@@ -10,7 +10,7 @@ namespace me
 // An anime character material (glTF MINIENGINE_toon): the parameters of AnimateApp's "Universal
 // Render Pipeline/Anime/Character" shader, a NiloToon clone, which the toon passes
 // (engine/renderer/vulkan/toon_pass.h) shade it by instead of the PBR model. The shader's
-// keywords become these feature bits; each is a branch of shaders/vulkan/toon_common.glsl, which
+// keywords become these feature bits; each is a branch of shaders/vulkan/toon_common.slang, which
 // declares the same values as TOON_FEATURE_*. See docs/design/2026-10-07-yuki-toon-shading-design.md.
 // _FACE: the material is (part of) a face. With FaceMask only where the face mask map says so.
 inline constexpr uint32_t kToonFeatureFace = 1u << 0;
@@ -43,7 +43,7 @@ inline constexpr uint32_t kToonFeatureStencilWrite = 1u << 17;
 inline constexpr uint32_t kToonFeatureStencilNotEqual = 1u << 18;
 inline constexpr uint32_t kToonFeatureStencilEqual = 1u << 19;
 
-// One toon material as the toon passes read it (ToonMaterial in shaders/vulkan/toon_common.glsl),
+// One toon material as the toon passes read it (ToonMaterial in shaders/vulkan/toon_common.slang),
 // std430, 29 x vec4. Colours are linear. Model-space vectors (the head) follow the entity's
 // transform in the shader.
 struct alignas(16) GpuToonMaterial
@@ -115,7 +115,7 @@ struct alignas(16) GpuToonMaterial
     uint32_t features[4] = {0u, 2000u, 0u, 0u};
 };
 
-static_assert(sizeof(GpuToonMaterial) == 29 * 16, "GpuToonMaterial must stay 29 x vec4 to match ToonMaterial in toon_common.glsl");
+static_assert(sizeof(GpuToonMaterial) == 29 * 16, "GpuToonMaterial must stay 29 x vec4 to match ToonMaterial in toon_common.slang");
 static_assert(offsetof(GpuToonMaterial, features) == 28 * 16, "features must be the last vec4");
 
 // What a toon material carries beside its PBR fallback. Its maps sit in the PBR texture slots the

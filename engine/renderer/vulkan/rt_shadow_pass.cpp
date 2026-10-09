@@ -9,7 +9,7 @@ namespace me
 
 namespace
 {
-// Must match RtShadowConstants in shaders/vulkan/rt_shadow_common.glsl.
+// Must match RtShadowConstants in shaders/vulkan/rt_shadow_common.slang.
 struct RtShadowPushConstants
 {
     glm::vec2 extent{0.0f};
@@ -19,9 +19,9 @@ struct RtShadowPushConstants
     float unused0 = 0.0f;
     float unused1 = 0.0f;
 };
-static_assert(sizeof(RtShadowPushConstants) == 32, "RtShadowPushConstants must match rt_shadow_common.glsl");
+static_assert(sizeof(RtShadowPushConstants) == 32, "RtShadowPushConstants must match rt_shadow_common.slang");
 
-// Must match the RT_SHADOW_FLAG_* constants in rt_shadow_common.glsl.
+// Must match the RT_SHADOW_FLAG_* constants in rt_shadow_common.slang.
 constexpr uint32_t kFlagEnabled = 1u;
 constexpr uint32_t kFlagDenoise = 2u;
 constexpr uint32_t kFlagHistoryValid = 4u;

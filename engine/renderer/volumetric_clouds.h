@@ -14,7 +14,7 @@ namespace me
 // Volumetric clouds (docs/design/2026-09-28-volumetric-clouds-design.md): a cumulus layer in a
 // shell around the planet, ray marched; the clouds themselves are plumes over a flat base, cut
 // with billows (docs/design/2026-10-06-cumulus-generation-design.md). The shaders mirror
-// these functions line for line in shaders/vulkan/volumetric_clouds.glsl; units are kilometres,
+// these functions line for line in shaders/vulkan/volumetric_clouds.slang; units are kilometres,
 // planet centre at the origin, as in the atmosphere.
 
 // Multiple scattering (Wrenninge 2013, as Hillaire 2016 uses it): octave i scatters a^i of the
@@ -132,7 +132,7 @@ inline constexpr int kCloudAmbientSteps = 3;
 // 2/3), where the half-space solution's particular term diverges.
 inline constexpr float kCloudMaxDiffusionDecay = 0.95f;
 
-// The cloud shadow map (shaders/vulkan/cloud_shadow.glsl): the clouds' transmittance toward the sun
+// The cloud shadow map (shaders/vulkan/cloud_shadow.slang): the clouds' transmittance toward the sun
 // per point of the ground, over a square centred on the camera. 31 m texels: the sun's disk seen
 // from 1.5 km already blurs a shadow edge over 14 m.
 inline constexpr uint32_t kCloudShadowMapSize = 512;

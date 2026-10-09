@@ -128,7 +128,7 @@ inline constexpr uint32_t kMaterialTextureBindingCount = 32;
 // shaders/vulkan/scene_common.slang): NVRHI's binding sets have no combined image sampler.
 inline constexpr uint32_t kMaterialSamplerBindingOffset = 64;
 
-// Per-light GPU data, 5 x vec4 = 80 bytes, matching SceneLightData in shaders/vulkan/scene_common.glsl.
+// Per-light GPU data, 5 x vec4 = 80 bytes, matching SceneLightData in shaders/vulkan/scene_common.slang.
 // positionAndRange : xyz = world position, w = effective range (metres)
 // colorAndIntensity: xyz = linear RGB color, w = intensity (lumens or lux)
 // directionAndType : xyz = world direction (normalized), w = LightType enum cast to float
@@ -147,7 +147,7 @@ struct GpuLightData
 };
 
 // One tile of the local shadow atlas as the shader reads it, set 0 binding 14. Matches
-// LocalShadowTileData in shaders/vulkan/pbr_common.glsl under std430.
+// LocalShadowTileData in shaders/vulkan/pbr_common.slang under std430.
 struct GpuLocalShadowTile
 {
     glm::mat4 viewProjection{1.0f};
@@ -178,7 +178,7 @@ struct LightUpload
 };
 
 // The directional shadow map as the shader reads it. Mirrors the shadow members at the end of
-// CameraBuffer in shaders/vulkan/scene_common.glsl.
+// CameraBuffer in shaders/vulkan/scene_common.slang.
 struct ShadowUniformData
 {
     glm::mat4 cascadeViewProjection[kShadowCascadeCount]{};
@@ -193,7 +193,7 @@ struct ShadowUniformData
 
 static_assert(kShadowCascadeCount == 4, "ShadowUniformData packs one cascade per vec4 component");
 
-// The DDGI volume as shading reads it (ddgi_common.glsl), appended to CameraUniformData.
+// The DDGI volume as shading reads it (ddgi_common.slang), appended to CameraUniformData.
 struct DdgiUniformData
 {
     // x = level count (0: DDGI off), y = the level debug view 16 draws, z = normal bias, w = view bias

@@ -36,20 +36,20 @@ inline constexpr float kMaxExposureEv100 = 18.0f;
 // 1000 lx directional light on a white diffuse surface lands mid range after tone mapping.
 inline constexpr float kDefaultExposureEv100 = 8.0f;
 
-// The HDR target's unit (shaders/vulkan/pre_exposure.glsl): pre-exposed values, where 1.0 is
+// The HDR target's unit (shaders/vulkan/pre_exposure.slang): pre-exposed values, where 1.0 is
 // 100 cd/m^2 as displayed, GT7's frame-buffer unit. An exposed value (1.0 = sensor saturation, see
 // ExposureFromEv100) times this lands saturation on GT7's 250 cd/m^2 SDR paper white.
 inline constexpr float kFrameBufferUnitsPerExposed = 2.5f;
 
 // The editor viewport's background in HDR target units: what the tone mapping pass
-// (TonemapFrameBufferRec709 in shaders/vulkan/gt7_tonemap.glsl) turns into the display-linear
+// (TonemapFrameBufferRec709 in shaders/vulkan/gt7_tonemap.slang) turns into the display-linear
 // {0.08, 0.1, 0.16}. It stands for no physical light, so it is written as is at every exposure.
 // Solved numerically against that operator; tests/tonemap_tests.cpp checks it still round-trips.
 inline constexpr glm::vec3 kViewportBackgroundFrameBuffer{0.223550f, 0.272803f, 0.421025f};
 inline constexpr glm::vec3 kViewportBackgroundDisplayLinear{0.08f, 0.1f, 0.16f};
 
 // Number of bins exposure_histogram.comp writes; the binning itself is in
-// shaders/vulkan/exposure_histogram.glsl, and exposure.cpp asserts the two agree.
+// shaders/vulkan/exposure_histogram.slang, and exposure.cpp asserts the two agree.
 inline constexpr uint32_t kExposureHistogramBinCount = 256;
 
 struct AutoExposureSettings

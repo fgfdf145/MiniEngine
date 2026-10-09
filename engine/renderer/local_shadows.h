@@ -13,7 +13,7 @@ namespace me
 
 // Shadow maps for the local lights (point, spot, area): one depth atlas cut into equal square
 // tiles. A spot light takes one tile, a point or area light one per cube face. The shader side is
-// local_shadow_common.glsl and EvaluateLocalShadow in pbr_common.glsl.
+// local_shadow_common.slang and EvaluateLocalShadow in pbr_common.slang.
 inline constexpr uint32_t kLocalShadowAtlasSize = 4096;
 inline constexpr uint32_t kLocalShadowTileSize = 512;
 inline constexpr uint32_t kLocalShadowTilesPerRow = kLocalShadowAtlasSize / kLocalShadowTileSize;

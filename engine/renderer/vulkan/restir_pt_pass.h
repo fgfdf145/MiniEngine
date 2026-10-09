@@ -76,7 +76,7 @@ class VulkanRestirPtPass : public IScenePass
     VkDevice m_device = VK_NULL_HANDLE;
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     // Set 2 of every pipeline: 0-5 the G-buffer (depth, normal, albedo, surface, coat, velocity),
-    // 6 ScenePathTrace (storage), 7-14 the buffers (restir_pt_common.glsl).
+    // 6 ScenePathTrace (storage), 7-14 the buffers (restir_pt_common.slang).
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     // Frame set, ray set, this pass's set, ray texture table.

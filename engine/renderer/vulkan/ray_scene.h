@@ -70,10 +70,10 @@ struct RayEmissiveSubmesh
 };
 
 // The textures hit shading samples per draw slot, in this order, in the ray texture table
-// (RAY_TEXTURE_* in shaders/vulkan/ray_hit_common.glsl).
+// (RAY_TEXTURE_* in shaders/vulkan/ray_hit_common.slang).
 inline constexpr uint32_t kRayTexturesPerSlot = 5;
 
-// The scene as compute shaders trace it (shaders/vulkan/ray_tracing_common.glsl): the meshes'
+// The scene as compute shaders trace it (shaders/vulkan/ray_tracing_common.slang): the meshes'
 // hierarchies (ray_tracing_bvh.h), built on a worker thread when content changes; each submesh's ray
 // material, averaged from its textures on the GPU; and the instances and top level, rebuilt on the CPU
 // every frame from the submeshes' model matrices. Device lifetime. Its descriptor set layout (the ray
@@ -82,7 +82,7 @@ inline constexpr uint32_t kRayTexturesPerSlot = 5;
 // all storage buffers, and with hardware ray tracing 5, the frame slot's top-level acceleration
 // structure over the same instances (VulkanRayAcceleration), which the shaders' RAY_QUERY variants
 // trace instead of walking 0 to 3, 6 each mesh's vertex and index buffer addresses and 7 each leaf
-// triangle's index in its mesh's index list, which hit shading (ray_hit_common.glsl) reads the hit's
+// triangle's index in its mesh's index list, which hit shading (ray_hit_common.slang) reads the hit's
 // vertices through. Hardware ray tracing also brings the texture table (GetTextureSet): every draw
 // slot's kRayTexturesPerSlot material textures in one array, which hit shading indexes by the hit's
 // slot. Nothing is traceable until the first build installs (IsReady).

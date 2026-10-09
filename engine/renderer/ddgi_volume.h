@@ -12,7 +12,7 @@ namespace me
 
 // The CPU half of the cascaded DDGI probe volume (docs/design/2026-09-27-ddgi-design.md): where each
 // level's grid sits around the camera, which storage slot each probe lives in, and which probes the
-// GPU updates this frame. shaders/vulkan/ddgi_common.glsl does the same arithmetic.
+// GPU updates this frame. shaders/vulkan/ddgi_common.slang does the same arithmetic.
 
 // Probes per level along x, y (up) and z. Every level has as many; the spacing doubles per level.
 // 32 across puts the finest level's reach at 14.5 cells from the camera: a room or an arcade smaller
@@ -21,7 +21,7 @@ namespace me
 inline constexpr glm::ivec3 kDdgiGridSize{32, 16, 32};
 inline constexpr uint32_t kDdgiProbesPerLevel = 32u * 16u * 32u;
 // Cells over which a level fades into the next, horizontally and vertically, measured from the
-// camera (ddgi_common.glsl's DdgiIrradianceAlong): wide enough that walking toward or away from a
+// camera (ddgi_common.slang's DdgiIrradianceAlong): wide enough that walking toward or away from a
 // surface changes its light gradually rather than at a line, narrower up and down, where the grid
 // is half as deep and a wide band handed a room's ceiling to the coarse levels.
 inline constexpr float kDdgiFadeCellsHorizontal = 3.0f;
@@ -32,7 +32,7 @@ inline constexpr uint32_t kDdgiRaysPerProbe = 64;
 // Octahedral texels per probe, without and with the one-texel border.
 inline constexpr uint32_t kDdgiIrradianceTexels = 8;
 inline constexpr uint32_t kDdgiVisibilityTexels = 16;
-// One probe's record on the GPU (ddgi_common.glsl's DdgiProbeState): coordinate and flags, offset,
+// One probe's record on the GPU (ddgi_common.slang's DdgiProbeState): coordinate and flags, offset,
 // statistics.
 inline constexpr uint32_t kDdgiProbeStateBytes = 48;
 
@@ -47,7 +47,7 @@ struct DdgiLevel
 // The grid of this spacing centred on the camera: its origin is the camera's cell minus one less than
 // half the grid, so points within half the grid minus one cell of the camera, on every side, lie
 // between probes whatever the camera's place in its cell (15 cells across, 7 up and down). It moves
-// only when the camera crosses a cell boundary, and then by whole cells; ddgi_common.glsl fades each
+// only when the camera crosses a cell boundary, and then by whole cells; ddgi_common.slang fades each
 // level by the distance to the camera, not to the grid's faces, so the moves do not show.
 DdgiLevel ComputeDdgiLevel(const glm::vec3& camera, float spacing);
 
@@ -59,7 +59,7 @@ glm::ivec3 DdgiStorageSlot(const glm::ivec3& coord);
 // coordinate in [origin, origin + size) congruent to the slot.
 glm::ivec3 DdgiSlotCoordinate(const glm::ivec3& slot, const glm::ivec3& origin);
 
-// A slot's index within its level, and back: x fastest, then z, then y (ddgi_common.glsl).
+// A slot's index within its level, and back: x fastest, then z, then y (ddgi_common.slang).
 uint32_t DdgiSlotIndex(const glm::ivec3& slot);
 glm::ivec3 DdgiSlotFromIndex(uint32_t index);
 

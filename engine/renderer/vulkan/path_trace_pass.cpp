@@ -15,7 +15,7 @@ namespace me
 
 namespace
 {
-// Must match PathTraceConstants in shaders/vulkan/path_trace_common.glsl.
+// Must match PathTraceConstants in shaders/vulkan/path_trace_common.slang.
 struct PathTracePushConstants
 {
     glm::vec2 extent{0.0f};
@@ -38,7 +38,7 @@ struct PathTracePushConstants
 };
 static_assert(sizeof(PathTracePushConstants) == 80, "PathTracePushConstants must match path_trace_common.slang");
 
-// Must match the PT_FLAG_* and PT_IMAGE_* constants in path_trace_common.glsl.
+// Must match the PT_FLAG_* and PT_IMAGE_* constants in path_trace_common.slang.
 constexpr uint32_t kFlagAccumulate = 1u;
 constexpr uint32_t kFlagDenoise = 2u;
 constexpr uint32_t kFlagHistoryValid = 4u;

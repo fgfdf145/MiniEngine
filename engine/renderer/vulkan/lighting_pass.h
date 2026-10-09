@@ -10,7 +10,7 @@ namespace me
 class VulkanRayScene;
 
 // Resolves the G-buffer into HDR radiance with one full-screen triangle: decodes GB0-GB3,
-// reconstructs world position from depth, and runs pbr_common.glsl's ShadeSurface, the arithmetic
+// reconstructs world position from depth, and runs pbr_common.slang's ShadeSurface, the arithmetic
 // triangle.frag also runs, directional shadow included. Pixels no geometry wrote resolve to the
 // background radiance, pushed as a constant.
 //

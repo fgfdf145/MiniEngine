@@ -177,7 +177,7 @@
     <None Include="scripts\check-format.sh" />
     <None Include="scripts\format-code.sh" />
     <None Include="scripts\install-render-scenes.sh" />
-    <None Include="shaders\**\*.vert;shaders\**\*.frag;shaders\**\*.comp;shaders\**\*.glsl" />
+    <None Include="shaders\**\*.slang" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -18,7 +18,7 @@ namespace me
 namespace
 {
 constexpr VkFormat kLutFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-// Must match the sizes in shaders/vulkan/atmosphere_common.glsl.
+// Must match the sizes in shaders/vulkan/atmosphere_common.slang.
 constexpr std::array<VkExtent3D, 4> kLutExtents = {
     VkExtent3D{256, 64, 1},
     VkExtent3D{32, 32, 1},
@@ -41,7 +41,7 @@ constexpr std::array<VkFormat, 3> kCloudNoiseFormats = {VK_FORMAT_R8G8B8A8_UNORM
 // Must match SHAPE_SIZE and DETAIL_SIZE in shaders/vulkan/cloud_noise.comp and WEATHER_SIZE in
 // shaders/vulkan/cloud_weather.comp (a square, not a volume).
 constexpr std::array<uint32_t, 3> kCloudNoiseSizes = {128, 128, kCloudWeatherSize};
-// Must match CLOUD_SHADOW_MAP_SIZE in shaders/vulkan/cloud_shadow.glsl.
+// Must match CLOUD_SHADOW_MAP_SIZE in shaders/vulkan/cloud_shadow.slang.
 constexpr uint32_t kCloudShadowSize = kCloudShadowMapSize;
 constexpr VkDeviceSize kIrradianceBytes = 9 * 4 * sizeof(float);
 

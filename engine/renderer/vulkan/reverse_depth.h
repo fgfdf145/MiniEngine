@@ -8,7 +8,7 @@ namespace me
 // The scene's depth is reverse-Z: the render projection (Camera::GetProjectionMatrix with
 // reverseDepth) puts the near plane at depth 1 and the far plane at 0, so D32_SFLOAT's precision,
 // densest near 0, goes to the distance where the projection's own is thinnest. Depth attachments
-// clear to the far plane and a nearer surface has the greater depth. shaders/vulkan/reverse_depth.glsl
+// clear to the far plane and a nearer surface has the greater depth. shaders/vulkan/reverse_depth.slang
 // is the shader side. The shadow maps keep conventional depth: their own projections are short.
 constexpr float kReverseDepthNear = 1.0f;
 constexpr float kReverseDepthFar = 0.0f;

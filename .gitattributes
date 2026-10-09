@@ -14,10 +14,6 @@
 *.inl text eol=crlf
 *.ixx text eol=crlf
 
-*.vert text eol=crlf
-*.frag text eol=crlf
-*.comp text eol=crlf
-*.glsl text eol=crlf
 *.slang text eol=crlf
 
 *.cmake text eol=crlf

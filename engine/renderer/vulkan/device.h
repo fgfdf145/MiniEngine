@@ -45,7 +45,7 @@ class VulkanDevice
     bool OptionalExtensionsEnabled() const;
     // Whether hardware ray tracing is on: VK_KHR_acceleration_structure and VK_KHR_ray_query with
     // bufferDeviceAddress, enabled when the device offers all of them on Vulkan 1.2 or later. Without
-    // it every ray walks the ray scene's own hierarchies in compute (ray_tracing_common.glsl).
+    // it every ray walks the ray scene's own hierarchies in compute (ray_tracing_common.slang).
     bool SupportsRayQuery() const;
     // With hardware ray tracing: whether descriptorBindingUpdateUnusedWhilePending is enabled, so the
     // ray scene's texture table can take a new draw's textures while frames in flight use the table.

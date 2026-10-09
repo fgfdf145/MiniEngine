@@ -749,7 +749,7 @@ TextureSampler ReadTextureSampler(const tinygltf::Model& model, int textureIndex
 // material (its keywords, render queue, disabled passes, every float and colour, its maps and the
 // character's head frame). The parameters go into the toon passes' block; each map goes into a PBR
 // slot the toon material has no use for, one of the same colour space (ToonTextureSlot in
-// shaders/vulkan/toon_common.glsl names them), so it travels through the material set unchanged.
+// shaders/vulkan/toon_common.slang names them), so it travels through the material set unchanged.
 std::shared_ptr<const ToonMaterialData> ReadToonMaterial(
     const tinygltf::Model& model,
     const tinygltf::Value& extension,

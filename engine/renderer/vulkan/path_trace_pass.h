@@ -122,7 +122,7 @@ class VulkanPathTracePass : public IScenePass
     // The emissive triangles as lights (the trace's set 4), built at the start of each path traced
     // frame; null without hardware ray tracing.
     std::unique_ptr<VulkanPathTraceLights> m_lights;
-    // One set for all three shaders (path_trace_common.glsl's bindings 0-18).
+    // One set for all three shaders (path_trace_common.slang's bindings 0-18).
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     // Frame set, ray set, this pass's set, ray texture table, emissive lights (the trace); frame set and

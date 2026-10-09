@@ -726,7 +726,7 @@ void VulkanRayAcceleration::UpdateTopLevel(uint32_t frameSlot, const RayScene& s
                 instance.instanceCustomIndex = index;
                 // The probes' rays cull moving instances by mask, shadow rays the ones that cast no
                 // shadow, every ray but the path tracer's the Blend surfaces (RAY_MASK_* in
-                // ray_tracing_common.glsl).
+                // ray_tracing_common.slang).
                 const bool dynamic = (source.data.w & kRayInstanceDynamic) != 0u;
                 const bool noShadow = (source.data.w & kRayInstanceNoShadow) != 0u;
                 instance.mask = (source.data.w & kRayInstanceBlend) != 0u ? kRayMaskBlend

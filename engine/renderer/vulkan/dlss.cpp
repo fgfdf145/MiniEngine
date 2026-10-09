@@ -443,7 +443,7 @@ bool VulkanDlss::EnsureFeature(VkExtent2D render, VkExtent2D output, DlssMode mo
     }
     ReleaseFeature(slot);
 
-    // Pre-exposed linear HDR (pre_exposure.glsl), reverse-Z depth, motion vectors at the render size
+    // Pre-exposed linear HDR (pre_exposure.slang), reverse-Z depth, motion vectors at the render size
     // without the jitter; DLSS meters the exposure itself, which presets L and M always do.
     const int createFlags = NVSDK_NGX_DLSS_Feature_Flags_IsHDR |
                             NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
