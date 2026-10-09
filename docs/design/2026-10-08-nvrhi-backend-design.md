@@ -301,13 +301,55 @@ ReSTIR PT、软件光线、DDGI、各个 G-buffer 调试视图和 10 个 fixture
   每个 set 都得是 NVRHI 布局。所以先迁不碰光追集的 pass。
 - NVRHI 没有 blit（透射拷贝用 `vkCmdBlitImage` 生成 mip）、也没有“主机读”状态（曝光直方图的设备到主机
   barrier 仍是原生的）。
+- 布局里声明了 push constants 的管线，每次 dispatch 前都要 `setPushConstants`（不用的 pass 给零）：NVRHI 的
+  validation 层发现没设就**直接丢掉这次 dispatch**，画面会错（大气整片天空没了）。
+- 在 NVIDIA 上，RGBA32F 的 GI 历史经 SRV（`SHADER_READ_ONLY_OPTIMAL`，从 GENERAL 转过去）读出来和在 GENERAL
+  里读的结果不同（GI 视图暗约 9%，确定性的，不是竞争）；改成和写入的那张一样当存储图像读（一直在 GENERAL）
+  就和原来逐像素相同。没查到底层原因，同一 pass 读写的历史一律留在 GENERAL。
+- 被 pass 自己写的图像不要在同一个 dispatch 里再以 SRV 声明：Vulkan 的 validation 按“静态使用”查描述符布局。
+  多重散射 LUT 的 pass 本来声明了自己（`useMultiScattering` 为 false 时不采样），现在把透射 LUT 传给那个参数。
 
 已迁：bloom（链是 NVRHI 纹理，每对层级一个 binding set）；曝光直方图（NVRHI 清零缓冲，主机 barrier 原生）；
 TAA 解析、DLSS 运动矢量、光线重建引导图（NGX 的 evaluate 和之后拷进历史的那一步仍是原生，阶段 4 再说；
 运动矢量和引导图是 NVRHI 纹理，NGX 拿 `getNativeObject(VK_Image)` / `getNativeView` 的原生句柄）。
 环境探针（捕获和预滤波走 NVRHI；mip 链的 blit 仍原生，夹在 NVRHI 设的 copy 状态之间；`NvrhiSharedTexture` 加了
-`exitState`，新建的立方体从 UNDEFINED 出来）、GI 的 trace 和 resolve（输入都只 Load，不带采样器）。这两步只跑了
-ctest（121/121），A/B 还没跑——下次先对比 TAA 那个提交再继续。
+`exitState`，新建的立方体从 UNDEFINED 出来）、GI 的 trace 和 resolve（输入都只 Load，不带采样器；历史读写都是
+存储图像，见上）、大气（下）。
+
+大气：所有管线共用的 set 1 换成一个 NVRHI 绑定布局（15 个 binding 照旧，三个采样的拆出 b + 64 的采样器，缓冲是
+raw buffer），每个视图一个 binding set。图像的“停放状态”和原来一样：set 0 采样的（透射、天空视图、云噪声、云
+阴影、空气透视、解析后的云）停在 ShaderResource，多重散射 LUT（路径追踪自己的集在 GENERAL 里读）和云的 march
+目标停在 GENERAL，云的历史只有本 pass 读，停在 ShaderResource；第一次 Record 从 UNDEFINED 清零（NVRHI 的
+`clearTextureFloat` / `clearBufferUInt` / `copyBuffer`），每个 dispatch 前设好它读写的状态。云的历史拷贝用
+NVRHI 的 `copyTexture`，SH 回读用 `copyBuffer`，之后到主机的 barrier 原生。`NvrhiPassScope` 加了缓冲
+（`NvrhiSharedBuffer`）。DDGI 的更新没迁：它写图集一层的同时在 GENERAL 里采样同一张图的下一层，NVRHI 的 SRV
+表达不了（要改着色器里的取样方式）。
+
+验证：探针 + GI + 大气一起对比 TAA 那个提交跑了全部场景：除了 DDGI 场景（不重置，A 对 A 也不同）和 DLSS（NGX
+自己两次运行就差几级），全部逐像素相同；`MINIENGINE_NVRHI_VALIDATION=1` 和 Vulkan validation 无报告；ctest 121/121。
+
+透射拷贝（第 0 级的拷贝走 NVRHI，mip 链的 blit 原生，同探针）；`ab.py` 加了 `transmission_rt`（缩小的 GTA 水面
+放在材质球前，唯一有透射绘制的场景）。蒙皮（`skin.comp`、`tyre_deform.comp`）：每个网格一个 NVRHI binding set
+（`RenderSubmesh::skinningSet` 是 `nvrhi::BindingSetHandle`，NVRHI 在用到它的帧结束前一直持有，原来的描述符池、
+2048 个的上限和延迟释放都不要了），前后两个全局 barrier 仍原生（逐缓冲的状态要一个网格一个网格写）。
+
+图形 pass：GI 合成和色调映射。NVRHI 图形管线 + framebuffer（每份拷贝一个）+ NVRHI 的 dynamic rendering；
+目标图像在 layout tracker 给的 `COLOR_ATTACHMENT_OPTIMAL` 里进出。NVRHI 把视口一律转成 Direct3D 的朝向（从
+maxY 起的负高度）：`NativeViewportState` 把矩形上下颠倒交给它，正好抵消，裁剪矩形单独给，着色器看到的仍是
+Vulkan 的视口。验证同上，逐像素相同。
+
+### 下一步（2026-10-09）
+
+剩下的都要先定一件大事：
+- 材质集（几何、前向、阴影、局部阴影、卡通、散射、路径追踪层的 set 1）换成 NVRHI：NVRHI 每个 binding set
+  自建一个描述符池，大地图流式内容有几万个材质集（现在的缓存每池 1024 个）；要么给 NVRHI 打补丁让 binding set
+  从共享的池列表分配，要么先量一下几万个小池的创建开销和显存。定了以后这些 pass（含天空、地面平面这两个夹在
+  前向/几何 pass 里的全屏绘制）才能迁。
+- 光追：加速结构换成 `nvrhi::rt`（含 compaction、分帧构建、ReBAR 内存类型的选择），光追场景集变成 NVRHI 的；
+  纹理表要 NVRHI 补丁（可变数量 + update-unused-while-pending）或保持原生。之后 AO、SSR、光追阴影、反射、DDGI
+  trace、路径追踪、ReSTIR、光照 pass 才能迁。
+- DDGI 更新：改成写一层时只读另一张图（或把采样的那层先拷出来），才能用 NVRHI 的 SRV。
+- 阶段 4：ImGui、DLSS（evaluate）、视频回读和截图、GPU 计时。
 
 A/B 的预热帧数：同一个 exe 两次运行，`--wait-for-scene` 开始数帧前画的帧数会差一两帧（渲染线程装好场景的
 时机不定），TAA 的抖动相位和历史把它带进截图，所以“A 对 A”有时就不同（B2a 那条说的 DDGI 也是这个）。
