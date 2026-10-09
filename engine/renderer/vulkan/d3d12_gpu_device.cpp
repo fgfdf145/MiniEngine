@@ -13,6 +13,7 @@
 #include "gpu_device.h"
 
 #include "command.h"
+#include "d3d12_buffer_views.h"
 #include "memory_pool.h"
 #include "nvrhi_native.h"
 #include "nvrhi_pass.h"
@@ -370,6 +371,7 @@ class D3D12GpuDevice final : public GpuDevice
             throw std::runtime_error("Failed to create the NVRHI D3D12 device");
         }
         m_nvrhi = m_d3d12;
+        SetD3D12BufferViewDevice(m_d3d12.Get());
         if (validation)
         {
             m_nvrhi = nvrhi::validation::createValidationLayer(m_d3d12);
@@ -390,6 +392,7 @@ class D3D12GpuDevice final : public GpuDevice
             m_nvrhi->runGarbageCollection();
             VulkanMemoryPool::UnregisterNvrhiDevice(m_nvrhi.Get());
         }
+        SetD3D12BufferViewDevice(nullptr);
         m_nvrhi = nullptr;
         m_d3d12 = nullptr;
     }
@@ -451,11 +454,15 @@ class D3D12GpuDevice final : public GpuDevice
     {
         return std::make_unique<D3D12GpuSwapchain>(m_nvrhi.Get(), m_factory.Get(), m_queue.Get(), window, GetSwapchainExtent(window), preferHdr);
     }
+    nvrhi::d3d12::IDevice* GetNvrhiD3D12() const override
+    {
+        return m_d3d12.Get();
+    }
 
   private:
     static bool D3D12RayTracingImplemented()
     {
-        return false;
+        return true;
     }
 
     MessageLog m_messageLog;

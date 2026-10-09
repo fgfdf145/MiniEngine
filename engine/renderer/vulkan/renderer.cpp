@@ -1181,7 +1181,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     const bool dlssEnabled = m_activeDlssMode != DlssMode::Off && m_dlss->HasFeature();
     RenderCapabilities& capabilities = shared.capabilities;
     capabilities.rayQueries = m_rayScene->HasHardwareRayTracing();
-    capabilities.raySceneReady = m_rayScene->IsReady() && m_rayScene->GetTextureSet() != VK_NULL_HANDLE;
+    capabilities.raySceneReady = m_rayScene->IsReady() && m_rayScene->GetTextureTable() != nullptr;
     capabilities.pathTracer = m_view.pathTracePass != nullptr && m_view.pathTracePass->IsSupported();
     capabilities.restirPt = m_view.restirPtPass != nullptr && m_view.restirPtPass->IsAvailable();
     capabilities.dlss = dlssEnabled;
@@ -2346,6 +2346,7 @@ void VulkanRenderer::CreateDeviceResources()
         NativeDevice(),
         m_nvrhi->Get(),
         m_nvrhi->GetNvrhiVulkan(),
+        m_nvrhi->GetNvrhiD3D12(),
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_nvrhi->SupportsRayQuery(),
         rayDefaultTexture,

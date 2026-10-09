@@ -1,3 +1,102 @@
+diff --git a/include/nvrhi/d3d12.h b/include/nvrhi/d3d12.h
+index 2863d98..93e6e59 100644
+--- a/include/nvrhi/d3d12.h
++++ b/include/nvrhi/d3d12.h
+@@ -100,6 +100,10 @@ namespace nvrhi::d3d12
+         virtual GraphicsPipelineHandle createHandleForNativeGraphicsPipeline(IRootSignature* rootSignature, ID3D12PipelineState* pipelineState, const GraphicsPipelineDesc& desc, const FramebufferInfo& framebufferInfo) = 0;
+         virtual MeshletPipelineHandle createHandleForNativeMeshletPipeline(IRootSignature* rootSignature, ID3D12PipelineState* pipelineState, const MeshletPipelineDesc& desc, const FramebufferInfo& framebufferInfo) = 0;
+         [[nodiscard]] virtual IDescriptorHeap* getDescriptorHeap(DescriptorHeapType heapType) = 0;
++        // An acceleration structure the application built and keeps at address (in a buffer of its
++        // own, in the RAYTRACING_ACCELERATION_STRUCTURE state), for binding sets to name: NVRHI neither
++        // builds nor tracks it.
++        virtual rt::AccelStructHandle createHandleForNativeAccelStruct(D3D12_GPU_VIRTUAL_ADDRESS address, const rt::AccelStructDesc& desc) = 0;
+     };
+ 
+     typedef RefCountPtr<IDevice> DeviceHandle;
+diff --git a/src/d3d12/d3d12-backend.h b/src/d3d12/d3d12-backend.h
+index 1673340..2b140f0 100644
+--- a/src/d3d12/d3d12-backend.h
++++ b/src/d3d12/d3d12-backend.h
+@@ -775,6 +775,8 @@ namespace nvrhi::d3d12
+         bool allowUpdate = false;
+         bool compacted = false;
+         size_t rtxmuId = ~0ull;
++        // An application's structure (createHandleForNativeAccelStruct): no dataBuffer, this address.
++        D3D12_GPU_VIRTUAL_ADDRESS nativeAddress = 0;
+ #ifdef NVRHI_WITH_RTXMU
+         D3D12_GPU_VIRTUAL_ADDRESS rtxmuGpuVA = 0;
+ #endif
+@@ -1254,6 +1256,7 @@ namespace nvrhi::d3d12
+         GraphicsPipelineHandle createHandleForNativeGraphicsPipeline(IRootSignature* rootSignature, ID3D12PipelineState* pipelineState, const GraphicsPipelineDesc& desc, const FramebufferInfo& framebufferInfo) override;
+         MeshletPipelineHandle createHandleForNativeMeshletPipeline(IRootSignature* rootSignature, ID3D12PipelineState* pipelineState, const MeshletPipelineDesc& desc, const FramebufferInfo& framebufferInfo) override;
+         IDescriptorHeap* getDescriptorHeap(DescriptorHeapType heapType) override;
++        rt::AccelStructHandle createHandleForNativeAccelStruct(D3D12_GPU_VIRTUAL_ADDRESS address, const rt::AccelStructDesc& desc) override;
+ 
+         // Internal interface
+         Queue* getQueue(CommandQueue type) { return m_Queues[int(type)].get(); }
+diff --git a/src/d3d12/d3d12-raytracing.cpp b/src/d3d12/d3d12-raytracing.cpp
+index 1e664a6..c1eeeaa 100644
+--- a/src/d3d12/d3d12-raytracing.cpp
++++ b/src/d3d12/d3d12-raytracing.cpp
+@@ -479,7 +479,15 @@ namespace nvrhi::d3d12
+         if (!desc.isTopLevel)
+             return m_Context.rtxMemUtil->GetAccelStructGPUVA(rtxmuId);
+ #endif
+-        return dataBuffer->gpuVA;
++        return dataBuffer ? dataBuffer->gpuVA : nativeAddress;
++    }
++
++    rt::AccelStructHandle Device::createHandleForNativeAccelStruct(D3D12_GPU_VIRTUAL_ADDRESS address, const rt::AccelStructDesc& desc)
++    {
++        AccelStruct* as = new AccelStruct(m_Context);
++        as->desc = desc;
++        as->nativeAddress = address;
++        return rt::AccelStructHandle::Create(as);
+     }
+ 
+ #if NVRHI_WITH_NVAPI_OPACITY_MICROMAP
+@@ -962,7 +970,7 @@ namespace nvrhi::d3d12
+         srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+         srvDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
+         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+-        srvDesc.RaytracingAccelerationStructure.Location = dataBuffer->gpuVA;
++        srvDesc.RaytracingAccelerationStructure.Location = dataBuffer ? dataBuffer->gpuVA : nativeAddress;
+ 
+         m_Context.device->CreateShaderResourceView(nullptr, &srvDesc, { descriptor });
+     }
+diff --git a/src/d3d12/d3d12-resource-bindings.cpp b/src/d3d12/d3d12-resource-bindings.cpp
+index 38808b3..c4d2ede 100644
+--- a/src/d3d12/d3d12-resource-bindings.cpp
++++ b/src/d3d12/d3d12-resource-bindings.cpp
+@@ -721,10 +721,10 @@ namespace nvrhi::d3d12
+             {
+                 rsDesc.Desc_1_1.Flags |= D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+             }
+-            if (usesResourceDescriptorHeap)
+-            {
+-                rsDesc.Desc_1_1.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
+-            }
++            // Every root signature: shaders index the heap directly (ResourceDescriptorHeap, Slang's
++            // DescriptorHandle) without a mutable bindless layout naming it.
++            (void)usesResourceDescriptorHeap;
++            rsDesc.Desc_1_1.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
+         }
+         
+         if (!rootParameters.empty())
+diff --git a/src/d3d12/d3d12-state-tracking.cpp b/src/d3d12/d3d12-state-tracking.cpp
+index f354885..885d82d 100644
+--- a/src/d3d12/d3d12-state-tracking.cpp
++++ b/src/d3d12/d3d12-state-tracking.cpp
+@@ -65,7 +65,8 @@ namespace nvrhi::d3d12
+                 break;
+ 
+             case ResourceType::RayTracingAccelStruct:
+-                requireBufferState(checked_cast<AccelStruct*>(binding.resourceHandle)->dataBuffer, ResourceStates::AccelStructRead);
++                if (checked_cast<AccelStruct*>(binding.resourceHandle)->dataBuffer)
++                    requireBufferState(checked_cast<AccelStruct*>(binding.resourceHandle)->dataBuffer, ResourceStates::AccelStructRead);
+                 break;
+ 
+             default:
 diff --git a/src/d3d12/d3d12-texture.cpp b/src/d3d12/d3d12-texture.cpp
 index f127265..a63239d 100644
 --- a/src/d3d12/d3d12-texture.cpp

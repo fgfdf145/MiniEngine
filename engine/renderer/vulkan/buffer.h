@@ -133,6 +133,8 @@ class VulkanBuffer
     void UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
     void UploadIndices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
     void UploadPositions(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
+    // On Direct3D 12: a raw view of buffer for the hit shading, its heap index in address.
+    void CreateHitShadingView(const DeviceBuffer& buffer, uint32_t& view, VkDeviceAddress& address);
     // A new device-local buffer of size bytes and its upload from source.
     void UploadDeviceLocal(
         const void* source,
@@ -150,8 +152,11 @@ class VulkanBuffer
     uint32_t m_vertexCount = 0;
     uint32_t m_indexCount = 0;
     bool m_deviceAddressable = false;
+    // On Direct3D 12 the hit shading's handles are raw views' heap indices instead (d3d12_buffer_views.h).
     VkDeviceAddress m_vertexAddress = 0;
     VkDeviceAddress m_indexAddress = 0;
+    uint32_t m_vertexView = ~uint32_t{0};
+    uint32_t m_indexView = ~uint32_t{0};
     DeviceBuffer m_vertex;
     DeviceBuffer m_index;
     DeviceBuffer m_position;

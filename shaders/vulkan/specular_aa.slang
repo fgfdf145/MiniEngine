@@ -8,11 +8,12 @@
 // scene_common.slang first: the switch and constants are ubo.specularAntiAliasing.
 
 // |dN/dx|^2 + |dN/dy|^2 across one pixel. Call it in uniform control flow, where derivatives are
-// defined.
+// defined. Fine derivatives: HLSL's ddx is coarse (one per 2x2 quad) on Direct3D 12, where Vulkan's
+// on NVIDIA is fine, and the coarse one rings on gently curved surfaces.
 float NormalVariation(float3 N)
 {
-    float3 dx = ddx(N);
-    float3 dy = ddy(N);
+    float3 dx = ddx_fine(N);
+    float3 dy = ddy_fine(N);
     return dot(dx, dx) + dot(dy, dy);
 }
 

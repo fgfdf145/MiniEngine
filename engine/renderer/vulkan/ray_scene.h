@@ -3,6 +3,9 @@
 #include "common.h"
 #include "nvrhi_native.h"
 #include "ray_acceleration.h"
+#if MINIENGINE_WITH_D3D12
+#include "d3d12_ray_acceleration.h"
+#endif
 #include "uniform_buffer.h"
 
 #include <engine/asset/mesh.h>
@@ -21,6 +24,11 @@
 #include <span>
 #include <unordered_map>
 #include <vector>
+
+namespace nvrhi::d3d12
+{
+class IDevice;
+}
 
 namespace me
 {
@@ -103,6 +111,7 @@ class VulkanRayScene
         VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
         nvrhi::vulkan::IDevice* nvrhiVulkanDevice,
+        nvrhi::d3d12::IDevice* nvrhiD3D12Device,
         uint32_t frameCount,
         bool hardwareRayTracing,
         TextureDescriptorBinding defaultTexture,
@@ -247,7 +256,7 @@ class VulkanRayScene
         IncrementalTopLevel topLevel;
         // Each mesh's bottom-level acceleration structure (RayScene::meshes order), with hardware ray
         // tracing only.
-        std::vector<std::shared_ptr<RayBlas>> blas;
+        std::vector<std::shared_ptr<RayBlasHandle>> blas;
         // Hardware ray tracing only: each mesh's buffers (RayScene::meshes order), held while the build
         // is installed, their addresses (binding 6) and each leaf triangle's source triangle (binding 7).
         std::vector<std::shared_ptr<const VulkanBuffer>> meshBuffers;
@@ -408,7 +417,8 @@ class VulkanRayScene
     bool m_hasLayeredMaterials = false;
 
     // Null without hardware ray tracing.
-    std::unique_ptr<VulkanRayAcceleration> m_acceleration;
+    // Vulkan's or D3D12's acceleration structures (IRayAcceleration).
+    std::unique_ptr<IRayAcceleration> m_acceleration;
     // By draw slot, 1 where the ray material stops every ray (Opaque, no transmission).
     std::vector<uint8_t> m_opaqueMaterials;
 };

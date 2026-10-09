@@ -13,6 +13,10 @@ namespace nvrhi::vulkan
 {
 class IDevice;
 }
+namespace nvrhi::d3d12
+{
+class IDevice;
+}
 
 namespace me
 {
@@ -103,6 +107,11 @@ class GpuDevice
         return nullptr;
     }
     virtual nvrhi::vulkan::IDevice* GetNvrhiVulkan() const
+    {
+        return nullptr;
+    }
+    // NVRHI's D3D12 device under the validation layer (its native acceleration structure handles).
+    virtual nvrhi::d3d12::IDevice* GetNvrhiD3D12() const
     {
         return nullptr;
     }

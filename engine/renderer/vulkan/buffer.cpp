@@ -1,4 +1,8 @@
 #include "buffer.h"
+
+#if MINIENGINE_WITH_D3D12
+#include "d3d12_buffer_views.h"
+#endif
 #include "memory_pool.h"
 #include "nvrhi_native.h"
 
@@ -165,6 +169,13 @@ VulkanBuffer::~VulkanBuffer()
 
 void VulkanBuffer::DestroyHandles()
 {
+#if MINIENGINE_WITH_D3D12
+    for (uint32_t* view : {&m_vertexView, &m_indexView})
+    {
+        ReleaseD3D12RawBufferView(*view);
+        *view = kNoD3D12BufferView;
+    }
+#endif
     // The buffers go before the ranges they are bound to.
     for (DeviceBuffer* buffer : {&m_bindPose, &m_skin, &m_previousPosition, &m_position, &m_index, &m_vertex})
     {
@@ -303,6 +314,7 @@ void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& u
         uploadBatch,
         m_vertex,
         m_deviceAddressable ? &m_vertexAddress : nullptr);
+    CreateHitShadingView(m_vertex, m_vertexView, m_vertexAddress);
 }
 
 void VulkanBuffer::UploadIndices(const MeshData& meshData, VulkanUploadBatch& uploadBatch)
@@ -314,6 +326,22 @@ void VulkanBuffer::UploadIndices(const MeshData& meshData, VulkanUploadBatch& up
         uploadBatch,
         m_index,
         m_deviceAddressable ? &m_indexAddress : nullptr);
+    CreateHitShadingView(m_index, m_indexView, m_indexAddress);
+}
+
+void VulkanBuffer::CreateHitShadingView(const DeviceBuffer& buffer, uint32_t& view, VkDeviceAddress& address)
+{
+#if MINIENGINE_WITH_D3D12
+    if (m_deviceAddressable && m_nvrhiDevice->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12)
+    {
+        view = CreateD3D12RawBufferView(buffer.handle);
+        address = view;
+    }
+#else
+    (void)buffer;
+    (void)view;
+    (void)address;
+#endif
 }
 
 void VulkanBuffer::UploadPositions(const MeshData& meshData, VulkanUploadBatch& uploadBatch)

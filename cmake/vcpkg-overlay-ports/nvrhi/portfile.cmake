@@ -39,8 +39,11 @@ vcpkg_from_github(
         # Upload chunks ask for the shader binding table usage only with ray tracing pipelines: with
         # acceleration structures alone (ray queries) the usage is invalid on Vulkan.
         upload-chunk-sbt-usage.patch
-        # D3D12 backend fixes the engine ran into: a texture that is not sampled denies shader access
-        # only when it is a depth target (D3D12 rejects the flag otherwise).
+        # D3D12 backend fixes and additions: a texture that is not sampled denies shader access only
+        # when it is a depth target (D3D12 rejects the flag otherwise); binding sets can name an
+        # acceleration structure the engine built (createHandleForNativeAccelStruct, by GPU address);
+        # with heap-directly-indexed on, every root signature allows it (the ray hit shading reads mesh
+        # buffers through ResourceDescriptorHeap).
         d3d12-fixes.patch
 )
 

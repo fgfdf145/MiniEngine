@@ -526,9 +526,15 @@ if(MINIENGINE_DLSS_FOUND)
     target_link_libraries(engine_renderer PRIVATE miniengine_ngx)
 endif()
 if(MINIENGINE_WITH_D3D12)
-    target_sources(engine_renderer PRIVATE vulkan/d3d12_gpu_device.cpp)
-    # Its own Windows and DirectX headers, in an order the shared precompiled header would upset.
-    set_source_files_properties(vulkan/d3d12_gpu_device.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_sources(engine_renderer PRIVATE
+        vulkan/d3d12_buffer_views.cpp
+        vulkan/d3d12_buffer_views.h
+        vulkan/d3d12_gpu_device.cpp
+        vulkan/d3d12_ray_acceleration.cpp
+        vulkan/d3d12_ray_acceleration.h)
+    # Their own Windows and DirectX headers, in an order the shared precompiled header would upset.
+    set_source_files_properties(vulkan/d3d12_buffer_views.cpp vulkan/d3d12_gpu_device.cpp vulkan/d3d12_ray_acceleration.cpp
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     target_link_libraries(engine_renderer PRIVATE Microsoft::DirectX-Headers Microsoft::DirectX-Guids d3d12 dxgi)
     target_compile_definitions(engine_renderer PUBLIC MINIENGINE_WITH_D3D12=1)
 endif()

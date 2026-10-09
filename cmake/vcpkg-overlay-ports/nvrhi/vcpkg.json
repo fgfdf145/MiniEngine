@@ -1,7 +1,7 @@
 {
   "name": "nvrhi",
   "version-date": "2026-02-26",
-  "port-version": 4,
+  "port-version": 5,
   "description": "NVIDIA Rendering Hardware Interface, Vulkan and (on Windows) D3D12 backends",
   "homepage": "https://github.com/NVIDIA-RTX/NVRHI",
   "license": "MIT",

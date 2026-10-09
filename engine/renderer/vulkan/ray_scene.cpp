@@ -102,6 +102,7 @@ VulkanRayScene::VulkanRayScene(
     VkDevice device,
     nvrhi::IDevice* nvrhiDevice,
     nvrhi::vulkan::IDevice* nvrhiVulkanDevice,
+    nvrhi::d3d12::IDevice* nvrhiD3D12Device,
     uint32_t frameCount,
     bool hardwareRayTracing,
     TextureDescriptorBinding defaultTexture,
@@ -120,7 +121,16 @@ VulkanRayScene::VulkanRayScene(
 {
     if (hardwareRayTracing)
     {
-        m_acceleration = std::make_unique<VulkanRayAcceleration>(m_physicalDevice, m_device, m_frameCount);
+#if MINIENGINE_WITH_D3D12
+        if (m_nvrhiVulkanDevice == nullptr)
+        {
+            m_acceleration = CreateD3D12RayAcceleration(nvrhiD3D12Device, m_frameCount);
+        }
+        else
+#endif
+        {
+            m_acceleration = std::make_unique<VulkanRayAcceleration>(m_physicalDevice, m_device, m_nvrhiVulkanDevice, m_frameCount);
+        }
     }
     if (m_samplerTable.size() != VulkanSamplerCache::kSamplerCount)
     {
@@ -924,7 +934,9 @@ void VulkanRayScene::Record(nvrhi::ICommandList* commandList, uint32_t frameSlot
     // which a submission makes visible by itself.
     if (m_acceleration)
     {
-        m_acceleration->Record(ToNative<VkCommandBuffer>(commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer)), frameSlot, hardwareRays && m_ready);
+        m_acceleration->Record(commandList, frameSlot, hardwareRays && m_ready);
+        // Native commands (Vulkan's or D3D12's) went into the list: NVRHI binds afresh.
+        commandList->clearState();
     }
 }
 
@@ -1302,11 +1314,8 @@ void VulkanRayScene::WriteSet(uint32_t slot)
     }
     if (m_acceleration)
     {
-        nvrhi::rt::AccelStructDesc topLevelDesc;
-        topLevelDesc.isTopLevel = true;
-        topLevelDesc.debugName = "Ray scene top level";
         // The item holds a raw pointer: the handle lives until the binding set holds its own reference.
-        topLevel = m_nvrhiVulkanDevice->createHandleForNativeAccelStruct(m_acceleration->GetTopLevel(slot), nullptr, topLevelDesc);
+        topLevel = m_acceleration->CreateTopLevelHandle(slot);
         if (!topLevel)
         {
             throw std::runtime_error("Failed to name the ray scene's top level for NVRHI");

@@ -3,6 +3,9 @@
 #include "common.h"
 #include "memory_pool.h"
 
+#include <nvrhi/nvrhi.h>
+#include <nvrhi/vulkan.h>
+
 #include <engine/asset/mesh.h>
 #include <engine/renderer/ray_tracing_bvh.h>
 
@@ -18,6 +21,40 @@ namespace me
 {
 
 struct RayTracingFunctions;
+
+// One mesh's bottom-level acceleration structure, the graphics API's own (RayBlas for Vulkan,
+// D3D12RayBlas). The ray scene holds them only to hand them back to the acceleration that made them.
+struct RayBlasHandle
+{
+    virtual ~RayBlasHandle() = default;
+};
+
+// The ray scene's hardware acceleration structures on one graphics API: a bottom level per mesh,
+// cached by mesh across contents, and a top level per frame slot (docs/design/2026-10-07-hardware-ray-tracing-design.md).
+// VulkanRayAcceleration and D3D12RayAcceleration build them natively; see the Vulkan one for what each
+// call does.
+class IRayAcceleration
+{
+  public:
+    virtual ~IRayAcceleration() = default;
+
+    // positionAddresses: a posed mesh's position stream's GPU address (0 for none), parallel to meshes.
+    virtual std::vector<std::shared_ptr<RayBlasHandle>> Prepare(
+        std::span<const std::shared_ptr<const MeshData>> meshes,
+        std::span<const std::shared_ptr<const MeshBvh>> bvhs,
+        std::span<const uint64_t> positionAddresses) const = 0;
+    virtual std::vector<std::shared_ptr<RayBlasHandle>> Install(
+        std::vector<std::shared_ptr<RayBlasHandle>> meshBlas,
+        std::span<const RayMeshRange> meshes,
+        size_t instanceCapacity) = 0;
+    virtual void UpdateTopLevel(uint32_t frameSlot, const RayScene& scene, uint64_t generation, std::span<const uint8_t> opaqueMaterials) = 0;
+    // Records into the frame's command list's native command buffer or list.
+    virtual void Record(nvrhi::ICommandList* commandList, uint32_t frameSlot, bool buildTopLevel) = 0;
+    virtual bool TakeBuildsCompleted() = 0;
+    // The frame slot's top level as NVRHI's, for binding sets (NVRHI neither builds nor frees it).
+    virtual nvrhi::rt::AccelStructHandle CreateTopLevelHandle(uint32_t frameSlot) const = 0;
+    virtual size_t GetBottomLevelCount() const = 0;
+};
 
 // Top-level instance masks, matching RAY_MASK_* in shaders/vulkan/ray_tracing_common.slang: one each
 // for static and moving instances that do and do not cast shadows. The probes' rays trace the static
@@ -37,9 +74,9 @@ inline constexpr uint8_t kRayMaskBlend = 0x10;
 // need, which takes the original's place. Its triangles are the mesh hierarchy's (MeshBvh::triangles,
 // leaf order), so a hit's primitive index plus the instance's triangle offset is the same index the
 // compute walk reports.
-struct RayBlas
+struct RayBlas final : RayBlasHandle
 {
-    ~RayBlas();
+    ~RayBlas() override;
 
     std::shared_ptr<const RayTracingFunctions> functions;
     VkDevice device = VK_NULL_HANDLE;
@@ -82,11 +119,11 @@ struct RayBlas
 // scene's instances in their leaf order, so a hit's instance custom index is its RayInstance index and
 // every lookup the shaders make after a hit (material, normal, coverage) reads the same arrays the
 // compute walk does. Exists only when the device supports ray queries (VulkanDevice::SupportsRayQuery).
-class VulkanRayAcceleration
+class VulkanRayAcceleration final : public IRayAcceleration
 {
   public:
-    VulkanRayAcceleration(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t frameCount);
-    ~VulkanRayAcceleration();
+    VulkanRayAcceleration(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::vulkan::IDevice* nvrhiVulkan, uint32_t frameCount);
+    ~VulkanRayAcceleration() override;
 
     VulkanRayAcceleration(const VulkanRayAcceleration&) = delete;
     VulkanRayAcceleration& operator=(const VulkanRayAcceleration&) = delete;
@@ -96,38 +133,39 @@ class VulkanRayAcceleration
     // triangles go into one vertex batch.
     // A posed mesh (MeshData::IsPosed: skinned, or a tyre) whose buffer has a position address gets a dynamic bottom
     // level over that buffer (RayBlas::dynamic); positionAddresses is parallel to meshes, 0 for none.
-    std::vector<std::shared_ptr<RayBlas>> Prepare(
+    std::vector<std::shared_ptr<RayBlasHandle>> Prepare(
         std::span<const std::shared_ptr<const MeshData>> meshes,
         std::span<const std::shared_ptr<const MeshBvh>> bvhs,
-        std::span<const VkDeviceAddress> positionAddresses) const;
+        std::span<const uint64_t> positionAddresses) const override;
 
     // Render thread, every frame in flight idle: the installed content's bottom levels, indexed like
     // RayScene::meshes, whose unbuilt ones the next Record builds, and every frame slot's top level
     // sized for instanceCapacity instances. Returns the previous content's bottom levels, for the caller
     // to release off the frame's thread. Top-level handles may change: rewrite the descriptor sets.
-    std::vector<std::shared_ptr<RayBlas>> Install(
-        std::vector<std::shared_ptr<RayBlas>> meshBlas,
+    std::vector<std::shared_ptr<RayBlasHandle>> Install(
+        std::vector<std::shared_ptr<RayBlasHandle>> meshBlas,
         std::span<const RayMeshRange> meshes,
-        size_t instanceCapacity);
+        size_t instanceCapacity) override;
 
     // This frame slot's top level from the scene's instances, when generation differs from the one the
     // slot holds. opaqueMaterials, by ray material slot, is 1 where the material stops every ray (its
     // coverage is 1), which lets the hardware skip the coverage test there. Also frees what the slot's
     // last frame retired, so call it once per frame after the slot's fence.
-    void UpdateTopLevel(uint32_t frameSlot, const RayScene& scene, uint64_t generation, std::span<const uint8_t> opaqueMaterials);
+    void UpdateTopLevel(uint32_t frameSlot, const RayScene& scene, uint64_t generation, std::span<const uint8_t> opaqueMaterials) override;
 
     // A share of the pending bottom-level builds (and the queries of their compacted sizes), the
     // compactions UpdateTopLevel decided, then the slot's top level if its instances changed and
     // buildTopLevel says rays will use it, then a barrier for ray queries in compute shaders.
-    void Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, bool buildTopLevel);
+    void Record(nvrhi::ICommandList* commandList, uint32_t frameSlot, bool buildTopLevel) override;
 
     // True once after the last bottom level a content was waiting for is built: the scene the rays see
     // is now complete (the DDGI probes look again).
-    bool TakeBuildsCompleted();
+    bool TakeBuildsCompleted() override;
 
     VkAccelerationStructureKHR GetTopLevel(uint32_t frameSlot) const;
+    nvrhi::rt::AccelStructHandle CreateTopLevelHandle(uint32_t frameSlot) const override;
     // How many meshes the bottom-level cache holds.
-    size_t GetBottomLevelCount() const;
+    size_t GetBottomLevelCount() const override;
 
   private:
     // Refits every built dynamic bottom level (RayBlas::dynamic) to this frame's posed positions;
@@ -184,6 +222,7 @@ class VulkanRayAcceleration
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::vulkan::IDevice* m_nvrhiVulkan = nullptr;
     uint32_t m_frameCount = 0;
     std::shared_ptr<const RayTracingFunctions> m_functions;
     VkDeviceSize m_scratchAlignment = 1;

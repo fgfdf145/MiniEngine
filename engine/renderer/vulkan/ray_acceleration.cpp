@@ -1,6 +1,7 @@
 #include "ray_acceleration.h"
 
 #include "compute_pass_util.h"
+#include "nvrhi_native.h"
 
 #include <engine/core/log/log.h>
 #include <engine/core/threading/task_system.h>
@@ -182,9 +183,10 @@ constexpr VkBuildAccelerationStructureFlagsKHR kDynamicBottomLevelFlags =
     VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
 }
 
-VulkanRayAcceleration::VulkanRayAcceleration(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t frameCount)
+VulkanRayAcceleration::VulkanRayAcceleration(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::vulkan::IDevice* nvrhiVulkan, uint32_t frameCount)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiVulkan(nvrhiVulkan),
       m_frameCount(frameCount)
 {
     auto functions = std::make_shared<RayTracingFunctions>();
@@ -415,16 +417,16 @@ void VulkanRayAcceleration::StartCompactions(uint32_t frameSlot)
     }
 }
 
-std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Prepare(
+std::vector<std::shared_ptr<RayBlasHandle>> VulkanRayAcceleration::Prepare(
     std::span<const std::shared_ptr<const MeshData>> meshes,
     std::span<const std::shared_ptr<const MeshBvh>> bvhs,
-    std::span<const VkDeviceAddress> positionAddresses) const
+    std::span<const uint64_t> positionAddresses) const
 {
     const auto positionAddress = [&](uint32_t index) -> VkDeviceAddress
     {
         return index < positionAddresses.size() && meshes[index]->IsPosed() ? positionAddresses[index] : 0;
     };
-    std::vector<std::shared_ptr<RayBlas>> result(meshes.size());
+    std::vector<std::shared_ptr<RayBlasHandle>> result(meshes.size());
     // The meshes a live bottom level already covers keep it; the rest are made below. A mesh another
     // build made but has not installed yet counts as live: whichever content installs first builds it.
     std::vector<uint32_t> fresh;
@@ -439,11 +441,11 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Prepare(
             const auto cached = m_cache->meshes.find(meshes[index].get());
             if (cached != m_cache->meshes.end() && cached->second.mesh.lock() == meshes[index])
             {
-                result[index] = cached->second.blas.lock();
+                const std::shared_ptr<RayBlas> cachedBlas = cached->second.blas.lock();
                 // A dynamic one is built over one buffer's positions: another buffer needs its own.
-                if (result[index] && result[index]->dynamicPositions != positionAddress(index))
+                if (cachedBlas && cachedBlas->dynamicPositions == positionAddress(index))
                 {
-                    result[index].reset();
+                    result[index] = cachedBlas;
                 }
             }
             if (!result[index])
@@ -595,13 +597,18 @@ std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Prepare(
     return result;
 }
 
-std::vector<std::shared_ptr<RayBlas>> VulkanRayAcceleration::Install(
-    std::vector<std::shared_ptr<RayBlas>> meshBlas,
+std::vector<std::shared_ptr<RayBlasHandle>> VulkanRayAcceleration::Install(
+    std::vector<std::shared_ptr<RayBlasHandle>> meshBlas,
     std::span<const RayMeshRange> meshes,
     size_t instanceCapacity)
 {
-    std::vector<std::shared_ptr<RayBlas>> previous = std::move(m_meshBlas);
-    m_meshBlas = std::move(meshBlas);
+    std::vector<std::shared_ptr<RayBlasHandle>> previous(m_meshBlas.begin(), m_meshBlas.end());
+    m_meshBlas.clear();
+    m_meshBlas.reserve(meshes.size());
+    for (std::shared_ptr<RayBlasHandle>& blas : meshBlas)
+    {
+        m_meshBlas.push_back(std::static_pointer_cast<RayBlas>(std::move(blas)));
+    }
     m_meshBlas.resize(meshes.size());
     m_meshRanges.assign(meshes.begin(), meshes.end());
     ++m_installNumber;
@@ -746,8 +753,9 @@ void VulkanRayAcceleration::UpdateTopLevel(uint32_t frameSlot, const RayScene& s
     topLevel.dirty = true;
 }
 
-void VulkanRayAcceleration::Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, bool buildTopLevel)
+void VulkanRayAcceleration::Record(nvrhi::ICommandList* commandList, uint32_t frameSlot, bool buildTopLevel)
 {
+    const VkCommandBuffer commandBuffer = ToNative<VkCommandBuffer>(commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer));
     bool builtBottom = RecordBottomLevels(commandBuffer, frameSlot);
     if (buildTopLevel && RecordDynamicUpdates(commandBuffer))
     {
@@ -1016,6 +1024,14 @@ bool VulkanRayAcceleration::RecordBottomLevels(VkCommandBuffer commandBuffer, ui
 VkAccelerationStructureKHR VulkanRayAcceleration::GetTopLevel(uint32_t frameSlot) const
 {
     return m_topLevels[frameSlot].handle;
+}
+
+nvrhi::rt::AccelStructHandle VulkanRayAcceleration::CreateTopLevelHandle(uint32_t frameSlot) const
+{
+    nvrhi::rt::AccelStructDesc desc;
+    desc.isTopLevel = true;
+    desc.debugName = "Ray scene top level";
+    return m_nvrhiVulkan->createHandleForNativeAccelStruct(GetTopLevel(frameSlot), nullptr, desc);
 }
 
 size_t VulkanRayAcceleration::GetBottomLevelCount() const
