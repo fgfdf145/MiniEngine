@@ -652,6 +652,30 @@ void TestBrushStandsAndHolds()
     Require(-stopped.Fy > 0.5 * stopped.peakFrictionY * 4000.0, "and still holding what the slide bent: " + std::to_string(stopped.Fy));
 }
 
+// A hard landing hands the tyre one step of some 8 MN: its tread squashes only to the rim, so the rolling
+// radius stays the tyre's and the force on a rolling wheel still opposes its slip (it once read 24 m of
+// deflection, a radius of -7.8 m, and the wheel's torque flung it backwards).
+void TestBrushSquashesNoFurtherThanTheRim()
+{
+    BrushTyreParameters p = MakeBrushTyreParameters(Figures(1.1, 4000.0, 7.0 * kDeg, 0.3266, 0.245, 325354.0));
+    p.rimDeflection = 0.3266 - 0.254 - 0.015;
+    BrushTyre tyre(p);
+    BrushTyreInput in;
+    in.forwardVelocity = -0.3;
+    in.wheelSpeed = 2.5;
+    in.load = 4000.0;
+    tyre.Step(in, 1e-3);
+    in.load = 7.9e6;
+    const BrushTyreOutput o = tyre.Step(in, 1e-3);
+    RequireNear(o.effectiveRadius, 0.3266 - p.rimDeflection / 3.0, 1e-9, "the rolling radius at the rim's contact");
+    Require(std::isfinite(o.Fx) && o.Fx > 0.0, "the tread turning faster than the road drives the car: " + std::to_string(o.Fx));
+    Require(-o.Fx * o.effectiveRadius < 0.0, "and the wheel's torque slows it");
+
+    // Without a rim the radius is still held above R0 less the belt's transition radius.
+    BrushTyre bare(MakeBrushTyreParameters(Figures(1.1, 4000.0, 7.0 * kDeg, 0.3266, 0.245, 325354.0)));
+    Require(bare.Step(in, 1e-3).effectiveRadius > 0.0, "a tyre without a rim keeps a positive radius");
+}
+
 // Friction along the wheel apart from across it: without any fall from sliding, the tread sliding
 // throughout pushes with each friction along its own axis, and on the ellipse between them.
 void TestBrushGripsEachWayItsOwn()
@@ -1066,6 +1090,7 @@ int main()
         {"TestBrushRelaxesOverTheGivenLength", TestBrushRelaxesOverTheGivenLength},
         {"TestBrushForceBuildsOverItsRelaxationLength", TestBrushForceBuildsOverItsRelaxationLength},
         {"TestBrushStandsAndHolds", TestBrushStandsAndHolds},
+        {"TestBrushSquashesNoFurtherThanTheRim", TestBrushSquashesNoFurtherThanTheRim},
         {"TestBrushGripsEachWayItsOwn", TestBrushGripsEachWayItsOwn},
         {"TestBrushPeaksAtTheSlipRatioAskedFor", TestBrushPeaksAtTheSlipRatioAskedFor},
         {"TestBrushWithoutFalloffReachesItsLimitWhereAsked", TestBrushWithoutFalloffReachesItsLimitWhereAsked},

@@ -85,8 +85,10 @@ Patch MakePatch(const BrushTyreParameters& p, const BrushTyreInput& in)
     patch.load = std::max(in.load, 0.0);
     patch.ribCount = std::clamp(p.ribs, 1, kMaxRibs);
     patch.pressure = PressureCoefficients(p.pressureConvexity, p.pressureShift);
-    const double deflection = patch.load / std::max(in.verticalRate > 0.0 ? in.verticalRate : p.verticalRate, 1.0);
     const double radius = p.unloadedRadius + std::max(in.radiusGrowth, 0.0);
+    const double mostDeflection = p.rimDeflection > 0.0 ? std::min(p.rimDeflection, radius - p.transitionRadius) : radius - p.transitionRadius;
+    const double deflection =
+        std::min(patch.load / std::max(in.verticalRate > 0.0 ? in.verticalRate : p.verticalRate, 1.0), std::max(mostDeflection, 0.0));
     const double sinCamber = std::sin(in.camber);
     const double ribWidth = p.width / patch.ribCount;
     double area = 0.0;

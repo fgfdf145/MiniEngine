@@ -53,6 +53,12 @@ struct BrushTyreParameters
     // R_l of (6): the belt's stiffness shortens the contact length below the plain intersection's.
     double transitionRadius = 0.14; // m
     double verticalRate = 250000.0; // N/m, gives the deflection that sizes the patch
+    // The deflection at which the rim meets the road through the tyre (m; 0 for none given): past it the
+    // rim takes the rest of the load and the tread squashes no further. Never more than the radius less
+    // R_l, so the rolling radius R0 - deflection / 3 stays positive under any load (a hard landing's
+    // single-step load of some 8 MN read as 24 m of deflection, a radius of -7.8 m, and flung the
+    // wheel backwards at 570 rad/s).
+    double rimDeflection = 0.0;
 
     // Pressure along each rib, the quartic (7): convexity lambda (12 is a parabola) and centroid
     // shift delta (towards the leading edge, a share of the length).

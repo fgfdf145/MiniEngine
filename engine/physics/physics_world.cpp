@@ -1000,6 +1000,8 @@ tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settin
     figures.relaxationLength = tyres.relaxationLength;
     figures.longitudinalStiffnessRatio = tyres.longitudinalStiffnessRatio;
     tyre::BrushTyreParameters parameters = tyre::MakeBrushTyreParameters(figures);
+    // The tread squashes no further than the rim's contact, where the suspension's rim spring takes over.
+    parameters.rimDeflection = RimDeflection(settings, index);
     // The data's load sensitivity; the bristles are fitted at the static load, where it changes nothing.
     if (tyres.longitudinalLoadExponent > 0.0f)
     {
