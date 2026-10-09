@@ -87,6 +87,8 @@ CASES = {
     # Deferred + forward, RT effects (default), clouds, fog, toon, skinning, TAA, bloom.
     "road_clouds": ("rolling_road_sky.yaml", ROLLING_ROAD_CAMERA, 12.0, RT_ON, []),
     "road_rt": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, RT_ON, []),
+    "road_rt_nogi": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {**RT_ON, "gi": {"enabled": False}}, []),
+    "road_gi_notemporal": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {**RT_ON, "gbuffer_view": 13, "gi": {"temporal_filter": False}}, []),
     "road_ddgi": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, DDGI, []),
     "road_ddgi_view": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {"gbuffer_view": 15}, []),
     "road_ddgi_ray": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {"gbuffer_view": 14}, []),
@@ -103,6 +105,9 @@ CASES = {
     "materials_rt": ("materials.yaml", MATERIALS_CAMERA, 9.0, RT_ON, []),
     "materials_raster": ("materials.yaml", MATERIALS_CAMERA, 9.0, RT_OFF, []),
     "materials_pt": ("materials.yaml", MATERIALS_CAMERA, 9.0, PT_ON, []),
+    # KHR_materials_transmission: a scaled-down GTA water surface in front of the spheres (the
+    # transmission copy, the translucent forward pass).
+    "transmission_rt": ("transmission.yaml", MATERIALS_CAMERA, 9.0, RT_ON, []),
     # DLSS super resolution, and ray reconstruction (dlss_rr_guides.comp, dlss_motion_vectors.comp).
     "road_dlss": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {**RT_ON, "dlss_mode": 2}, []),
     "road_dlss_rr": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {**RT_ON, "dlss_mode": 2, "dlss_ray_reconstruction": True}, []),

@@ -3111,13 +3111,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle(),
         *view.toonMaterials));
-    view.passes.push_back(std::make_unique<VulkanTransmissionCopyPass>(
-        m_device->GetHandle(),
-        m_nvrhi->Get(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        *m_transmissionImage));
+    view.passes.push_back(std::make_unique<VulkanTransmissionCopyPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_transmissionImage));
     // Compatible with the opaque half's render pass, so the same forward pipelines draw in it.
     view.passes.push_back(std::make_unique<VulkanForwardPass>(
         m_device->GetHandle(),

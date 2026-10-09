@@ -1,5 +1,6 @@
 #include "transmission_copy.h"
 
+#include "nvrhi_pass.h"
 #include "nvrhi_resources.h"
 #include "sampler_settings.h"
 
@@ -85,8 +86,6 @@ VulkanTransmissionImage::VulkanTransmissionImage(VkPhysicalDevice physicalDevice
         viewInfo.format = kCopyFormat;
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, kMipLevels, 0, 1};
         CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_view), "Failed to create the transmission copy view");
-        viewInfo.subresourceRange.levelCount = 1;
-        CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &m_level0View), "Failed to create the transmission copy's level view");
 
         nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(true);
         samplerDesc.mipFilter = true;
@@ -115,9 +114,9 @@ VkImage VulkanTransmissionImage::GetImage() const
     return m_image;
 }
 
-VkImageView VulkanTransmissionImage::GetLevel0View() const
+nvrhi::ITexture* VulkanTransmissionImage::GetTexture() const
 {
-    return m_level0View;
+    return m_texture;
 }
 
 void VulkanTransmissionImage::RecordInitialTransition(VkCommandBuffer commandBuffer) const
@@ -137,13 +136,10 @@ void VulkanTransmissionImage::RecordInitialTransition(VkCommandBuffer commandBuf
 void VulkanTransmissionImage::Destroy()
 {
     m_sampler = nullptr;
-    for (VkImageView* view : {&m_level0View, &m_view})
+    if (m_view != VK_NULL_HANDLE)
     {
-        if (*view != VK_NULL_HANDLE)
-        {
-            vkDestroyImageView(m_device, *view, nullptr);
-            *view = VK_NULL_HANDLE;
-        }
+        vkDestroyImageView(m_device, m_view, nullptr);
+        m_view = VK_NULL_HANDLE;
     }
     // The image and its memory go with the texture.
     m_texture = nullptr;
@@ -151,45 +147,30 @@ void VulkanTransmissionImage::Destroy()
 }
 
 VulkanTransmissionCopyPass::VulkanTransmissionCopyPass(
-    VkDevice device,
     nvrhi::IDevice* nvrhiDevice,
-    VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout,
+    nvrhi::IBindingLayout* frameSetLayout,
     const VulkanTransmissionImage& image)
-    : m_device(device),
+    : m_nvrhiDevice(nvrhiDevice),
       m_image(image)
 {
-    try
-    {
-        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
-        static constexpr std::array<VkDescriptorType, 2> kTypes = {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes);
-        CreateComputePipeline(
-            m_device,
-            pipelineCache,
-            frameSetLayout,
-            m_setLayout,
-            "transmission_copy.comp.spv",
-            sizeof(TransmissionCopyConstants),
-            m_pipelineLayout,
-            m_pipeline);
-        m_descriptorPool = CreateImageDescriptorPool(m_device, targets.GetTransientCopyCount(), 1, 1);
-        CreateDescriptorSets(targets);
-    }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
-    }
+    m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
+    nvrhi::BindingLayoutDesc desc;
+    desc.visibility = nvrhi::ShaderType::Compute;
+    desc.registerSpace = 1;
+    desc.registerSpaceIsDescriptorSet = true;
+    desc.bindingOffsets = ShaderBindingOffsets();
+    desc.bindings = {
+        nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::Sampler(64),
+        nvrhi::BindingLayoutItem::Texture_UAV(1),
+        nvrhi::BindingLayoutItem::PushConstants(0, sizeof(TransmissionCopyConstants))};
+    m_setLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, desc, "Failed to create the transmission copy binding layout");
+    m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "transmission_copy.comp.spv", {frameSetLayout, m_setLayout});
+    CreateBindingSets(targets);
 }
 
-VulkanTransmissionCopyPass::~VulkanTransmissionCopyPass()
-{
-    DestroyHandles();
-}
+VulkanTransmissionCopyPass::~VulkanTransmissionCopyPass() = default;
 
 ScenePassId VulkanTransmissionCopyPass::Id() const
 {
@@ -217,42 +198,34 @@ void VulkanTransmissionCopyPass::Record(
         return;
     }
 
-    const VkImage image = m_image.GetImage();
-    constexpr uint32_t kLevels = VulkanTransmissionImage::kMipLevels;
-    // Whatever the copy held is discarded; the last frame's reads of it are done before the writes.
-    RecordBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        LevelBarrier(image, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT));
-    RecordBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        LevelBarrier(image, 1, kLevels - 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT));
-
+    // The copy rests in SHADER_READ_ONLY_OPTIMAL, where the forward pipelines sample it; the states
+    // below order this frame's writes after last frame's reads, and the scope's last one its reads
+    // after them.
+    nvrhi::ITexture* copy = m_image.GetTexture();
+    nvrhi::ICommandList* commandList = frame.commandList;
+    const NvrhiPassScope scope(commandList, {{copy, nvrhi::ResourceStates::ShaderResource}});
+    commandList->setTextureState(copy, nvrhi::TextureSubresourceSet(0, 1, 0, 1), nvrhi::ResourceStates::UnorderedAccess);
+    commandList->commitBarriers();
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneHdr, frame.imageIndex, frame.frameSlot);
+    nvrhi::ComputeState state;
+    state.pipeline = m_pipeline;
+    state.bindings = {frame.frameBindingSet, m_bindingSets.at(slot)};
+    commandList->setComputeState(state);
     TransmissionCopyConstants constants{};
     constants.extent = glm::uvec2(VulkanTransmissionImage::kSize);
-    DispatchCompute(
-        commandBuffer,
-        m_pipeline,
-        m_pipelineLayout,
-        frame.frameDescriptorSet,
-        m_sets.at(slot),
-        &constants,
-        sizeof(constants),
-        VkExtent2D{VulkanTransmissionImage::kSize, VulkanTransmissionImage::kSize});
+    commandList->setPushConstants(&constants, sizeof(constants));
+    constexpr uint32_t kGroups = (VulkanTransmissionImage::kSize + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize;
+    commandList->dispatch(kGroups, kGroups);
 
-    // Level 0 becomes the first blit's source; each level after it is blitted from the one above.
-    RecordBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        LevelBarrier(image, 0, 1, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT));
+    // Each level is blitted from the one above: NVRHI has no blit, so it moves the two levels into
+    // the copy states and the blit is native.
+    const VkImage image = m_image.GetImage();
     int32_t size = static_cast<int32_t>(VulkanTransmissionImage::kSize);
-    for (uint32_t level = 1; level < kLevels; ++level)
+    for (uint32_t level = 1; level < VulkanTransmissionImage::kMipLevels; ++level)
     {
+        commandList->setTextureState(copy, nvrhi::TextureSubresourceSet(level - 1, 1, 0, 1), nvrhi::ResourceStates::CopySource);
+        commandList->setTextureState(copy, nvrhi::TextureSubresourceSet(level, 1, 0, 1), nvrhi::ResourceStates::CopyDest);
+        commandList->commitBarriers();
         const int32_t next = std::max(size / 2, 1);
         VkImageBlit blit{};
         blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1};
@@ -268,63 +241,27 @@ void VulkanTransmissionCopyPass::Record(
             1,
             &blit,
             VK_FILTER_LINEAR);
-        RecordBarrier(
-            commandBuffer,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            LevelBarrier(image, level, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT));
         size = next;
     }
-    // Back to rest for the translucent pass's fragment shaders.
-    RecordBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        LevelBarrier(image, 0, kLevels, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT));
 }
 
 void VulkanTransmissionCopyPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
-    CreateDescriptorSets(targets);
+    CreateBindingSets(targets);
 }
 
-void VulkanTransmissionCopyPass::CreateDescriptorSets(const SceneRenderTargets& targets)
+void VulkanTransmissionCopyPass::CreateBindingSets(const SceneRenderTargets& targets)
 {
-    const uint32_t copyCount = targets.GetTransientCopyCount();
-    m_sets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, copyCount);
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
+    m_bindingSets.clear();
+    for (uint32_t slot = 0; slot < targets.GetTransientCopyCount(); ++slot)
     {
-        const VkDescriptorImageInfo sourceInfo{NativeSampler(m_sampler), targets.GetView(RenderTargetId::SceneHdr, slot), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        const VkDescriptorImageInfo destinationInfo{VK_NULL_HANDLE, m_image.GetLevel0View(), VK_IMAGE_LAYOUT_GENERAL};
-        const std::array<VkWriteDescriptorSet, 2> writes = {
-            ImageWrite(m_sets[slot], 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &sourceInfo),
-            ImageWrite(m_sets[slot], 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &destinationInfo)};
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        nvrhi::BindingSetDesc desc;
+        desc.bindings = {
+            nvrhi::BindingSetItem::Texture_SRV(0, targets.GetTexture(RenderTargetId::SceneHdr, slot)),
+            nvrhi::BindingSetItem::Sampler(64, m_sampler),
+            nvrhi::BindingSetItem::Texture_UAV(1, m_image.GetTexture(), nvrhi::Format::UNKNOWN, nvrhi::TextureSubresourceSet(0, 1, 0, 1)),
+            nvrhi::BindingSetItem::PushConstants(0, sizeof(TransmissionCopyConstants))};
+        m_bindingSets.push_back(CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create a transmission copy binding set"));
     }
-}
-
-void VulkanTransmissionCopyPass::DestroyHandles()
-{
-    if (m_pipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
-    if (m_setLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
-    }
-    m_sampler = nullptr;
 }
 }

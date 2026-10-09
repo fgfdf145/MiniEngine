@@ -29,7 +29,7 @@ class VulkanTransmissionImage
     // Every mip, linear, clamped: what triangle.frag samples.
     TextureDescriptorBinding GetSampledBinding() const;
     VkImage GetImage() const;
-    VkImageView GetLevel0View() const;
+    nvrhi::ITexture* GetTexture() const;
 
     // Moves a new image from UNDEFINED to its resting layout; later calls do nothing. Recorded by
     // the copy pass every frame, so the descriptor names the true layout from the first frame on.
@@ -43,23 +43,21 @@ class VulkanTransmissionImage
     VkImage m_image = VK_NULL_HANDLE;
     nvrhi::TextureHandle m_texture;
     VkImageView m_view = VK_NULL_HANDLE;
-    VkImageView m_level0View = VK_NULL_HANDLE;
     nvrhi::SamplerHandle m_sampler;
     mutable bool m_initialized = false;
 };
 
 // Copies the HDR target, once everything opaque and the sky are in it, into the transmission image
 // and builds its mip chain. Does nothing on a frame without transmissive draws: the image keeps
-// whatever it last held, which nothing samples.
+// whatever it last held, which nothing samples. Records through NVRHI (NvrhiPassScope) but for the
+// mip chain's blits, which NVRHI does not have: they stay native, between the copy states NVRHI sets.
 class VulkanTransmissionCopyPass : public IScenePass
 {
   public:
     VulkanTransmissionCopyPass(
-        VkDevice device,
         nvrhi::IDevice* nvrhiDevice,
-        VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout,
+        nvrhi::IBindingLayout* frameSetLayout,
         const VulkanTransmissionImage& image);
     ~VulkanTransmissionCopyPass() override;
 
@@ -75,17 +73,14 @@ class VulkanTransmissionCopyPass : public IScenePass
     void OnTargetsRebuilt(const SceneRenderTargets& targets) override;
 
   private:
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     const VulkanTransmissionImage& m_image;
     nvrhi::SamplerHandle m_sampler;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
     // Per frame slot: that slot's HDR target into the copy's level 0.
-    std::vector<VkDescriptorSet> m_sets;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
 };
 }
