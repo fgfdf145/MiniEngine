@@ -12,10 +12,9 @@ namespace me
 
 namespace
 {
-// Textures handed back, waiting for the backend to destroy them. The backend destroys a texture
-// that asks to be destroyed once it has gone unused for as many frames as the swapchain has images,
-// so a frame still in flight never loses it; ImGui counts that only for its own atlas, so it is
-// counted here for these.
+// Textures handed back, waiting for the renderer to destroy them. It does once ImGui has counted an
+// unused frame (in NewFrame, for user textures as for its atlas); the frames in flight that may still
+// sample one keep it alive through NVRHI's binding sets (ImGuiNvrhiRenderer).
 std::vector<std::unique_ptr<ImTextureData>>& Retired()
 {
     static std::vector<std::unique_ptr<ImTextureData>> retired;
@@ -107,14 +106,12 @@ void EditorUserTexture::CollectRetired()
             ImGui::UnregisterUserTexture(texture.get());
             texture.reset();
         }
-        else
+        else if (texture->Status != ImTextureStatus_WantDestroy)
         {
-            // Asked to be made again: asked to be destroyed again.
-            if (texture->Status != ImTextureStatus_WantDestroy)
-            {
-                texture->SetStatus(ImTextureStatus_WantDestroy);
-            }
-            ++texture->UnusedFrames;
+            // Asked to be made again: asked to be destroyed again. ImGui counts its unused frames (counted
+            // here too, they halved the ImGui Vulkan backend's wait: a device lost on closing the
+            // Material Editor).
+            texture->SetStatus(ImTextureStatus_WantDestroy);
         }
     }
     std::erase_if(retired, [](const std::unique_ptr<ImTextureData>& texture)
