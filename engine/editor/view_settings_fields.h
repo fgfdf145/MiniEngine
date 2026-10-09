@@ -71,7 +71,13 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("", "taa", settings.taa);
     visit("", "specular_anti_aliasing", settings.specularAntiAliasing);
     visit("", "hdr_output", settings.hdrOutput);
-    visit("", "hdr_peak_nits", settings.hdrPeakNits);
+    DisplaySettings& display = settings.display;
+    visit("display", "calibrated", display.calibrated);
+    visit("display", "max_luminance", display.maxLuminance);
+    visit("display", "max_full_frame_luminance", display.maxFullFrameLuminance);
+    visit("display", "min_luminance", display.minLuminance);
+    visit("display", "ui_white_nits", display.uiWhiteNits);
+    visit("display", "paper_white_nits", display.paperWhiteNits);
     visit("", "toon_exposure_ev", settings.toonExposureEv);
     visit("", "khronos_reference", settings.khronosReference);
     visit("", "render_scale", settings.renderScale);

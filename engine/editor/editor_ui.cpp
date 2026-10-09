@@ -19,6 +19,7 @@
 #include "ui/panels/theme_panel.h"
 #include "ui/panels/vehicle_panel.h"
 #include "ui/panels/viewport_panel.h"
+#include "ui/windows/hdr_calibration_window.h"
 #include "ui/windows/keyboard_shortcuts_window.h"
 #include "ui/windows/material_editor_window.h"
 #include "ui/windows/preferences_window.h"
@@ -98,6 +99,7 @@ void EditorUiController::RegisterWindows()
     m_windows.Register<MaterialEditorWindow>();
     m_windows.Register<PreferencesWindow>();
     m_windows.Register<KeyboardShortcutsWindow>();
+    m_windows.Register<HdrCalibrationWindow>();
     // Modals, drawn last so they are over everything else.
     m_windows.Register<SceneResetModal>();
     m_windows.Register<UnsavedChangesModal>();
@@ -208,6 +210,10 @@ void EditorUiController::RegisterCommands()
         m_windows.Open<PreferencesWindow>();
     };
     // The scene's environment, fog and clouds are edited in the Scene panel.
+    scene.openHdrCalibration = [this]
+    {
+        m_windows.Open<HdrCalibrationWindow>();
+    };
     scene.openSceneSettings = [this]
     {
         m_windows.Open<ScenePanel>();
@@ -414,6 +420,7 @@ void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
     m_state.commands.gbufferAvailable = !m_state.renderDebug.forwardOnly;
     m_state.commands.toneMapping = m_state.renderDebug.toneMapper;
     m_state.commands.khronosReference = m_state.renderDebug.khronosReference;
+    m_state.commands.hdrOutput = m_state.renderDebug.hdrOutput;
     m_state.commands.antiAliasing = m_state.renderDebug.taa ? AntiAliasingMode::Taa : AntiAliasingMode::None;
     // The pipeline is what the settings make of it: path tracing (offline or real time), the ray
     // traced effects over rasterization (hybrid), or rasterization alone.
@@ -452,6 +459,10 @@ void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& bef
     if (m_state.commands.debugView != before.debugView)
     {
         m_state.renderDebug.gbufferView = m_state.commands.debugView;
+    }
+    if (m_state.commands.hdrOutput != before.hdrOutput)
+    {
+        m_state.renderDebug.hdrOutput = m_state.commands.hdrOutput;
     }
     if (m_state.commands.toneMapping != before.toneMapping)
     {

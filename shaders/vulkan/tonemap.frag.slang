@@ -3,6 +3,7 @@
 #include "gt7_tonemap.slang"
 #include "pre_exposure.slang"
 #include "hdr_output.slang"
+#include "display_calibration.slang"
 #include "pbr_neutral.slang"
 #include "gbuffer_common.slang"
 #include "gbuffer_inputs.slang"
@@ -42,13 +43,25 @@ static const uint TONEMAP_OPERATOR_NONE = 3u;
 struct TonemapConstants
 {
     uint gbufferView;
-    // 1 for HDR10 output: GT7's HDR curve for peakNits, written relative to kUiWhiteNits.
+    // 1 for HDR10 output: GT7's HDR curve for peakNits, lifted to blackNits, written relative to
+    // uiWhiteNits (imgui.frag's HDR10 variant puts 1.0 there).
     uint hdrOutput;
     float peakNits;
     // One of the TONEMAP_OPERATOR_* values below.
     uint toneOperator;
     // Auto white balance, linear Rec.709 to linear Rec.709, as three columns (xyz used).
     float4 whiteBalance[3];
+    // The HDR calibration (display_calibration.h): UI white and the display's black floor in cd/m^2,
+    // and the scale that puts GT7's 250 cd/m^2 paper white at the calibrated paper white.
+    float uiWhiteNits;
+    float blackNits;
+    float paperWhiteScale;
+    // A CALIBRATION_* pattern in place of the scene, and its level in cd/m^2.
+    uint pattern;
+    float patternLevel;
+    float padding0;
+    float padding1;
+    float padding2;
 };
 [[vk::push_constant]] ConstantBuffer<TonemapConstants> constants D3D_PUSH_CONSTANTS(0);
 
@@ -71,7 +84,17 @@ FragmentOutput main(FragmentInput input)
     FragmentOutput output;
     float3 color;
 
-    if (constants.gbufferView == GBUFFER_VIEW_ALBEDO)
+    if (constants.pattern != CALIBRATION_NONE)
+    {
+        // Absolute luminance, past every adjustment: what the display is asked to show is exactly the
+        // level (or the ring's), relative to the UI white that imgui.frag's HDR10 variant undoes. In
+        // SDR the pattern is meaningless, and shows as the level over the UI white, clipped.
+        float2 outputSize = float2(TextureSize(hdrTexture, 0));
+        float aspect = outputSize.x / max(outputSize.y, 1.0f);
+        float2 centred = (input.fragTexCoord - float2(0.5f)) * float2(aspect, 1.0f);
+        color = float3(CalibrationHdrNits(constants.pattern, constants.patternLevel, centred, aspect) / constants.uiWhiteNits);
+    }
+    else if (constants.gbufferView == GBUFFER_VIEW_ALBEDO)
     {
         // Sampled through the _SRGB format, so already linear; the sRGB LDR target re-encodes it.
         // Shows albedo as stored: unshaded, unexposed and not tone mapped.
@@ -197,7 +220,8 @@ FragmentOutput main(FragmentInput input)
             // HDR10 output, frame-buffer units become nits relative to the UI white, up to the peak.
             if (constants.hdrOutput != 0u)
             {
-                color = clamp(color * (Gt7FrameBufferToPhysical(1.0f) / kUiWhiteNits), float3(0.0f), float3(constants.peakNits / kUiWhiteNits));
+                float3 nits = clamp(color * (constants.paperWhiteScale * Gt7FrameBufferToPhysical(1.0f)), float3(0.0f), float3(constants.peakNits));
+                color = LiftToBlackFloorNits3(nits, constants.blackNits) / constants.uiWhiteNits;
             }
             else
             {
@@ -208,9 +232,12 @@ FragmentOutput main(FragmentInput input)
         // the LDR target's sRGB format applies the transfer function on write.
         else if (constants.hdrOutput != 0u)
         {
-            // Frame-buffer units (1.0 = 100 cd/m^2) up to the display peak, then relative to the UI
-            // white that imgui_hdr10.frag maps to kUiWhiteNits.
-            color = TonemapFrameBufferRec709Hdr(color, constants.peakNits) * (Gt7FrameBufferToPhysical(1.0f) / kUiWhiteNits);
+            // The scene scaled so GT7's 250 cd/m^2 paper white lands at the calibrated one (the
+            // midtones as bright as in SDR on this desktop), frame-buffer units (1.0 = 100 cd/m^2) up
+            // to the display peak, lifted onto the display's black floor, then relative to the UI
+            // white that imgui.frag's HDR10 variant maps back to cd/m^2.
+            float3 nits = TonemapFrameBufferRec709Hdr(color * constants.paperWhiteScale, constants.peakNits) * Gt7FrameBufferToPhysical(1.0f);
+            color = LiftToBlackFloorNits3(nits, constants.blackNits) / constants.uiWhiteNits;
         }
         else
         {

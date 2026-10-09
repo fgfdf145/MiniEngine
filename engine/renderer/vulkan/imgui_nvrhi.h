@@ -52,6 +52,9 @@ class ImGuiNvrhiRenderer
         nvrhi::TextureHandle texture;
         nvrhi::Format viewFormat = nvrhi::Format::UNKNOWN;
         nvrhi::BindingSetHandle bindingSet;
+        // A float texture holds linear light (the scene image under HDR output); the others hold what
+        // the SDR swapchain shows, sRGB-encoded.
+        bool linear = false;
         // Made here for an ImTextureData (the font atlas pages), not the engine's.
         bool owned = false;
     };
@@ -66,7 +69,8 @@ class ImGuiNvrhiRenderer
     };
 
     nvrhi::IGraphicsPipeline* Pipeline(nvrhi::IFramebuffer* framebuffer, bool hdr10);
-    nvrhi::IBindingSet* BindingSet(ImTextureID id);
+    // The texture's binding set, and whether it holds linear light; null when the ID is unknown.
+    nvrhi::IBindingSet* BindingSet(ImTextureID id, bool& linear);
     void Reserve(FrameBuffers& buffers, size_t vertexCount, size_t indexCount);
     void DestroyTexture(ImTextureData* texture);
 

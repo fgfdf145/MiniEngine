@@ -3,10 +3,16 @@
 #include "d3d_register.slang"
 #include "shader_helpers.slang"
 
+// Must match imgui.frag's and ImGuiConstants in engine/renderer/vulkan/imgui_nvrhi.cpp.
 struct ImGuiConstants
 {
     float2 scale;
     float2 translate;
+    // Whether the draw's texture holds linear light (imgui.frag's HDR10 variant).
+    uint linearTexture;
+    uint padding0;
+    uint padding1;
+    uint padding2;
 };
 
 [[vk::push_constant]] ConstantBuffer<ImGuiConstants> constants D3D_PUSH_CONSTANTS(0);

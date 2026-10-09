@@ -127,10 +127,12 @@ struct ScenePassFrameContext
     uint32_t glareImageHeight = 0;
     // Linear Rec.709 to linear Rec.709, applied before tone mapping (see WhiteBalanceMatrix).
     glm::mat3 whiteBalance{1.0f};
-    // The swapchain is HDR10: the tone mapping pass uses GT7's HDR curve for hdrPeakNits and writes
-    // display-linear values relative to kUiWhiteNits.
-    bool hdrOutput = false;
-    float hdrPeakNits = 1000.0f;
+    // The display output and calibration (display_calibration.h). display.hdr: the swapchain is
+    // HDR10, so the tone mapping pass uses GT7's HDR curve for display.maxLuminance and writes
+    // display-linear values relative to display.uiWhiteNits.
+    DisplayOutput display;
+    // What the calibration screen shows in place of the scene (the viewport only).
+    DisplayCalibrationView calibrationView;
     // The Khronos reference view: Khronos PBR Neutral instead of GT7's operator, and an HDRI
     // background blurred as the Sample Viewer blurs it.
     bool khronosReference = false;

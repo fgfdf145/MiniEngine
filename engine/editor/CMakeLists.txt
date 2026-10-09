@@ -114,6 +114,8 @@ add_library(engine_editor
     ui/panels/vehicle_panel.h
     ui/panels/viewport_panel.cpp
     ui/panels/viewport_panel.h
+    ui/windows/hdr_calibration_window.cpp
+    ui/windows/hdr_calibration_window.h
     ui/windows/keyboard_shortcuts_window.cpp
     ui/windows/keyboard_shortcuts_window.h
     ui/windows/material_editor_window.cpp

@@ -25,6 +25,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -97,6 +99,7 @@ class D3D12GpuSwapchain final : public GpuSwapchain
     D3D12GpuSwapchain(
         nvrhi::IDevice* nvrhiDevice, IDXGIFactory6* factory, ID3D12CommandQueue* queue, SDL_Window* window, VkExtent2D extent, bool preferHdr)
         : m_device(nvrhiDevice)
+        , m_queue(queue)
     {
         HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
         if (hwnd == nullptr)
@@ -173,8 +176,10 @@ class D3D12GpuSwapchain final : public GpuSwapchain
     ~D3D12GpuSwapchain() override
     {
         // NVRHI lets go of the buffers once the GPU is done with them; the swapchain itself must be the
-        // last reference before another is made on the window.
+        // last reference before another is made on the window. NVRHI's idle wait covers the command
+        // lists, not the presents queued after the last of them, which still read the buffers.
         m_device->waitForIdle();
+        FlushQueue();
         m_images.clear();
         m_device->runGarbageCollection();
         if (m_waitable != nullptr)
@@ -202,6 +207,32 @@ class D3D12GpuSwapchain final : public GpuSwapchain
     bool IsHdr() const override
     {
         return m_hdr;
+    }
+
+    void SetHdrMetadata(float maxLuminance, float maxFrameAverageLuminance, float minLuminance) override
+    {
+        if (!m_hdr)
+        {
+            return;
+        }
+        // Rec.2020 primaries and D65 in units of 0.00002, luminances in cd/m^2 (minimum in 0.0001).
+        DXGI_HDR_METADATA_HDR10 metadata{};
+        metadata.RedPrimary[0] = 35400;
+        metadata.RedPrimary[1] = 14600;
+        metadata.GreenPrimary[0] = 8500;
+        metadata.GreenPrimary[1] = 39850;
+        metadata.BluePrimary[0] = 6550;
+        metadata.BluePrimary[1] = 2300;
+        metadata.WhitePoint[0] = 15635;
+        metadata.WhitePoint[1] = 16450;
+        metadata.MaxMasteringLuminance = static_cast<UINT>(std::lround(maxLuminance));
+        metadata.MinMasteringLuminance = static_cast<UINT>(std::lround(minLuminance * 10000.0f));
+        metadata.MaxContentLightLevel = static_cast<UINT16>(std::lround(std::min(maxLuminance, 65535.0f)));
+        metadata.MaxFrameAverageLightLevel = static_cast<UINT16>(std::lround(std::min(maxFrameAverageLuminance, 65535.0f)));
+        if (FAILED(m_swapchain->SetHDRMetaData(DXGI_HDR_METADATA_TYPE_HDR10, sizeof(metadata), &metadata)))
+        {
+            LOG_WARN("The DXGI swapchain did not take the HDR metadata");
+        }
     }
 
     SwapchainStatus Acquire(uint32_t frameSlot, uint32_t& imageIndex) override
@@ -265,6 +296,31 @@ class D3D12GpuSwapchain final : public GpuSwapchain
     }
 
     nvrhi::IDevice* m_device = nullptr;
+    // Signals a fence after everything queued so far, presents included, and waits for it.
+    void FlushQueue()
+    {
+        ComPtr<ID3D12Device> device;
+        ComPtr<ID3D12Fence> fence;
+        if (FAILED(m_queue->GetDevice(IID_PPV_ARGS(&device))) || FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))) ||
+            FAILED(m_queue->Signal(fence.Get(), 1)))
+        {
+            return;
+        }
+        if (fence->GetCompletedValue() < 1)
+        {
+            const HANDLE event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            if (event != nullptr && SUCCEEDED(fence->SetEventOnCompletion(1, event)))
+            {
+                WaitForSingleObject(event, INFINITE);
+            }
+            if (event != nullptr)
+            {
+                CloseHandle(event);
+            }
+        }
+    }
+
+    ComPtr<ID3D12CommandQueue> m_queue;
     ComPtr<IDXGISwapChain4> m_swapchain;
     HANDLE m_waitable = nullptr;
     std::vector<nvrhi::TextureHandle> m_images;

@@ -78,6 +78,28 @@ void TestWindowStatesSurviveTheSettingsFile()
 
 // The Preferences window's master volume and mute survive the settings file; a file from before
 // they existed plays at full volume.
+// HDR output and its calibration survive the settings file.
+void TestHdrCalibrationSurvivesTheSettingsFile()
+{
+    EngineSettings saved;
+    saved.view.renderDebug.hdrOutput = true;
+    DisplaySettings& display = saved.view.renderDebug.display;
+    display.calibrated = true;
+    display.maxLuminance = 720.0f;
+    display.maxFullFrameLuminance = 380.0f;
+    display.minLuminance = 0.01f;
+    display.uiWhiteNits = 300.0f;
+    display.paperWhiteNits = 320.0f;
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "miniengine_hdr_calibration_test.json";
+    std::string error;
+    Require(SaveEngineSettings(path, saved, error), ("the settings save: " + error).c_str());
+    EngineSettings loaded;
+    Require(LoadEngineSettings(path, loaded, error), ("the settings load: " + error).c_str());
+    std::filesystem::remove(path);
+    Require(loaded.view.renderDebug.hdrOutput, "HDR output comes back");
+    Require(loaded.view.renderDebug.display == display, "the calibration comes back");
+}
+
 void TestAudioSettingsSurviveTheSettingsFile()
 {
     EngineSettings saved;
@@ -557,6 +579,7 @@ int main()
         TestThemeKeepsOnlyChangedColours();
         TestViewSettingsSurviveTheSettingsFile();
         TestAudioSettingsSurviveTheSettingsFile();
+        TestHdrCalibrationSurvivesTheSettingsFile();
         TestProcessSettingsSurviveTheSettingsFile();
     }
     catch (const std::exception& error)

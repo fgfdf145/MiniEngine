@@ -57,6 +57,11 @@ void StateRoundTrips()
     written.renderDebug.ddgi.levels = 3;
     written.renderDebug.ddgi.baseSpacing = 0.5f;
     written.renderDebug.ddgi.hysteresis = 0.9f;
+    written.renderDebug.hdrOutput = true;
+    written.renderDebug.display.calibrated = true;
+    written.renderDebug.display.maxLuminance = 640.0f;
+    written.renderDebug.display.minLuminance = 0.025f;
+    written.renderDebug.display.paperWhiteNits = 300.0f;
     const std::filesystem::path path = folder / "viewport_1.state.yaml";
     CaptureStateService::Write(path, written);
 
@@ -77,6 +82,7 @@ void StateRoundTrips()
     Require(read.renderDebug.viewportResolution == written.renderDebug.viewportResolution, "viewport resolution");
     Require(read.renderDebug.ssr.maxDistance == 12.0f && read.renderDebug.ao.stepCount == 5 && !read.renderDebug.gi.enabled, "groups");
     Require(read.renderDebug.ddgi.levels == 3 && read.renderDebug.ddgi.baseSpacing == 0.5f && read.renderDebug.ddgi.hysteresis == 0.9f, "DDGI");
+    Require(read.renderDebug.hdrOutput && read.renderDebug.display == written.renderDebug.display, "HDR output and calibration");
 }
 
 // A file with only a scene still loads, every other field at its default.

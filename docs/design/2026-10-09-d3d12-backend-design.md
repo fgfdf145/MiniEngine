@@ -98,6 +98,8 @@ sRGB UI 转到 PQ。D3D12 交换链只在窗口所在显示器处于 HDR 模式�
 G2084/P2020），否则给出警告并用 SDR，**不改用户的显示设置**。`MINIENGINE_FORCE_HDR10=1` 只用于对比测试：在 SDR 显示器上
 也建 HDR10 交换链，配合 `MINIENGINE_CAPTURE_WINDOW` 抓取 PQ 码值（10 位按高 8 位写 PNG）。
 
+2026-10-10 起的开关、UI/纸白跟随 Windows、ImGui 浮点图层和 HDR 校准见 `2026-10-10-hdr-calibration-design.md`。
+
 ## 编辑器
 
 - Preferences → Graphics API：Backend 下拉（Vulkan / Direct3D 12），显示当前运行的 API，选的和运行的不同时提示重启。

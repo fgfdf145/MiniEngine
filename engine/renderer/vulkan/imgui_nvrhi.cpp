@@ -15,12 +15,17 @@ namespace
 {
 ImGuiNvrhiRenderer* g_renderer = nullptr;
 
-// imgui.vert's block: pixels to clip space.
+// imgui.vert's and imgui.frag's block: pixels to clip space, and whether the draw's texture holds
+// linear light (imgui.frag's HDR10 variant).
 struct ImGuiConstants
 {
     float scale[2];
     float translate[2];
+    uint32_t linearTexture = 0;
+    uint32_t padding[3] = {};
 };
+
+static_assert(sizeof(ImGuiConstants) == 32, "ImGuiConstants must match the shaders' block");
 
 nvrhi::BufferHandle CreateMappedBuffer(nvrhi::IDevice* device, size_t byteSize, bool indices, void** mapped)
 {
@@ -140,6 +145,8 @@ ImTextureID ImGuiNvrhiRenderer::AddTexture(nvrhi::ITexture* texture, nvrhi::Form
     TextureEntry entry;
     entry.texture = texture;
     entry.viewFormat = viewFormat;
+    const nvrhi::Format format = viewFormat != nvrhi::Format::UNKNOWN ? viewFormat : texture->getDesc().format;
+    entry.linear = nvrhi::getFormatInfo(format).kind == nvrhi::FormatKind::Float;
     m_textures.emplace(id, std::move(entry));
     return id;
 }
@@ -285,7 +292,7 @@ nvrhi::IGraphicsPipeline* ImGuiNvrhiRenderer::Pipeline(nvrhi::IFramebuffer* fram
     return pipeline;
 }
 
-nvrhi::IBindingSet* ImGuiNvrhiRenderer::BindingSet(ImTextureID id)
+nvrhi::IBindingSet* ImGuiNvrhiRenderer::BindingSet(ImTextureID id, bool& linear)
 {
     const std::lock_guard lock(m_mutex);
     const auto found = m_textures.find(id);
@@ -294,6 +301,7 @@ nvrhi::IBindingSet* ImGuiNvrhiRenderer::BindingSet(ImTextureID id)
         return nullptr;
     }
     TextureEntry& entry = found->second;
+    linear = entry.linear;
     if (!entry.bindingSet)
     {
         nvrhi::BindingSetDesc desc;
@@ -389,7 +397,8 @@ void ImGuiNvrhiRenderer::Render(
             {
                 continue;
             }
-            nvrhi::IBindingSet* set = BindingSet(command.GetTexID());
+            bool linear = false;
+            nvrhi::IBindingSet* set = BindingSet(command.GetTexID(), linear);
             if (set == nullptr)
             {
                 continue;
@@ -402,6 +411,7 @@ void ImGuiNvrhiRenderer::Render(
             state.bindings = {set};
             commandList->setGraphicsState(state);
             // After every state: NVRHI's validation wants them with each.
+            constants.linearTexture = linear ? 1u : 0u;
             commandList->setPushConstants(&constants, sizeof(constants));
             commandList->drawIndexed(nvrhi::DrawArguments()
                                          .setVertexCount(command.ElemCount)

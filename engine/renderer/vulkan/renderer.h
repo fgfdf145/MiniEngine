@@ -43,6 +43,7 @@
 #include "taa_pass.h"
 #include "texture.h"
 #include "tonemap_pass.h"
+#include "hdr_ui_composite.h"
 #include "material_set_cache.h"
 #include "parallel_recorder.h"
 #include "uniform_buffer.h"
@@ -60,6 +61,7 @@
 #include <engine/renderer/path_tracing.h>
 #include <engine/renderer/local_shadows.h>
 #include <engine/renderer/render_features.h>
+#include <engine/platform/display/display_hdr.h>
 
 #include <array>
 #include <deque>
@@ -328,6 +330,10 @@ class VulkanRenderer : public EditorRenderBackendBase
     void UpdateMinimapTexture(const std::string& path);
     void ReleaseMinimapTexture();
     void CreateSwapchainResources();
+    // Copies the display monitor's latest answer (main thread).
+    void UpdateDisplayReport();
+    // Gives the HDR10 swapchain the content's luminance range when it changed (render thread).
+    void ApplyHdrMetadata(const DisplayOutput& display);
     // A view's passes on its targets; the viewport's also build the material pipelines every view
     // draws with (the views' render passes are alike, so compatible).
     void CreateScenePasses(VulkanSceneView& view);
@@ -457,7 +463,8 @@ class VulkanRenderer : public EditorRenderBackendBase
         const glm::vec3& ambientLuminance,
         const EnvironmentUniformData& environment,
         float preExposure);
-    void RecordEditorLayer(nvrhi::ICommandList* commandList, uint32_t imageIndex, uint32_t frameSlot, ImDrawData* drawData) const;
+    // uiWhiteNits: where the HDR10 swapchain shows UI white (the frame's DisplayOutput).
+    void RecordEditorLayer(nvrhi::ICommandList* commandList, uint32_t imageIndex, uint32_t frameSlot, ImDrawData* drawData, float uiWhiteNits) const;
     // Meters the histogram the given frame slot last wrote and moves the frame camera's EV100
     // toward it. Must run after AcquireNextImage has waited on that slot's fence.
     void UpdateAutoExposure(VulkanSceneView& view, Camera& camera, const RenderFramePacket& frame, uint32_t frameSlot);
@@ -700,8 +707,19 @@ class VulkanRenderer : public EditorRenderBackendBase
     // the adapted white point; empty until the first balanced frame.
     WhiteBalanceReferences m_whiteBalanceReferences;
     std::optional<glm::vec2> m_adaptedWhiteXy;
-    // The HDR output setting the current swapchain was created for; a different one recreates it.
+    // What the OS says about the window's display, polled on its own thread; the main thread copies
+    // the latest answer at the start of each frame.
+    std::unique_ptr<platform::display::DisplayHdrMonitor> m_displayMonitor;
+    platform::display::DisplayHdrInfo m_displayInfo;
+    DisplayReport m_displayReport;
+    // The HDR output setting the current swapchain was created for, and whether the display was in
+    // HDR then; a different one recreates it.
     bool m_swapchainHdrRequested = false;
+    bool m_swapchainDisplayHdr = false;
+    // The HDR metadata last given to the swapchain (render thread); reset with the swapchain.
+    std::optional<DisplayOutput> m_appliedHdrMetadata;
+    // The editor frame's float layer and PQ encode while the swapchain is HDR10.
+    std::unique_ptr<HdrUiComposite> m_hdrUi;
     uint32_t m_droppedLightCount = 0;
     uint32_t m_droppedClusterLightCount = 0;
     uint32_t m_droppedLocalShadowCount = 0;

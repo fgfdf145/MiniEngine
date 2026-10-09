@@ -347,6 +347,19 @@ void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state
     AddOption(registry, "render.anti_aliasing.taa", "TAA", "Render/Anti-Aliasing/TAA", "", 0, state.antiAliasing, AntiAliasingMode::Taa);
     AddOption(registry, "render.anti_aliasing.none", "No Anti-Aliasing", "Render/Anti-Aliasing/None", "", 0, state.antiAliasing, AntiAliasingMode::None);
     registry.AddSeparator("Render");
+    // HDR10 when Windows has HDR on for the window's display; the calibration needs it on.
+    Add(
+        registry, "render.hdr_output", "HDR Output", "Render/HDR Output", ICON_PH_SUN, 0,
+        [&state]
+        {
+            state.hdrOutput = !state.hdrOutput;
+        },
+        [&state]
+        {
+            return state.hdrOutput;
+        });
+    AddBound(registry, "render.hdr_calibration", "HDR Calibration", "Render/HDR Calibration...", ICON_PH_MONITOR, 0, scene.openHdrCalibration);
+    registry.AddSeparator("Render");
     // Read at start: the menu marks the backend the next start renders with (Preferences shows which runs).
     AddOption(registry, "render.graphics_api.vulkan", "Vulkan", "Render/Graphics API (Restart)/Vulkan", "", 0, state.graphicsBackend, RenderBackendType::Vulkan);
     AddOption(registry, "render.graphics_api.d3d12", "Direct3D 12", "Render/Graphics API (Restart)/Direct3D 12", "", 0, state.graphicsBackend, RenderBackendType::D3D12);

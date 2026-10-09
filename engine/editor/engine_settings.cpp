@@ -564,6 +564,8 @@ bool UpdateEngineViewSettings(EngineViewSettings& view, const Camera& camera, co
     current.autoWhiteBalance = camera.autoWhiteBalance;
     current.renderDebug = renderDebug;
     current.renderDebug.gbufferView = GBufferDebugView::Off;
+    // The calibration screen's pattern is never saved.
+    current.renderDebug.calibrationView = {};
     if (current == view)
     {
         return false;

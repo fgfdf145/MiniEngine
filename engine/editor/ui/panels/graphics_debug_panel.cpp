@@ -2,6 +2,9 @@
 
 #include <engine/editor/editor_ui.h>
 #include <engine/editor/ui/editor_ui_internal.h>
+#include <engine/editor/ui/framework/editor_window_manager.h>
+#include <engine/editor/ui/windows/hdr_calibration_window.h>
+#include <engine/editor/ui_colors.h>
 #include <engine/renderer/render_features.h>
 
 #include <IconsPhosphor.h>
@@ -63,6 +66,95 @@ const char* RayTracingOffReason(const EditorSharedState& state, const RenderFeat
         return "Hardware ray tracing is switched off";
     }
     return state.renderDebug.khronosReference ? "Off in the Khronos reference view" : "Off in the forward-only order";
+}
+
+// HDR output: the switch, what the display reports and what the output uses, the UI and paper white,
+// and the calibration screen.
+void DrawHdrOutput(EditorContext& context, RenderDebugSettings& debug)
+{
+    const EditorDisplayStatus& display = context.state.display;
+    const platform::display::DisplayHdrInfo& report = display.report;
+    const DisplayOutput& output = display.output;
+    ImGui::Checkbox("HDR output", &debug.hdrOutput);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("HDR10 when Windows has HDR on for this display (Settings > Display > Use HDR).\n"
+                          "The editor's UI stays as bright as in SDR; the scene's highlights go up to the calibrated peak.");
+    }
+    if (report.known)
+    {
+        ImGui::TextDisabled(
+            "Display: %s, reports peak %.0f / full frame %.0f / black %.4f cd/m^2, SDR content %.0f",
+            report.hdrEnabled ? "HDR on" : "HDR off",
+            report.maxLuminance,
+            report.maxFullFrameLuminance,
+            report.minLuminance,
+            report.sdrWhiteNits);
+    }
+    if (output.hdr)
+    {
+        ImGui::TextDisabled(
+            "HDR10: peak %.0f, black %.4f, UI white %.0f, paper white %.0f cd/m^2 (%s)",
+            output.maxLuminance,
+            output.minLuminance,
+            output.uiWhiteNits,
+            output.paperWhiteNits,
+            debug.display.calibrated ? "calibrated" : "the display's figures");
+    }
+    else if (debug.hdrOutput)
+    {
+        ImGui::TextColored(
+            ui_colors::kTextWarning, "SDR: turn on Use HDR in Windows' display settings for this display");
+    }
+    if (debug.hdrOutput && display.backend == RenderBackendType::Vulkan)
+    {
+        // NVIDIA layers Vulkan's HDR swapchain over DXGI, which presents in bursts when the GPU is busy.
+        ImGui::TextColored(
+            ui_colors::kTextWarning, "Vulkan presents HDR unevenly on NVIDIA: Direct3D 12 is smoother (Render > Graphics API)");
+    }
+
+    ImGui::BeginDisabled(!debug.hdrOutput);
+    // 0 follows Windows' SDR content brightness, so the editor and the scene's midtones look the same
+    // in HDR as in SDR.
+    bool followWindows = debug.display.uiWhiteNits <= 0.0f;
+    if (ImGui::Checkbox("UI white follows Windows", &followWindows))
+    {
+        debug.display.uiWhiteNits = followWindows ? 0.0f : output.uiWhiteNits;
+    }
+    if (!followWindows)
+    {
+        DragFloatInRange("UI white (cd/m^2)", &debug.display.uiWhiteNits, kMinUiWhiteNits, kMaxUiWhiteNits, "%.0f");
+    }
+    bool followUi = debug.display.paperWhiteNits <= 0.0f;
+    if (ImGui::Checkbox("Scene paper white follows UI white", &followUi))
+    {
+        debug.display.paperWhiteNits = followUi ? 0.0f : output.paperWhiteNits;
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Where GT7's 250 cd/m^2 SDR paper white lands in HDR. Following the UI white keeps the\n"
+                          "scene's midtones as bright as in SDR on this desktop; only the highlights go further.");
+    }
+    if (!followUi)
+    {
+        DragFloatInRange("Paper white (cd/m^2)", &debug.display.paperWhiteNits, kMinUiWhiteNits, kMaxUiWhiteNits, "%.0f");
+    }
+    ImGui::EndDisabled();
+
+    ImGui::BeginDisabled(!output.hdr);
+    if (ImGui::Button(ICON_PH_MONITOR " HDR Calibration..."))
+    {
+        context.windows.Open<HdrCalibrationWindow>();
+    }
+    ImGui::EndDisabled();
+    if (debug.display.calibrated)
+    {
+        ImGui::SameLine();
+        if (ImGui::Button("Use the display's figures"))
+        {
+            debug.display.calibrated = false;
+        }
+    }
 }
 
 // The line under a section whose pass the pipeline does not run, saying why.
@@ -560,9 +652,7 @@ void GraphicsDebugPanel::OnGui(EditorContext& context)
     DragFloatInRange("Exposure (EV)##toon", &debug.toonExposureEv, -4.0f, 4.0f, "%+.2f");
 
     ImGui::SeparatorText("Output");
-    // HDR output (hdr_output / hdr_peak_nits) is not offered here: on NVIDIA's Vulkan driver an HDR
-    // swapchain presents unevenly, so it stays off until that is solved. The settings still apply
-    // when set in the settings file.
+    DrawHdrOutput(context, debug);
     // Also Render > Tone Mapping. The Khronos reference view always uses PBR Neutral.
     static constexpr std::array<const char*, 3> kToneMapperNames = {"GT7", "PBR Neutral", "None (clipped)"};
     int toneMapper = static_cast<int>(debug.toneMapper);

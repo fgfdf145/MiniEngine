@@ -90,6 +90,8 @@ struct EditorCommandState
     bool gbufferAvailable = true;
     // The Khronos reference view picks its own tone mapping, so the choice is disabled while it is on.
     bool khronosReference = false;
+    // Render > HDR Output: RenderDebugSettings::hdrOutput.
+    bool hdrOutput = false;
     // The command palette (a search over every command's label) opens when this is set.
     bool commandPaletteRequested = false;
     // The viewport is being recorded to a video (Tools > Record Viewport). The editor UI sets it
@@ -140,6 +142,8 @@ struct EditorSceneCommands
     std::function<void()> createEntity;
     std::function<void(LightType)> createLight;
     std::function<void()> openSceneSettings;
+    // Render > HDR Calibration: the PS5-style luminance screens (HdrCalibrationWindow).
+    std::function<void()> openHdrCalibration;
     std::function<void()> captureViewport;
     std::function<void()> toggleVideoRecording; // Record Viewport: starts or stops
     std::function<void()> toggleQuadRecording;  // Record Quad Cameras: starts or stops

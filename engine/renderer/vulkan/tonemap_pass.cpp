@@ -24,9 +24,17 @@ struct TonemapPushConstants
     uint32_t toneOperator = 0;
     // The white balance matrix's columns, xyz used (see WhiteBalanceMatrix).
     glm::vec4 whiteBalance[3] = {glm::vec4(1.0f, 0.0f, 0.0f, 0.0f), glm::vec4(0.0f, 1.0f, 0.0f, 0.0f), glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)};
+    // The HDR calibration (see DisplayOutput).
+    float uiWhiteNits = kDefaultUiWhiteNits;
+    float blackNits = 0.0f;
+    float paperWhiteScale = 1.0f;
+    // A CalibrationPattern and its level in cd/m^2.
+    uint32_t pattern = 0;
+    float patternLevel = 0.0f;
+    float padding[3] = {};
 };
 
-static_assert(sizeof(TonemapPushConstants) == 64, "TonemapPushConstants must match the shader's block");
+static_assert(sizeof(TonemapPushConstants) == 96, "TonemapPushConstants must match the shader's block");
 
 constexpr uint32_t kOperatorGt7 = 0;
 // The Khronos reference view: PBR Neutral plus the Sample Viewer's 2.2 gamma on an SDR display.
@@ -149,13 +157,19 @@ void VulkanTonemapPass::Record(
 
     TonemapPushConstants constants{};
     constants.gbufferView = static_cast<uint32_t>(frame.gbufferView);
-    constants.hdrOutput = frame.hdrOutput ? 1u : 0u;
-    constants.peakNits = frame.hdrPeakNits;
+    constants.hdrOutput = frame.display.hdr ? 1u : 0u;
+    constants.peakNits = frame.display.maxLuminance;
     constants.toneOperator = ToneOperator(frame);
     for (int column = 0; column < 3; ++column)
     {
         constants.whiteBalance[column] = glm::vec4(frame.whiteBalance[column], 0.0f);
     }
+    constants.uiWhiteNits = frame.display.uiWhiteNits;
+    constants.blackNits = frame.display.minLuminance;
+    // The Khronos reference view renders as the Sample Viewer does: no paper white lift.
+    constants.paperWhiteScale = frame.khronosReference ? 1.0f : HdrPaperWhiteScale(frame.display);
+    constants.pattern = static_cast<uint32_t>(frame.calibrationView.pattern);
+    constants.patternLevel = frame.calibrationView.level;
     commandList->setPushConstants(&constants, sizeof(constants));
     commandList->draw(nvrhi::DrawArguments().setVertexCount(3));
 }

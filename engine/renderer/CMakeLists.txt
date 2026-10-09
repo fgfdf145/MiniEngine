@@ -24,6 +24,8 @@ add_library(engine_render_core
     cpu_stage_timer.h
     ddgi_volume.cpp
     ddgi_volume.h
+    display_calibration.cpp
+    display_calibration.h
     environment_brdf.cpp
     environment_brdf.h
     exposure.cpp
@@ -219,6 +221,8 @@ add_library(engine_renderer
     vulkan/texture.cpp
     vulkan/texture.h
     vulkan/tonemap_pass.cpp
+    vulkan/hdr_ui_composite.cpp
+    vulkan/hdr_ui_composite.h
     vulkan/transmission_copy.cpp
     vulkan/transmission_copy.h
     vulkan/tonemap_pass.h
@@ -254,6 +258,7 @@ set(MINIENGINE_SHADER_SOURCES
     deferred_lighting.frag
     fullscreen.vert
     tonemap.frag
+    hdr_ui_encode.frag
     exposure_histogram.comp
     vbao_trace.comp
     vbao_resolve.comp

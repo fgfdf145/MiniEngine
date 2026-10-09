@@ -55,6 +55,14 @@ class GpuSwapchain
     virtual VkExtent2D GetExtent() const = 0;
     // HDR10: 10-bit, PQ-encoded Rec.2020 (hdr_output.slang).
     virtual bool IsHdr() const = 0;
+    // Tells the display the HDR10 content's range (static metadata: MaxCLL, MaxFALL and the mastering
+    // luminances, Rec.2020 primaries) where the API takes it; nothing on an SDR swapchain.
+    virtual void SetHdrMetadata(float maxLuminance, float maxFrameAverageLuminance, float minLuminance)
+    {
+        (void)maxLuminance;
+        (void)maxFrameAverageLuminance;
+        (void)minLuminance;
+    }
 
     // The image the frame of frameSlot draws into. The frame slot's previous frame has finished.
     virtual SwapchainStatus Acquire(uint32_t frameSlot, uint32_t& imageIndex) = 0;
