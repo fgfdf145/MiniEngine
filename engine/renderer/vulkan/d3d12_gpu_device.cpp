@@ -104,7 +104,10 @@ class D3D12GpuSwapchain final : public GpuSwapchain
             throw std::runtime_error("The window has no HWND for a DXGI swapchain");
         }
         m_extent = {std::max(extent.width, 1u), std::max(extent.height, 1u)};
-        m_hdr = preferHdr && DisplaySupportsHdr(factory, hwnd);
+        // MINIENGINE_FORCE_HDR10=1: HDR10 whatever mode the display is in, for comparing the encoding
+        // with captures (MINIENGINE_CAPTURE_WINDOW) on an SDR display; never the display's own mode.
+        const char* const forceHdr = std::getenv("MINIENGINE_FORCE_HDR10");
+        m_hdr = preferHdr && ((forceHdr != nullptr && forceHdr[0] == '1') || DisplaySupportsHdr(factory, hwnd));
         if (preferHdr && !m_hdr)
         {
             LOG_WARN("HDR output was requested, but the window's display is not in HDR mode; presenting SDR");
@@ -316,6 +319,18 @@ class D3D12GpuDevice final : public GpuDevice
             ComPtr<ID3D12InfoQueue1> infoQueue;
             if (SUCCEEDED(m_device.As(&infoQueue)))
             {
+                // Advice, not faults: clears without an optimized clear value (NVRHI's targets have
+                // none), and buffers' initial states, which D3D12 always takes as COMMON.
+                D3D12_MESSAGE_ID ignored[] = {
+                    D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE,
+                    D3D12_MESSAGE_ID_CLEARDEPTHSTENCILVIEW_MISMATCHINGCLEARVALUE,
+                    D3D12_MESSAGE_ID_CREATERESOURCE_STATE_IGNORED,
+                };
+                D3D12_INFO_QUEUE_FILTER filter{};
+                filter.DenyList.NumIDs = static_cast<UINT>(std::size(ignored));
+                filter.DenyList.pIDList = ignored;
+                infoQueue->AddStorageFilterEntries(&filter);
+                infoQueue->AddRetrievalFilterEntries(&filter);
                 DWORD cookie = 0;
                 infoQueue->RegisterMessageCallback(
                     [](D3D12_MESSAGE_CATEGORY, D3D12_MESSAGE_SEVERITY severity, D3D12_MESSAGE_ID, LPCSTR description, void*)

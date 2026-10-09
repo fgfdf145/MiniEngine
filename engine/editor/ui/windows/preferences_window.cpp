@@ -54,12 +54,37 @@ void PreferencesWindow::OnGui(EditorContext& context)
     ImGui::Checkbox("Mute", &audio.muted);
     ImGui::TextDisabled("Output: %s", context.state.audioStatus.empty() ? "None" : context.state.audioStatus.c_str());
     DrawProcessSection(context);
+    DrawGraphicsApiSection(context);
     ImGui::SeparatorText("Rendering");
     ImGui::TextUnformatted("Debug views, tone mapping and the render passes' switches are in");
     ImGui::TextUnformatted("the Graphics Debug window.");
     if (ImGui::Button("Open Graphics Debug"))
     {
         context.windows.Open<GraphicsDebugPanel>();
+    }
+}
+
+void PreferencesWindow::DrawGraphicsApiSection(EditorContext& context)
+{
+    ImGui::SeparatorText("Graphics API");
+    RenderBackendType& backend = context.state.commands.graphicsBackend;
+    if (ImGui::BeginCombo("Backend", ToString(backend)))
+    {
+        for (const RenderBackendType option : {RenderBackendType::Vulkan, RenderBackendType::D3D12})
+        {
+            if (ImGui::Selectable(ToString(option), option == backend))
+            {
+                backend = option;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("The graphics API the engine renders with: Vulkan or Direct3D 12. Both run every feature (ray tracing, "
+                          "path tracing, DLSS and ray reconstruction, HDR output). Read at start: restart the engine to switch.");
+    ImGui::TextDisabled("Running: %s", ToString(context.frame.backendType));
+    if (backend != context.frame.backendType)
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "Restart the engine to render with %s.", ToString(backend));
     }
 }
 

@@ -2540,15 +2540,28 @@ void VulkanRenderer::CaptureViewportNow(const std::filesystem::path& path)
         {
             std::vector<uint8_t> pixels(static_cast<size_t>(desc.width) * desc.height * 4);
             const bool bgra = desc.format == nvrhi::Format::BGRA8_UNORM || desc.format == nvrhi::Format::SBGRA8_UNORM;
+            // HDR10's back buffer: its PQ code values, 10 bits a channel, kept to their top 8.
+            const bool tenBit = desc.format == nvrhi::Format::R10G10B10A2_UNORM;
             for (uint32_t row = 0; row < desc.height; ++row)
             {
                 for (uint32_t x = 0; x < desc.width; ++x)
                 {
                     const uint8_t* texel = mapped + row * rowPitch + x * 4;
                     uint8_t* out = &pixels[(static_cast<size_t>(row) * desc.width + x) * 4];
-                    out[0] = bgra ? texel[2] : texel[0];
-                    out[1] = texel[1];
-                    out[2] = bgra ? texel[0] : texel[2];
+                    if (tenBit)
+                    {
+                        uint32_t packed = 0;
+                        std::memcpy(&packed, texel, sizeof(packed));
+                        out[0] = static_cast<uint8_t>((packed >> 2) & 0xffu);
+                        out[1] = static_cast<uint8_t>((packed >> 12) & 0xffu);
+                        out[2] = static_cast<uint8_t>((packed >> 22) & 0xffu);
+                    }
+                    else
+                    {
+                        out[0] = bgra ? texel[2] : texel[0];
+                        out[1] = texel[1];
+                        out[2] = bgra ? texel[0] : texel[2];
+                    }
                     out[3] = 255;
                 }
             }

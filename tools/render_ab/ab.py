@@ -182,9 +182,10 @@ def run(case, variant, tag):
     exe, shaders = EXES[variant]
     cmd = [exe, "--project", ROOT, "--assets", ASSETS, "--shaders", shaders, "--state", state,
            "--wait-for-scene", "--frames", str(FRAMES), "--capture", capture, "--no-audio"] + extra
-    # AB_BACKEND=d3d12 runs the cur variant on Direct3D 12; the base (main) stays Vulkan.
-    if os.environ.get("AB_BACKEND") and variant == "cur":
-        cmd += ["--backend", os.environ["AB_BACKEND"]]
+    # AB_BACKEND=d3d12 runs the cur variant on Direct3D 12; the base (main) stays Vulkan. The cur
+    # variant always names its backend, so the Preferences' saved choice never decides.
+    if variant == "cur":
+        cmd += ["--backend", os.environ.get("AB_BACKEND") or "vulkan"]
     with open(log, "w", encoding="utf-8") as f:
         r = subprocess.run(cmd, cwd=ROOT, stdout=f, stderr=subprocess.STDOUT, env=env, timeout=900)
     if r.returncode != 0 or not os.path.exists(capture):

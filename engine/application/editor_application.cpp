@@ -517,6 +517,7 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--backend")
         {
             options.renderBackend = ParseRenderBackend(ReadRequiredArgument(i, argc, argv, argument));
+            options.renderBackendFromArgs = true;
             continue;
         }
 
@@ -772,6 +773,24 @@ int EditorApplication::Run()
             // The editor works without sound.
             LOG_WARN("No audio output: {}", audioError);
             sharedState->audioStatus = "None: " + audioError;
+        }
+    }
+    if (!m_options.renderBackendFromArgs)
+    {
+        // Preferences > Graphics API; a backend this machine cannot run falls back to Vulkan.
+        EngineSettings settings;
+        std::string settingsError;
+        if (LoadEngineSettings(BuildEngineSettingsPath(), settings, settingsError))
+        {
+            const RenderBackendType saved = settings.graphics.backend;
+            if (const std::optional<std::string> runtimeError = GetRenderBackendRuntimeError(saved); runtimeError.has_value())
+            {
+                LOG_WARN("The saved render backend {} is unavailable ({}); using {}", ToString(saved), *runtimeError, ToString(m_options.renderBackend));
+            }
+            else
+            {
+                m_options.renderBackend = saved;
+            }
         }
     }
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));

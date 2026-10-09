@@ -21,6 +21,7 @@ class PreferencesWindow final : public EditorWindow
 
   private:
     void DrawProcessSection(EditorContext& context);
+    void DrawGraphicsApiSection(EditorContext& context);
     void DrawCpuGrid(platform::process::ProcessAllocation& allocation);
 
     // Read once: the CPUs do not change while the engine runs.

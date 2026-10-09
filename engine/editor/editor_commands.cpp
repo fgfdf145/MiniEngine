@@ -347,6 +347,10 @@ void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state
     AddOption(registry, "render.anti_aliasing.taa", "TAA", "Render/Anti-Aliasing/TAA", "", 0, state.antiAliasing, AntiAliasingMode::Taa);
     AddOption(registry, "render.anti_aliasing.none", "No Anti-Aliasing", "Render/Anti-Aliasing/None", "", 0, state.antiAliasing, AntiAliasingMode::None);
     registry.AddSeparator("Render");
+    // Read at start: the menu marks the backend the next start renders with (Preferences shows which runs).
+    AddOption(registry, "render.graphics_api.vulkan", "Vulkan", "Render/Graphics API (Restart)/Vulkan", "", 0, state.graphicsBackend, RenderBackendType::Vulkan);
+    AddOption(registry, "render.graphics_api.d3d12", "Direct3D 12", "Render/Graphics API (Restart)/Direct3D 12", "", 0, state.graphicsBackend, RenderBackendType::D3D12);
+    registry.AddSeparator("Render");
     // The passes load their SPIR-V once, when they are built; the renderer cannot rebuild them yet.
     AddBound(registry, "render.reload_shaders", "Reload Shaders", "Render/Reload Shaders", ICON_PH_ARROWS_CLOCKWISE, ImGuiMod_Ctrl | ImGuiKey_R, scene.reloadShaders);
 }

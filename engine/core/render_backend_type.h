@@ -58,6 +58,12 @@ inline bool UsesInvertedRenderYAxis(RenderBackendType backendType)
     return backendType == RenderBackendType::Vulkan || backendType == RenderBackendType::D3D12;
 }
 
+// The name --backend and the settings file spell it with.
+inline const char* ToSettingsName(RenderBackendType backendType)
+{
+    return backendType == RenderBackendType::D3D12 ? "d3d12" : "vulkan";
+}
+
 inline bool TryParseRenderBackendType(std::string_view value, RenderBackendType& backendType)
 {
     if (value == "vulkan")

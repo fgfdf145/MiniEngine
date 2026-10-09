@@ -234,6 +234,7 @@ void EditorUiController::BeginFrame(SDL_Window* window, const EngineSettings& se
     {
         m_style.ApplySettings(settings.editorUi);
         m_state.audio = settings.audio;
+        m_state.commands.graphicsBackend = settings.graphics.backend;
         m_state.process = settings.process;
         m_state.quadRecording = settings.quadRecording;
         m_state.photoMode = settings.photoMode;
@@ -250,6 +251,7 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
 {
     settings.version = 1;
     settings.audio = m_state.audio;
+    settings.graphics.backend = m_state.commands.graphicsBackend;
     settings.process = m_state.process;
     settings.quadRecording = m_state.quadRecording;
     settings.photoMode = m_state.photoMode;
@@ -295,6 +297,7 @@ EditorUiFrameResult EditorUiController::Draw(
 
     const float previousUiScale = m_style.UiScaleMultiplier();
     const EngineAudioSettings previousAudio = m_state.audio;
+    const RenderBackendType previousGraphicsBackend = m_state.commands.graphicsBackend;
     const platform::process::ProcessAllocation previousProcess = m_state.process;
     const QuadRecordingSettings previousQuadRecording = m_state.quadRecording;
     const PhotoModeSettings previousPhotoMode = m_state.photoMode;
@@ -356,7 +359,7 @@ EditorUiFrameResult EditorUiController::Draw(
     // The Theme panel sets engineSettingsChanged itself when the palette changes.
     result.engineSettingsChanged = result.engineSettingsChanged ||
                                    std::abs(previousUiScale - m_style.UiScaleMultiplier()) > 0.0001f ||
-                                   windowToggled || previousAudio != m_state.audio ||
+                                   windowToggled || previousAudio != m_state.audio || previousGraphicsBackend != m_state.commands.graphicsBackend ||
                                    previousProcess != m_state.process ||
                                    previousQuadRecording != m_state.quadRecording || previousPhotoMode != m_state.photoMode;
 

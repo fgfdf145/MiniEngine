@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include <imgui.h>
+#include <engine/core/render_backend_type.h>
 #include <engine/platform/process/process_allocation.h>
 #include <engine/editor/services/photo_mode.h>
 #include <engine/editor/services/quad_recording.h>
@@ -79,11 +80,21 @@ struct EngineAudioSettings
     }
 };
 
+// The Preferences window's Graphics API: the backend the next start renders with (--backend
+// overrides it for one run).
+struct EngineGraphicsSettings
+{
+    bool operator==(const EngineGraphicsSettings&) const = default;
+
+    RenderBackendType backend = RenderBackendType::Vulkan;
+};
+
 struct EngineSettings
 {
     int version = 1;
     EditorUiSettings editorUi;
     EngineAudioSettings audio;
+    EngineGraphicsSettings graphics;
     // The Preferences window's Process section: the priority class and the CPUs the engine runs on.
     platform::process::ProcessAllocation process;
     EngineViewSettings view;

@@ -5,6 +5,7 @@
 #include "command_registry.h"
 #include "ui/editor_menu_toolbar.h"
 
+#include <engine/core/render_backend_type.h>
 #include <engine/renderer/render_types.h>
 #include <engine/scene/scene_components.h>
 
@@ -75,6 +76,9 @@ struct EditorCommandState
     // Window > Auto Layout: the docks round the viewport are sized so it shows a fixed viewport
     // resolution at its own size (see ViewportAutoLayout). Kept in the editor settings.
     bool autoLayout = false;
+    // Render > Graphics API and Preferences > Graphics API: the backend the next start renders with
+    // (EngineGraphicsSettings, kept in the editor settings).
+    RenderBackendType graphicsBackend = RenderBackendType::Vulkan;
     // The pipeline modes map onto the render settings: Path Tracing is PathTracingSettings::enabled,
     // Hybrid the ray traced effects (RenderDebugSettings::hardwareRayTracing) and Rasterization neither;
     // the Ray Tracing switch is hardwareRayTracing itself. Hybrid, Path Tracing and the switch need a

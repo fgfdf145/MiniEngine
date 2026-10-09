@@ -612,6 +612,13 @@ bool LoadEngineSettings(const std::filesystem::path& path, EngineSettings& setti
                 std::clamp(ReadFloatOrDefault(audioNode["master_volume"], settings.audio.masterVolume), 0.0f, 1.0f);
             settings.audio.muted = ReadBoolOrDefault(audioNode["muted"], settings.audio.muted);
         }
+        if (const YAML::Node graphicsNode = root["graphics"]; graphicsNode && graphicsNode.IsMap())
+        {
+            if (const YAML::Node backendNode = graphicsNode["backend"]; backendNode && backendNode.IsScalar())
+            {
+                TryParseRenderBackendType(backendNode.as<std::string>(), settings.graphics.backend);
+            }
+        }
         LoadProcessSettings(root["process"], settings.process);
         LoadQuadRecordingSettings(root["quad_recording"], settings.quadRecording);
         LoadPhotoModeSettings(root["photo_mode"], settings.photoMode);
@@ -701,6 +708,9 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         output << "  \"audio\": {\n";
         output << "    \"master_volume\": " << std::fixed << std::setprecision(3) << settings.audio.masterVolume << ",\n";
         output << "    \"muted\": " << JsonBool(settings.audio.muted) << "\n";
+        output << "  },\n";
+        output << "  \"graphics\": {\n";
+        output << "    \"backend\": \"" << ToSettingsName(settings.graphics.backend) << "\"\n";
         output << "  },\n";
         WriteProcessSettings(output, settings.process);
         WriteQuadRecordingSettings(output, settings.quadRecording);

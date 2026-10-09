@@ -26,6 +26,8 @@ struct EditorApplicationOptions
     // into it and refer the car to them, then exit (docs/design/2026-10-08-tyre-library-design.md).
     std::vector<std::pair<std::string, std::string>> adoptCarTyres;
     RenderBackendType renderBackend = GetDefaultRenderBackendType();
+    // --backend named it; otherwise the Preferences window's saved choice decides at start.
+    bool renderBackendFromArgs = false;
     std::optional<std::string> startupModelPath;
     // A scene file loaded in place of the two-cube test scene, the way File > Open would load it.
     std::optional<std::string> startupScenePath;
