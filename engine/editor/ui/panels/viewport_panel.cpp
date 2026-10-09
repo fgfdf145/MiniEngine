@@ -65,6 +65,9 @@ struct ViewportOverlayRect
     ImVec2 size{0.0f, 0.0f};
     ImDrawList* drawList = nullptr;
     bool hovered = false;
+    // Hovered even while a popup is open elsewhere: what the scene camera's mouse buttons and wheel
+    // follow (a right click outside a popup closes it and looks around, as before).
+    bool mouseOver = false;
     bool focused = false;
 };
 
@@ -109,6 +112,7 @@ ViewportOverlayRect BuildViewportOverlayRect(ImTextureID viewportTextureId, bool
     rect.origin = ImGui::GetItemRectMin();
     rect.size = ImGui::GetItemRectSize();
     rect.hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    rect.mouseOver = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_AllowWhenBlockedByPopup);
     rect.focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
     return rect;
@@ -1346,6 +1350,7 @@ void ViewportPanel::OnGui(EditorContext& context)
         viewportRect.size.x,
         viewportRect.size.y};
     result.viewportAllowsMouseInteraction = viewportRect.size.x > 0.0f && viewportRect.size.y > 0.0f;
+    result.viewportMouseOver = viewportRect.mouseOver;
     // While driving, R puts the car back on its wheels rather than switching the gizmo.
     if (!state.vehicleStatus.active)
     {

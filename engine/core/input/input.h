@@ -90,7 +90,10 @@ class InputState
     void HandleEvent(const SDL_Event& event);
     void Update();
     void EndFrame();
-    void SetViewportInteractionRegion(const SDL_FRect& rect, bool enabled);
+    // The viewport's picture on the window and whether it takes the mouse at all. hovered: whether the
+    // picture is what the UI has under the mouse (no window over it there); presses and the wheel over
+    // a window that covers the picture are that window's. A look or pan already going on keeps going.
+    void SetViewportInteractionRegion(const SDL_FRect& rect, bool enabled, bool hovered = true);
 
     bool IsKeyDown(KeyCode key) const;
 
@@ -155,6 +158,7 @@ class InputState
     bool m_mouseLookActive = false;
     bool m_mousePanActive = false;
     bool m_viewportInteractionEnabled = false;
+    bool m_viewportHovered = true;
     bool m_hasMouseLookAnchor = false;
     bool m_shouldRestoreMouseLookAnchor = false;
     int m_mouseLookAnchorX = 0;

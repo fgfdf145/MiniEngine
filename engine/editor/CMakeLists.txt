@@ -1,3 +1,6 @@
+# The Material Editor's preview renderer, optimised in every configuration (see its CMakeLists.txt).
+add_subdirectory(material_preview)
+
 add_library(engine_editor
     command_registry.cpp
     command_registry.h
@@ -59,9 +62,9 @@ add_library(engine_editor
     ui/editor_material_graph.h
     ui/editor_menu_toolbar.cpp
     ui/editor_menu_toolbar.h
-    ui/editor_model_preview.cpp
-    ui/editor_model_preview.h
     ui/editor_ui_internal.h
+    ui/editor_user_texture.cpp
+    ui/editor_user_texture.h
     ui/editor_ui_shared.cpp
     ui/editor_vehicle_overlay.cpp
     ui/editor_vehicle_overlay.h
@@ -111,8 +114,8 @@ add_library(engine_editor
     ui/panels/viewport_panel.h
     ui/windows/keyboard_shortcuts_window.cpp
     ui/windows/keyboard_shortcuts_window.h
-    ui/windows/model_processor_window.cpp
-    ui/windows/model_processor_window.h
+    ui/windows/material_editor_window.cpp
+    ui/windows/material_editor_window.h
     ui/windows/preferences_window.cpp
     ui/windows/preferences_window.h
     ui_colors.h
@@ -172,6 +175,7 @@ target_include_directories(engine_editor
 
 target_link_libraries(engine_editor
     PUBLIC
+        engine_material_preview
         engine_render_core
         engine_audio
         engine_logic

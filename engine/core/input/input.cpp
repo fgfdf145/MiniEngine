@@ -142,10 +142,11 @@ void InputState::EndFrame()
     m_mouseWheelDelta = 0.0f;
 }
 
-void InputState::SetViewportInteractionRegion(const SDL_FRect& rect, bool enabled)
+void InputState::SetViewportInteractionRegion(const SDL_FRect& rect, bool enabled, bool hovered)
 {
     m_viewportInteractionRect = rect;
     m_viewportInteractionEnabled = enabled && rect.w > 0.0f && rect.h > 0.0f;
+    m_viewportHovered = hovered;
     if (!m_viewportInteractionEnabled)
     {
         m_mouseLookActive = false;
@@ -389,7 +390,7 @@ bool InputState::IsValidGamepadAxis(GamepadAxis axis) const
 
 bool InputState::IsViewportInteractionPoint(float x, float y) const
 {
-    if (!m_viewportInteractionEnabled)
+    if (!m_viewportInteractionEnabled || !m_viewportHovered)
     {
         return false;
     }

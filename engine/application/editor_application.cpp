@@ -376,6 +376,12 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--material-editor")
+        {
+            options.materialEditorModel = std::string(ReadRequiredArgument(i, argc, argv, argument));
+            continue;
+        }
+
         if (argument == "--follow-path")
         {
             options.followPath = std::string(ReadRequiredArgument(i, argc, argv, argument));
@@ -806,6 +812,10 @@ int EditorApplication::Run()
     if (m_options.driveView.has_value())
     {
         sharedState->vehicleDrive.cameraView = *m_options.driveView;
+    }
+    if (m_options.materialEditorModel.has_value())
+    {
+        sharedState->editorUi.OpenMaterialEditorOnStart(*m_options.materialEditorModel);
     }
     if (m_options.physicsRateHz.has_value())
     {

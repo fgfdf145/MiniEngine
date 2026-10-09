@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <unordered_set>
@@ -52,6 +53,208 @@ ModelImportedSubmeshInfo BuildImportedSubmeshInfo(const ModelSubmeshData& submes
         submesh.hasTangents};
 }
 
+}
+
+void FillRenderSubmeshMaterial(
+    CpuRenderSubmesh& submesh,
+    const ModelMaterialData& material,
+    bool hasTexCoords,
+    const glm::vec3& nodeScale,
+    const std::function<std::string(const std::string&)>& resolveTexture,
+    const std::string& baseColorOverride)
+{
+    // Everything below is the material's alone: a submesh filled before starts over.
+    submesh.material = GpuMaterialData{};
+    submesh.textures = MaterialTexturePaths{};
+    submesh.textureTransforms = MaterialTextureTransforms{};
+    submesh.toon.reset();
+    submesh.hasTexCoords = hasTexCoords;
+    submesh.doubleSided = material.doubleSided;
+    submesh.alphaMode = material.alphaMode;
+    submesh.material.baseColorFactor[0] = material.baseColor[0];
+    submesh.material.baseColorFactor[1] = material.baseColor[1];
+    submesh.material.baseColorFactor[2] = material.baseColor[2];
+    submesh.material.baseColorFactor[3] = material.baseColor[3] * material.opacity;
+    submesh.material.emissiveFactor[0] = material.emissiveColor[0] * material.emissiveIntensity;
+    submesh.material.emissiveFactor[1] = material.emissiveColor[1] * material.emissiveIntensity;
+    submesh.material.emissiveFactor[2] = material.emissiveColor[2] * material.emissiveIntensity;
+    submesh.material.alphaCutoff = ClampMaterialAlphaValue(material.alphaCutoff, 0.5f);
+    submesh.material.surfaceFactors[0] = material.metallicFactor;
+    submesh.material.surfaceFactors[1] = material.roughnessFactor;
+    submesh.material.surfaceFactors[2] = material.normalScale;
+    submesh.material.surfaceFactors[3] = material.occlusionStrength;
+    submesh.material.nodeGraphFactors[0] = material.blendGraph.enabled ? 1.0f : 0.0f;
+    submesh.material.nodeGraphFactors[1] = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
+    submesh.material.nodeGraphFactors[2] = 1.0f;
+    submesh.material.nodeGraphFactors[3] = 0.0f;
+    // A coat of zero is no coat, a black sheen no sheen: those draws keep the plain base and its
+    // exact shading.
+    const float clearcoat = std::clamp(material.clearcoatFactor, 0.0f, 1.0f);
+    float sheenStrength = 0.0f;
+    for (size_t index = 0; index < 3; ++index)
+    {
+        submesh.material.sheenFactors[index] = std::clamp(material.sheenColorFactor[index], 0.0f, 1.0f);
+        sheenStrength = std::max(sheenStrength, submesh.material.sheenFactors[index]);
+    }
+    submesh.material.sheenFactors[3] = std::clamp(material.sheenRoughnessFactor, 0.0f, 1.0f);
+    const float anisotropyStrength = std::clamp(material.anisotropyStrength, 0.0f, 1.0f);
+    const bool anisotropic = anisotropyStrength > 0.0f;
+    // The dielectric's reflectance, stored before the maps: the IOR's F0 tinted by the colour
+    // factor, and the specular factor. A surface at the defaults, with no maps, keeps the plain
+    // path (F0 0.04, F90 1) without reading GB5.
+    const float ior = SanitizeIor(material.ior);
+    const float reflectance = ior == 0.0f ? 1.0f : ((ior - 1.0f) / (ior + 1.0f)) * ((ior - 1.0f) / (ior + 1.0f));
+    for (size_t index = 0; index < 3; ++index)
+    {
+        submesh.material.specularFactors[index] = reflectance * std::max(material.specularColorFactor[index], 0.0f);
+    }
+    submesh.material.specularFactors[3] = std::clamp(material.specularFactor, 0.0f, 1.0f);
+    const bool customSpecular =
+        ior != 1.5f || material.specularFactor != 1.0f || material.specularColorFactor[0] != 1.0f ||
+        material.specularColorFactor[1] != 1.0f || material.specularColorFactor[2] != 1.0f ||
+        (hasTexCoords && (!material.specularTexturePath.empty() || !material.specularColorTexturePath.empty()));
+    const bool coatNormal = clearcoat > 0.0f && hasTexCoords && !material.clearcoatNormalTexturePath.empty();
+    // A thin film has no room in the G-buffer: it sends the material to the forward pass.
+    const float iridescence = std::clamp(material.iridescenceFactor, 0.0f, 1.0f);
+    submesh.material.iridescenceFactors[0] = iridescence;
+    submesh.material.iridescenceFactors[1] = std::max(material.iridescenceIor, 1.0f);
+    submesh.material.iridescenceFactors[2] = std::max(material.iridescenceThicknessMinimum, 0.0f);
+    submesh.material.iridescenceFactors[3] = std::max(material.iridescenceThicknessMaximum, 0.0f);
+    submesh.material.shadingModel[0] =
+        (clearcoat > 0.0f ? kShadingFlagClearcoat : 0u) | (sheenStrength > 0.0f ? kShadingFlagSheen : 0u) |
+        (anisotropic ? kShadingFlagAnisotropy : 0u) | (customSpecular ? kShadingFlagSpecular : 0u) |
+        (coatNormal ? kShadingFlagCoatNormal : 0u) | (iridescence > 0.0f ? kShadingFlagForward : 0u);
+    // Transmission sends the material to the forward pass, drawn over a copy of the scene behind
+    // it; the volume's thickness is in mesh units, its attenuation distance in metres.
+    const float transmission = std::clamp(material.transmissionFactor, 0.0f, 1.0f);
+    submesh.material.transmissionFactors[0] = transmission;
+    submesh.material.transmissionFactors[1] = std::max(material.thicknessFactor, 0.0f);
+    submesh.material.transmissionFactors[2] = std::max(material.attenuationDistance, 0.0f);
+    for (size_t index = 0; index < 3; ++index)
+    {
+        submesh.material.attenuationColor[index] = std::clamp(material.attenuationColor[index], 0.0f, 1.0f);
+    }
+    // The refraction IOR; KHR_materials_ior's 0 (an infinite index) bends every ray to the normal.
+    submesh.material.attenuationColor[3] = ior == 0.0f ? 1000.0f : ior;
+    submesh.material.volumeScale[0] = nodeScale.x;
+    submesh.material.volumeScale[1] = nodeScale.y;
+    submesh.material.volumeScale[2] = nodeScale.z;
+    if (transmission > 0.0f)
+    {
+        submesh.material.shadingModel[0] |= kShadingFlagTransmission | kShadingFlagForward;
+    }
+    submesh.material.transmissionFactors[3] = std::max(material.dispersion, 0.0f);
+    // Diffuse transmission is shaded by the forward pass, which reads the factor itself.
+    const float diffuseTransmission = std::clamp(material.diffuseTransmissionFactor, 0.0f, 1.0f);
+    for (size_t index = 0; index < 3; ++index)
+    {
+        submesh.material.diffuseTransmission[index] = std::clamp(material.diffuseTransmissionColor[index], 0.0f, 1.0f);
+    }
+    submesh.material.diffuseTransmission[3] = diffuseTransmission;
+    if (diffuseTransmission > 0.0f)
+    {
+        submesh.material.shadingModel[0] |= kShadingFlagForward;
+    }
+    // Volume scatter diffuses the light that diffuse transmission lets into the volume; without it
+    // the Khronos sample viewer's pre-pass gathers nothing, so nothing scatters.
+    if (material.volumeScatter && diffuseTransmission > 0.0f)
+    {
+        submesh.material.volumeScale[3] = 1.0f;
+        for (size_t index = 0; index < 3; ++index)
+        {
+            submesh.material.volumeScatter[index] = std::clamp(material.multiscatterColor[index], 0.0f, 1.0f);
+        }
+        submesh.material.volumeScatter[3] = ClampScatterAnisotropy(material.scatterAnisotropy);
+    }
+    submesh.material.clearcoatFactors[2] = material.clearcoatNormalScale;
+    // Unlit shows the base colour alone; transforms only matter where there are textures.
+    if (material.unlit)
+    {
+        submesh.material.shadingModel[0] |= kShadingFlagUnlit;
+    }
+    // A decal lends the surface under it its albedo, metallic, roughness and emission. A material
+    // that needs the forward pass or no lighting cannot be one.
+    submesh.decal = material.decal && material.alphaMode == MaterialAlphaMode::Blend &&
+                          (submesh.material.shadingModel[0] & (kShadingFlagForward | kShadingFlagUnlit)) == 0u;
+    submesh.textureSamplers = material.textureSamplers;
+    // A toon material is the toon passes' to shade: the geometry pass still lays down its depth,
+    // normals and motion, and the forward flag keeps the lighting pass off its pixels.
+    if (material.toon && hasTexCoords)
+    {
+        submesh.toon = material.toon;
+        submesh.material.shadingModel[0] |= kShadingFlagForward;
+        submesh.decal = false;
+    }
+    // The mask reads the first UV set, so without one there are no detail layers.
+    if (hasTexCoords && material.detailLayers.IsEnabled())
+    {
+        const MaterialDetailLayers& layers = material.detailLayers;
+        submesh.material.shadingModel[2] = static_cast<uint32_t>(layers.mapping);
+        for (size_t layer = 0; layer < kDetailLayerCount; ++layer)
+        {
+            submesh.material.detailLayerScales[layer * 2] = layers.layerScales[layer][0];
+            submesh.material.detailLayerScales[layer * 2 + 1] = layers.layerScales[layer][1];
+            submesh.textures.detailLayers[layer] = resolveTexture(layers.layerTexturePaths[layer]);
+        }
+        submesh.material.detailLayerParams[0] = std::max(layers.intensity, 0.0f);
+        submesh.textures.detailMask = resolveTexture(layers.maskTexturePath);
+    }
+    if (hasTexCoords && !AreIdentity(material.textureTransforms))
+    {
+        submesh.textureTransforms = material.textureTransforms;
+        submesh.material.shadingModel[1] = 1u;
+    }
+    submesh.material.anisotropyFactors[0] = anisotropic ? anisotropyStrength : 0.0f;
+    submesh.material.anisotropyFactors[1] = std::cos(material.anisotropyRotation);
+    submesh.material.anisotropyFactors[2] = std::sin(material.anisotropyRotation);
+    submesh.material.clearcoatFactors[0] = clearcoat;
+    submesh.material.clearcoatFactors[1] = std::clamp(material.clearcoatRoughnessFactor, 0.0f, 1.0f);
+    if (hasTexCoords)
+    {
+        submesh.textures.baseColor = baseColorOverride.empty() ? resolveTexture(material.baseColorTexturePath) : baseColorOverride;
+        submesh.textures.normal = resolveTexture(material.normalTexturePath);
+        submesh.textures.metallic = resolveTexture(material.metallicTexturePath);
+        submesh.textures.roughness = resolveTexture(material.roughnessTexturePath);
+        submesh.textures.occlusion = resolveTexture(material.occlusionTexturePath);
+        submesh.textures.emissive = resolveTexture(material.emissiveTexturePath);
+        submesh.textures.secondaryBaseColor = material.blendGraph.secondaryBaseColorTexturePath.empty()
+                                                        ? submesh.textures.baseColor
+                                                        : material.blendGraph.secondaryBaseColorTexturePath;
+        submesh.textures.secondaryNormal = material.blendGraph.secondaryNormalTexturePath.empty()
+                                                     ? submesh.textures.normal
+                                                     : material.blendGraph.secondaryNormalTexturePath;
+        submesh.textures.secondaryMetallic = material.blendGraph.secondaryMetallicTexturePath.empty()
+                                                       ? submesh.textures.metallic
+                                                       : material.blendGraph.secondaryMetallicTexturePath;
+        submesh.textures.secondaryRoughness = material.blendGraph.secondaryRoughnessTexturePath.empty()
+                                                        ? submesh.textures.roughness
+                                                        : material.blendGraph.secondaryRoughnessTexturePath;
+        submesh.textures.secondaryOcclusion = material.blendGraph.secondaryOcclusionTexturePath.empty()
+                                                        ? submesh.textures.occlusion
+                                                        : material.blendGraph.secondaryOcclusionTexturePath;
+        submesh.textures.secondaryEmissive = material.blendGraph.secondaryEmissiveTexturePath.empty()
+                                                       ? submesh.textures.emissive
+                                                       : material.blendGraph.secondaryEmissiveTexturePath;
+        submesh.textures.blendMask = material.blendGraph.blendMaskTexturePath;
+        submesh.textures.clearcoat = resolveTexture(material.clearcoatTexturePath);
+        submesh.textures.clearcoatRoughness = resolveTexture(material.clearcoatRoughnessTexturePath);
+        submesh.textures.sheenColor = resolveTexture(material.sheenColorTexturePath);
+        submesh.textures.sheenRoughness = resolveTexture(material.sheenRoughnessTexturePath);
+        submesh.textures.anisotropy = resolveTexture(material.anisotropyTexturePath);
+        submesh.textures.specular = resolveTexture(material.specularTexturePath);
+        submesh.textures.specularColor = resolveTexture(material.specularColorTexturePath);
+        submesh.textures.clearcoatNormal = resolveTexture(material.clearcoatNormalTexturePath);
+        submesh.textures.iridescence = resolveTexture(material.iridescenceTexturePath);
+        submesh.textures.iridescenceThickness = resolveTexture(material.iridescenceThicknessTexturePath);
+        submesh.textures.transmission = resolveTexture(material.transmissionTexturePath);
+        submesh.textures.thickness = resolveTexture(material.thicknessTexturePath);
+        submesh.textures.diffuseTransmission = resolveTexture(material.diffuseTransmissionTexturePath);
+        submesh.textures.diffuseTransmissionColor = resolveTexture(material.diffuseTransmissionColorTexturePath);
+    }
+}
+
+namespace
+{
 std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& state, entt::entity entity)
 {
     IEditorWorld& world = state.GetEditorWorld();
@@ -196,122 +399,16 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
         // Aliasing shared_ptr: aims at this submesh's mesh while sharing ownership of the
         // cached model it lives in, so the geometry is never copied out of the cache.
         renderSubmesh.mesh = std::shared_ptr<const MeshData>(modelDataPtr, &submesh.mesh);
-        renderSubmesh.hasTexCoords = submesh.hasTexCoords;
 
         const ModelMaterialData& material = modelData.materials[ResolveSubmeshMaterialIndex(submesh, variantIndex)];
-        renderSubmesh.doubleSided = material.doubleSided;
-        renderSubmesh.alphaMode = material.alphaMode;
+        FillRenderSubmeshMaterial(
+            renderSubmesh, material, submesh.hasTexCoords, submesh.nodeScale, resolveTex, model.baseColorTextureOverridePath);
         renderSubmesh.localBoundsCenter = submesh.boundsCenter;
         renderSubmesh.localBoundsRadius = submesh.boundsRadius;
         renderSubmesh.castShadows = submesh.castShadows;
         renderSubmesh.drawDistance = submesh.drawDistance;
-        renderSubmesh.material.baseColorFactor[0] = material.baseColor[0];
-        renderSubmesh.material.baseColorFactor[1] = material.baseColor[1];
-        renderSubmesh.material.baseColorFactor[2] = material.baseColor[2];
-        renderSubmesh.material.baseColorFactor[3] = material.baseColor[3] * material.opacity;
-        renderSubmesh.material.emissiveFactor[0] = material.emissiveColor[0] * material.emissiveIntensity;
-        renderSubmesh.material.emissiveFactor[1] = material.emissiveColor[1] * material.emissiveIntensity;
-        renderSubmesh.material.emissiveFactor[2] = material.emissiveColor[2] * material.emissiveIntensity;
-        renderSubmesh.material.alphaCutoff = ClampMaterialAlphaValue(material.alphaCutoff, 0.5f);
-        renderSubmesh.material.surfaceFactors[0] = material.metallicFactor;
-        renderSubmesh.material.surfaceFactors[1] = material.roughnessFactor;
-        renderSubmesh.material.surfaceFactors[2] = material.normalScale;
-        renderSubmesh.material.surfaceFactors[3] = material.occlusionStrength;
-        renderSubmesh.material.nodeGraphFactors[0] = material.blendGraph.enabled ? 1.0f : 0.0f;
-        renderSubmesh.material.nodeGraphFactors[1] = std::clamp(material.blendGraph.blendFactor, 0.0f, 1.0f);
-        renderSubmesh.material.nodeGraphFactors[2] = 1.0f;
-        renderSubmesh.material.nodeGraphFactors[3] = 0.0f;
-        // A coat of zero is no coat, a black sheen no sheen: those draws keep the plain base and its
-        // exact shading.
-        const float clearcoat = std::clamp(material.clearcoatFactor, 0.0f, 1.0f);
-        float sheenStrength = 0.0f;
-        for (size_t index = 0; index < 3; ++index)
-        {
-            renderSubmesh.material.sheenFactors[index] = std::clamp(material.sheenColorFactor[index], 0.0f, 1.0f);
-            sheenStrength = std::max(sheenStrength, renderSubmesh.material.sheenFactors[index]);
-        }
-        renderSubmesh.material.sheenFactors[3] = std::clamp(material.sheenRoughnessFactor, 0.0f, 1.0f);
-        const float anisotropyStrength = std::clamp(material.anisotropyStrength, 0.0f, 1.0f);
-        const bool anisotropic = anisotropyStrength > 0.0f;
-        // The dielectric's reflectance, stored before the maps: the IOR's F0 tinted by the colour
-        // factor, and the specular factor. A surface at the defaults, with no maps, keeps the plain
-        // path (F0 0.04, F90 1) without reading GB5.
-        const float ior = SanitizeIor(material.ior);
-        const float reflectance = ior == 0.0f ? 1.0f : ((ior - 1.0f) / (ior + 1.0f)) * ((ior - 1.0f) / (ior + 1.0f));
-        for (size_t index = 0; index < 3; ++index)
-        {
-            renderSubmesh.material.specularFactors[index] = reflectance * std::max(material.specularColorFactor[index], 0.0f);
-        }
-        renderSubmesh.material.specularFactors[3] = std::clamp(material.specularFactor, 0.0f, 1.0f);
-        const bool customSpecular =
-            ior != 1.5f || material.specularFactor != 1.0f || material.specularColorFactor[0] != 1.0f ||
-            material.specularColorFactor[1] != 1.0f || material.specularColorFactor[2] != 1.0f ||
-            (submesh.hasTexCoords && (!material.specularTexturePath.empty() || !material.specularColorTexturePath.empty()));
-        const bool coatNormal = clearcoat > 0.0f && submesh.hasTexCoords && !material.clearcoatNormalTexturePath.empty();
-        // A thin film has no room in the G-buffer: it sends the material to the forward pass.
-        const float iridescence = std::clamp(material.iridescenceFactor, 0.0f, 1.0f);
-        renderSubmesh.material.iridescenceFactors[0] = iridescence;
-        renderSubmesh.material.iridescenceFactors[1] = std::max(material.iridescenceIor, 1.0f);
-        renderSubmesh.material.iridescenceFactors[2] = std::max(material.iridescenceThicknessMinimum, 0.0f);
-        renderSubmesh.material.iridescenceFactors[3] = std::max(material.iridescenceThicknessMaximum, 0.0f);
-        renderSubmesh.material.shadingModel[0] =
-            (clearcoat > 0.0f ? kShadingFlagClearcoat : 0u) | (sheenStrength > 0.0f ? kShadingFlagSheen : 0u) |
-            (anisotropic ? kShadingFlagAnisotropy : 0u) | (customSpecular ? kShadingFlagSpecular : 0u) |
-            (coatNormal ? kShadingFlagCoatNormal : 0u) | (iridescence > 0.0f ? kShadingFlagForward : 0u);
-        // Transmission sends the material to the forward pass, drawn over a copy of the scene behind
-        // it; the volume's thickness is in mesh units, its attenuation distance in metres.
-        const float transmission = std::clamp(material.transmissionFactor, 0.0f, 1.0f);
-        renderSubmesh.material.transmissionFactors[0] = transmission;
-        renderSubmesh.material.transmissionFactors[1] = std::max(material.thicknessFactor, 0.0f);
-        renderSubmesh.material.transmissionFactors[2] = std::max(material.attenuationDistance, 0.0f);
-        for (size_t index = 0; index < 3; ++index)
-        {
-            renderSubmesh.material.attenuationColor[index] = std::clamp(material.attenuationColor[index], 0.0f, 1.0f);
-        }
-        // The refraction IOR; KHR_materials_ior's 0 (an infinite index) bends every ray to the normal.
-        renderSubmesh.material.attenuationColor[3] = ior == 0.0f ? 1000.0f : ior;
-        renderSubmesh.material.volumeScale[0] = submesh.nodeScale.x;
-        renderSubmesh.material.volumeScale[1] = submesh.nodeScale.y;
-        renderSubmesh.material.volumeScale[2] = submesh.nodeScale.z;
-        if (transmission > 0.0f)
-        {
-            renderSubmesh.material.shadingModel[0] |= kShadingFlagTransmission | kShadingFlagForward;
-        }
-        renderSubmesh.material.transmissionFactors[3] = std::max(material.dispersion, 0.0f);
-        // Diffuse transmission is shaded by the forward pass, which reads the factor itself.
-        const float diffuseTransmission = std::clamp(material.diffuseTransmissionFactor, 0.0f, 1.0f);
-        for (size_t index = 0; index < 3; ++index)
-        {
-            renderSubmesh.material.diffuseTransmission[index] = std::clamp(material.diffuseTransmissionColor[index], 0.0f, 1.0f);
-        }
-        renderSubmesh.material.diffuseTransmission[3] = diffuseTransmission;
-        if (diffuseTransmission > 0.0f)
-        {
-            renderSubmesh.material.shadingModel[0] |= kShadingFlagForward;
-        }
-        // Volume scatter diffuses the light that diffuse transmission lets into the volume; without it
-        // the Khronos sample viewer's pre-pass gathers nothing, so nothing scatters.
-        if (material.volumeScatter && diffuseTransmission > 0.0f)
-        {
-            renderSubmesh.material.volumeScale[3] = 1.0f;
-            for (size_t index = 0; index < 3; ++index)
-            {
-                renderSubmesh.material.volumeScatter[index] = std::clamp(material.multiscatterColor[index], 0.0f, 1.0f);
-            }
-            renderSubmesh.material.volumeScatter[3] = ClampScatterAnisotropy(material.scatterAnisotropy);
-        }
-        renderSubmesh.material.clearcoatFactors[2] = material.clearcoatNormalScale;
-        // Unlit shows the base colour alone; transforms only matter where there are textures.
-        if (material.unlit)
-        {
-            renderSubmesh.material.shadingModel[0] |= kShadingFlagUnlit;
-        }
-        // A decal lends the surface under it its albedo, metallic, roughness and emission. A material
-        // that needs the forward pass or no lighting cannot be one.
-        renderSubmesh.decal = material.decal && material.alphaMode == MaterialAlphaMode::Blend &&
-                              (renderSubmesh.material.shadingModel[0] & (kShadingFlagForward | kShadingFlagUnlit)) == 0u;
         renderSubmesh.water = submesh.water;
-        renderSubmesh.textureSamplers = material.textureSamplers;
+        renderSubmesh.name = submesh.name;
         // A skinned submesh is deformed by the entity's joint palette from its binding's offset. Its
         // bounds are the model's, grown for the reach of a pose: the bind pose's own would cull a limb
         // an animation swings out of them.
@@ -339,83 +436,6 @@ std::vector<CpuRenderSubmesh> BuildEntityRenderSubmeshes(RendererSharedState& st
                     }
                 }
             }
-        }
-        // A toon material is the toon passes' to shade: the geometry pass still lays down its depth,
-        // normals and motion, and the forward flag keeps the lighting pass off its pixels.
-        if (material.toon && submesh.hasTexCoords)
-        {
-            renderSubmesh.toon = material.toon;
-            renderSubmesh.material.shadingModel[0] |= kShadingFlagForward;
-            renderSubmesh.decal = false;
-        }
-        // The mask reads the first UV set, so without one there are no detail layers.
-        if (submesh.hasTexCoords && material.detailLayers.IsEnabled())
-        {
-            const MaterialDetailLayers& layers = material.detailLayers;
-            renderSubmesh.material.shadingModel[2] = static_cast<uint32_t>(layers.mapping);
-            for (size_t layer = 0; layer < kDetailLayerCount; ++layer)
-            {
-                renderSubmesh.material.detailLayerScales[layer * 2] = layers.layerScales[layer][0];
-                renderSubmesh.material.detailLayerScales[layer * 2 + 1] = layers.layerScales[layer][1];
-                renderSubmesh.textures.detailLayers[layer] = resolveTex(layers.layerTexturePaths[layer]);
-            }
-            renderSubmesh.material.detailLayerParams[0] = std::max(layers.intensity, 0.0f);
-            renderSubmesh.textures.detailMask = resolveTex(layers.maskTexturePath);
-        }
-        if (submesh.hasTexCoords && !AreIdentity(material.textureTransforms))
-        {
-            renderSubmesh.textureTransforms = material.textureTransforms;
-            renderSubmesh.material.shadingModel[1] = 1u;
-        }
-        renderSubmesh.material.anisotropyFactors[0] = anisotropic ? anisotropyStrength : 0.0f;
-        renderSubmesh.material.anisotropyFactors[1] = std::cos(material.anisotropyRotation);
-        renderSubmesh.material.anisotropyFactors[2] = std::sin(material.anisotropyRotation);
-        renderSubmesh.material.clearcoatFactors[0] = clearcoat;
-        renderSubmesh.material.clearcoatFactors[1] = std::clamp(material.clearcoatRoughnessFactor, 0.0f, 1.0f);
-        renderSubmesh.name = submesh.name;
-        if (submesh.hasTexCoords)
-        {
-            renderSubmesh.textures.baseColor = model.baseColorTextureOverridePath.empty()
-                                                   ? resolveTex(material.baseColorTexturePath)
-                                                   : model.baseColorTextureOverridePath;
-            renderSubmesh.textures.normal = resolveTex(material.normalTexturePath);
-            renderSubmesh.textures.metallic = resolveTex(material.metallicTexturePath);
-            renderSubmesh.textures.roughness = resolveTex(material.roughnessTexturePath);
-            renderSubmesh.textures.occlusion = resolveTex(material.occlusionTexturePath);
-            renderSubmesh.textures.emissive = resolveTex(material.emissiveTexturePath);
-            renderSubmesh.textures.secondaryBaseColor = material.blendGraph.secondaryBaseColorTexturePath.empty()
-                                                            ? renderSubmesh.textures.baseColor
-                                                            : material.blendGraph.secondaryBaseColorTexturePath;
-            renderSubmesh.textures.secondaryNormal = material.blendGraph.secondaryNormalTexturePath.empty()
-                                                         ? renderSubmesh.textures.normal
-                                                         : material.blendGraph.secondaryNormalTexturePath;
-            renderSubmesh.textures.secondaryMetallic = material.blendGraph.secondaryMetallicTexturePath.empty()
-                                                           ? renderSubmesh.textures.metallic
-                                                           : material.blendGraph.secondaryMetallicTexturePath;
-            renderSubmesh.textures.secondaryRoughness = material.blendGraph.secondaryRoughnessTexturePath.empty()
-                                                            ? renderSubmesh.textures.roughness
-                                                            : material.blendGraph.secondaryRoughnessTexturePath;
-            renderSubmesh.textures.secondaryOcclusion = material.blendGraph.secondaryOcclusionTexturePath.empty()
-                                                            ? renderSubmesh.textures.occlusion
-                                                            : material.blendGraph.secondaryOcclusionTexturePath;
-            renderSubmesh.textures.secondaryEmissive = material.blendGraph.secondaryEmissiveTexturePath.empty()
-                                                           ? renderSubmesh.textures.emissive
-                                                           : material.blendGraph.secondaryEmissiveTexturePath;
-            renderSubmesh.textures.blendMask = material.blendGraph.blendMaskTexturePath;
-            renderSubmesh.textures.clearcoat = resolveTex(material.clearcoatTexturePath);
-            renderSubmesh.textures.clearcoatRoughness = resolveTex(material.clearcoatRoughnessTexturePath);
-            renderSubmesh.textures.sheenColor = resolveTex(material.sheenColorTexturePath);
-            renderSubmesh.textures.sheenRoughness = resolveTex(material.sheenRoughnessTexturePath);
-            renderSubmesh.textures.anisotropy = resolveTex(material.anisotropyTexturePath);
-            renderSubmesh.textures.specular = resolveTex(material.specularTexturePath);
-            renderSubmesh.textures.specularColor = resolveTex(material.specularColorTexturePath);
-            renderSubmesh.textures.clearcoatNormal = resolveTex(material.clearcoatNormalTexturePath);
-            renderSubmesh.textures.iridescence = resolveTex(material.iridescenceTexturePath);
-            renderSubmesh.textures.iridescenceThickness = resolveTex(material.iridescenceThicknessTexturePath);
-            renderSubmesh.textures.transmission = resolveTex(material.transmissionTexturePath);
-            renderSubmesh.textures.thickness = resolveTex(material.thicknessTexturePath);
-            renderSubmesh.textures.diffuseTransmission = resolveTex(material.diffuseTransmissionTexturePath);
-            renderSubmesh.textures.diffuseTransmissionColor = resolveTex(material.diffuseTransmissionColorTexturePath);
         }
         renderSubmeshes.push_back(std::move(renderSubmesh));
     }

@@ -19,7 +19,7 @@
 #include "ui/panels/vehicle_panel.h"
 #include "ui/panels/viewport_panel.h"
 #include "ui/windows/keyboard_shortcuts_window.h"
-#include "ui/windows/model_processor_window.h"
+#include "ui/windows/material_editor_window.h"
 #include "ui/windows/preferences_window.h"
 
 #include <engine/core/log/log.h>
@@ -93,7 +93,7 @@ void EditorUiController::RegisterWindows()
     m_windows.Register<PhotoModePanel>();
     m_windows.Register<ThemePanel>();
     // Floating tool windows, opened by commands or by other windows.
-    m_windows.Register<ModelProcessorWindow>();
+    m_windows.Register<MaterialEditorWindow>();
     m_windows.Register<PreferencesWindow>();
     m_windows.Register<KeyboardShortcutsWindow>();
     // Modals, drawn last so they are over everything else.
@@ -342,6 +342,10 @@ EditorUiFrameResult EditorUiController::Draw(
     result.actions = std::exchange(m_commandActions, {});
     HandleFileCommands(context);
 
+    if (!m_materialEditorOnStart.empty())
+    {
+        m_windows.Get<MaterialEditorWindow>().OpenModel(context, std::exchange(m_materialEditorOnStart, {}), true);
+    }
     // Every window, panel and modal. Over the fullscreen viewport only those that draw there.
     m_windows.TickAndDraw(context, fullscreen);
     // Another scene asked for (File > Open, the Scene panel, the asset browser) while this one has

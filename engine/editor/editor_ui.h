@@ -54,7 +54,7 @@ struct EditorUiActions
         std::vector<uint32_t> restoredIndices;
     };
 
-    // Materials edited in the Model Preview window, shown in the scene but not saved: each with
+    // Materials edited in the Material Editor, shown in the scene but not saved: each with
     // its slot index.
     struct ImportedModelMaterialPreview
     {
@@ -198,6 +198,9 @@ struct EditorUiFrameResult
     float viewportOutputScale = 1.0f;
     SDL_FRect viewportInteractionRect{0.0f, 0.0f, 0.0f, 0.0f};
     bool viewportAllowsMouseInteraction = false;
+    // Whether the viewport's picture is what the UI has under the mouse: false where another window
+    // (the Material Editor, a tool window) covers it, whose clicks and wheel are its own.
+    bool viewportMouseOver = false;
     bool engineSettingsChanged = false;
     RenderDebugSettings renderDebug;
     // The Preferences window's master volume and mute.
@@ -257,6 +260,11 @@ class EditorUiController
     int& EditVehiclePhysicsRate()
     {
         return m_state.vehicle.physicsRateHz;
+    }
+    // Opens the Material Editor on this model in the first frame drawn (--material-editor).
+    void OpenMaterialEditorOnStart(std::string modelPath)
+    {
+        m_materialEditorOnStart = std::move(modelPath);
     }
     EditorUiFrameResult Draw(
         Camera& camera,
@@ -413,6 +421,7 @@ class EditorUiController
     // Whether the window is fullscreen as the command state last asked.
     bool m_windowFullscreen = false;
     bool m_resetDockLayoutRequested = false;
+    std::string m_materialEditorOnStart;
     // What Window > Auto Layout last fitted the docks for (see DrawEditorDockspace).
     ImGuiID m_autoLayoutKey = 0;
     // Set by the commands, handled once the menus, the toolbar and the shortcuts have run.
