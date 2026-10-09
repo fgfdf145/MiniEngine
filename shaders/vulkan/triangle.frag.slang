@@ -15,36 +15,52 @@
 #include "specular_aa.slang"
 #include "pre_exposure.slang"
 
-[[vk::binding(0, 1)]] Sampler2D baseColorTexture;
-[[vk::binding(1, 1)]] Sampler2D normalTexture;
-[[vk::binding(2, 1)]] Sampler2D metallicTexture;
-[[vk::binding(3, 1)]] Sampler2D roughnessTexture;
-[[vk::binding(4, 1)]] Sampler2D occlusionTexture;
-[[vk::binding(5, 1)]] Sampler2D emissiveTexture;
-[[vk::binding(6, 1)]] Sampler2D secondaryBaseColorTexture;
-[[vk::binding(7, 1)]] Sampler2D secondaryNormalTexture;
-[[vk::binding(8, 1)]] Sampler2D secondaryMetallicTexture;
-[[vk::binding(9, 1)]] Sampler2D secondaryRoughnessTexture;
-[[vk::binding(10, 1)]] Sampler2D secondaryOcclusionTexture;
-[[vk::binding(11, 1)]] Sampler2D secondaryEmissiveTexture;
-[[vk::binding(12, 1)]] Sampler2D blendMaskTexture;
+[[vk::binding(0, 1)]] Texture2D baseColorTexture;
+[[vk::binding(MATERIAL_SAMPLER(0), 1)]] SamplerState baseColorTextureSampler;
+[[vk::binding(1, 1)]] Texture2D normalTexture;
+[[vk::binding(MATERIAL_SAMPLER(1), 1)]] SamplerState normalTextureSampler;
+[[vk::binding(2, 1)]] Texture2D metallicTexture;
+[[vk::binding(MATERIAL_SAMPLER(2), 1)]] SamplerState metallicTextureSampler;
+[[vk::binding(3, 1)]] Texture2D roughnessTexture;
+[[vk::binding(MATERIAL_SAMPLER(3), 1)]] SamplerState roughnessTextureSampler;
+[[vk::binding(4, 1)]] Texture2D occlusionTexture;
+[[vk::binding(MATERIAL_SAMPLER(4), 1)]] SamplerState occlusionTextureSampler;
+[[vk::binding(5, 1)]] Texture2D emissiveTexture;
+[[vk::binding(MATERIAL_SAMPLER(5), 1)]] SamplerState emissiveTextureSampler;
+[[vk::binding(6, 1)]] Texture2D secondaryBaseColorTexture;
+[[vk::binding(MATERIAL_SAMPLER(6), 1)]] SamplerState secondaryBaseColorTextureSampler;
+[[vk::binding(7, 1)]] Texture2D secondaryNormalTexture;
+[[vk::binding(MATERIAL_SAMPLER(7), 1)]] SamplerState secondaryNormalTextureSampler;
+[[vk::binding(8, 1)]] Texture2D secondaryMetallicTexture;
+[[vk::binding(MATERIAL_SAMPLER(8), 1)]] SamplerState secondaryMetallicTextureSampler;
+[[vk::binding(9, 1)]] Texture2D secondaryRoughnessTexture;
+[[vk::binding(MATERIAL_SAMPLER(9), 1)]] SamplerState secondaryRoughnessTextureSampler;
+[[vk::binding(10, 1)]] Texture2D secondaryOcclusionTexture;
+[[vk::binding(MATERIAL_SAMPLER(10), 1)]] SamplerState secondaryOcclusionTextureSampler;
+[[vk::binding(11, 1)]] Texture2D secondaryEmissiveTexture;
+[[vk::binding(MATERIAL_SAMPLER(11), 1)]] SamplerState secondaryEmissiveTextureSampler;
+[[vk::binding(12, 1)]] Texture2D blendMaskTexture;
+[[vk::binding(MATERIAL_SAMPLER(12), 1)]] SamplerState blendMaskTextureSampler;
 #include "material_layers.slang"
 #include "detail_layers.slang"
 #include "transmission_common.slang"
 #include "volume_scatter_common.slang"
 
 // The scene behind transmissive surfaces (VulkanTransmissionCopyPass): pre-exposed, full mip chain.
-[[vk::binding(18, 0)]] Sampler2D transmissionCopy;
+[[vk::binding(18, 0)]] Texture2D transmissionCopy;
+[[vk::binding(FRAME_SAMPLER(18), 0)]] SamplerState transmissionCopySampler;
 // The scatter pre-pass (VulkanScatterPass): the light entering each scattering surface, pre-exposed,
 // with its draw slot + 1 in alpha (0 where nothing scatters), and that surface's own depth.
-[[vk::binding(19, 0)]] Sampler2D scatterLight;
-[[vk::binding(20, 0)]] Sampler2D scatterDepth;
+[[vk::binding(19, 0)]] Texture2D scatterLight;
+[[vk::binding(FRAME_SAMPLER(19), 0)]] SamplerState scatterLightSampler;
+[[vk::binding(20, 0)]] Texture2D scatterDepth;
+[[vk::binding(FRAME_SAMPLER(20), 0)]] SamplerState scatterDepthSampler;
 // Path tracing mode (camera block textureParams.y): the nearest forward-shaded surface's depth
 // (VulkanPathTraceLayerPass) and the light the path tracer found for it through its diffuse and
 // specular lobes, demodulated and pre-exposed (VulkanPathTracePass).
-[[vk::binding(29, 0)]] Sampler2D pathTraceLayerDepth;
-[[vk::binding(30, 0)]] Sampler2D pathTraceLayerDiffuse;
-[[vk::binding(31, 0)]] Sampler2D pathTraceLayerSpecular;
+[[vk::binding(29, 0)]] Texture2D pathTraceLayerDepth;
+[[vk::binding(30, 0)]] Texture2D pathTraceLayerDiffuse;
+[[vk::binding(31, 0)]] Texture2D pathTraceLayerSpecular;
 
 struct FragmentInput
 {
@@ -77,7 +93,7 @@ float4 SampleTransmission(float3 worldPosition, float3 N, float3 V, float ior, f
     float3 exitPoint = TransmissionExitPoint(worldPosition, N, V, ior, thickness, volumeScale);
     float4 exitClip = mul(mul(ubo.proj, ubo.view), float4(exitPoint, 1.0));
     float2 exitUv = exitClip.xy / exitClip.w * 0.5 + 0.5;
-    float3 behind = transmissionCopy.SampleLevel(exitUv, TransmissionLod(materialRoughness, ior)).rgb / max(ubo.exposure.x, 1e-20);
+    float3 behind = transmissionCopy.SampleLevel(transmissionCopySampler, exitUv, TransmissionLod(materialRoughness, ior)).rgb / max(ubo.exposure.x, 1e-20);
     return float4(behind, length(exitPoint - worldPosition));
 }
 
@@ -106,12 +122,12 @@ float3 GatherSubsurfaceScattering(float2 pixel, float3 multiscatter, float atten
 {
     float2 extent = float2(TextureSize(scatterLight, 0));
     float2 uv = pixel / extent;
-    float4 center = scatterLight.SampleLevel(uv, 0.0);
+    float4 center = scatterLight.SampleLevel(scatterLightSampler, uv, 0.0);
     float inverseExposure = 1.0 / max(ubo.exposure.x, 1e-20);
     float3 scatterDistance = attenuationDistance * multiscatter;
     float maxDistance = max(scatterDistance.r, max(scatterDistance.g, scatterDistance.b));
-    float3 centerPosition = ScatterWorldPosition(uv, scatterDepth.SampleLevel(uv, 0.0).r);
-    float metresPerPixel = distance(centerPosition, ScatterWorldPosition(uv + float2(1.0 / extent.x, 0.0), scatterDepth.SampleLevel(uv, 0.0).r));
+    float3 centerPosition = ScatterWorldPosition(uv, scatterDepth.SampleLevel(scatterDepthSampler, uv, 0.0).r);
+    float metresPerPixel = distance(centerPosition, ScatterWorldPosition(uv + float2(1.0 / extent.x, 0.0), scatterDepth.SampleLevel(scatterDepthSampler, uv, 0.0).r));
     float maxRadiusPixels = maxDistance / max(metresPerPixel, 1e-12);
     if (maxRadiusPixels <= 1.0)
     {
@@ -126,12 +142,12 @@ float3 GatherSubsurfaceScattering(float2 pixel, float3 multiscatter, float atten
         float3 scatterSample = BurleyScatterSample(i);
         float2 offset = float2(cos(scatterSample.x), sin(scatterSample.x)) * scatterSample.y * maxRadiusPixels / extent;
         float2 sampleUv = uv + offset;
-        float4 sampled = scatterLight.SampleLevel(sampleUv, 0.0);
+        float4 sampled = scatterLight.SampleLevel(scatterLightSampler, sampleUv, 0.0);
         if (sampled.a != center.a)
         {
             continue;
         }
-        float3 samplePosition = ScatterWorldPosition(sampleUv, scatterDepth.SampleLevel(sampleUv, 0.0).r);
+        float3 samplePosition = ScatterWorldPosition(sampleUv, scatterDepth.SampleLevel(scatterDepthSampler, sampleUv, 0.0).r);
         float3 weight = BurleyProfile(d, distance(samplePosition, centerPosition)) * scatterSample.z;
         totalWeight += weight;
         total += weight * sampled.rgb;

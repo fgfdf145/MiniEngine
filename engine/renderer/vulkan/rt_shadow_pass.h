@@ -31,6 +31,7 @@ class VulkanRtShadowPass : public IScenePass
     VulkanRtShadowPass(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
@@ -54,8 +55,9 @@ class VulkanRtShadowPass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_nearestSampler = VK_NULL_HANDLE;
-    VkSampler m_linearSampler = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::SamplerHandle m_nearestSampler;
+    nvrhi::SamplerHandle m_linearSampler;
     // One set for all three shaders: 0 depth, 1 G-buffer normal, 2 motion vectors, 3 ShadowRaw
     // (storage), 4 history read (sampled), 5 history write (storage), 6 SceneShadow (storage),
     // 7 the history just written (storage, read by the filter).

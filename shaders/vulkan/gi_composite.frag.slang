@@ -27,26 +27,26 @@ FragmentOutput main(FragmentInput input)
 {
     FragmentOutput output;
     output.outColor = float4(0.0);
-    float depth = gbufferDepth.Sample(input.fragTexCoord).r;
+    float depth = gbufferDepth.Sample(gbufferSampler, input.fragTexCoord).r;
     if (IsFarDepth(depth))
     {
         return output;
     }
-    float4 surface = gbufferSurface.Sample(input.fragTexCoord);
+    float4 surface = gbufferSurface.Sample(gbufferSampler, input.fragTexCoord);
     uint flags = DecodeShadingFlags(surface.a);
     if ((flags & (SHADING_FLAG_UNLIT | SHADING_FLAG_FORWARD)) != 0u)
     {
         return output;
     }
     // Pre-exposed, as the HDR target it came from.
-    float3 indirect = sceneGi.Sample(input.fragTexCoord).rgb;
+    float3 indirect = sceneGi.Sample(gbufferSampler, input.fragTexCoord).rgb;
     if (all(indirect == float3(0.0)))
     {
         return output;
     }
 
-    float3 albedo = gbufferAlbedo.Sample(input.fragTexCoord).rgb;
-    float3 N = DecodeNormalOctahedral(gbufferNormal.Sample(input.fragTexCoord).rg);
+    float3 albedo = gbufferAlbedo.Sample(gbufferSampler, input.fragTexCoord).rgb;
+    float3 N = DecodeNormalOctahedral(gbufferNormal.Sample(gbufferSampler, input.fragTexCoord).rg);
     float metallic = surface.r;
     float roughness = clamp(surface.g, 0.04, 1.0);
     float4 world = mul(ubo.invViewProj, float4(input.fragTexCoord * 2.0 - 1.0, depth, 1.0));
@@ -57,7 +57,7 @@ FragmentOutput main(FragmentInput input)
     SpecularParams specular = NoSpecularOverride();
     if ((flags & SHADING_FLAG_SPECULAR) != 0u)
     {
-        float4 specularData = gbufferSpecular.Sample(input.fragTexCoord);
+        float4 specularData = gbufferSpecular.Sample(gbufferSampler, input.fragTexCoord);
         specular.dielectricF0 = specularData.rgb * specularData.rgb;
         specular.dielectricF90 = specularData.a;
     }
@@ -66,16 +66,16 @@ FragmentOutput main(FragmentInput input)
 
     if ((flags & SHADING_FLAG_SHEEN) != 0u)
     {
-        float4 sheenData = gbufferSheen.Sample(input.fragTexCoord);
+        float4 sheenData = gbufferSheen.Sample(gbufferSampler, input.fragTexCoord);
         float sheenRoughness = clamp(sheenData.a, 0.04, 1.0);
         diffuse *= 1.0 - max(sheenData.r, max(sheenData.g, sheenData.b)) * SampleSheenAlbedo(sheenRoughness, NdV);
     }
     if ((flags & SHADING_FLAG_CLEARCOAT) != 0u)
     {
-        float coatFactor = gbufferCoat.Sample(input.fragTexCoord).r;
+        float coatFactor = gbufferCoat.Sample(gbufferSampler, input.fragTexCoord).r;
         float3 coatNormal = (flags & SHADING_FLAG_COAT_NORMAL) != 0u
-                              ? DecodeNormalOctahedral(gbufferVelocity.Sample(input.fragTexCoord).ba)
-                              : DecodeNormalOctahedral(gbufferNormal.Sample(input.fragTexCoord).ba);
+                              ? DecodeNormalOctahedral(gbufferVelocity.Sample(gbufferSampler, input.fragTexCoord).ba)
+                              : DecodeNormalOctahedral(gbufferNormal.Sample(gbufferSampler, input.fragTexCoord).ba);
         diffuse *= 1.0 - coatFactor * FresnelSchlick(max(dot(coatNormal, V), 0.0), COAT_F0).x;
     }
 

@@ -16,6 +16,10 @@ vcpkg_from_github(
         # shadows compare LESS_OR_EQUAL, and glTF's non-mipmapped filters sample level 0 alone
         # (maxLod 0.25), which upstream cannot express.
         sampler-lod-and-comparison.patch
+        # A heap can be restricted to the memory types its resources allow (the engine's memory pool
+        # picks the type as it did before NVRHI), and gives out its VkDeviceMemory for the resources
+        # still bound natively (acceleration structures).
+        heap-memory-type-and-native.patch
 )
 
 if(VCPKG_LIBRARY_LINKAGE STREQUAL "dynamic")

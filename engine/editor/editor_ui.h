@@ -133,6 +133,9 @@ struct EditorUiActions
     bool toggleVideoRecording = false;
     // Starts filming the car from four sides into one video under ProjectRoot()/captures, or stops.
     bool toggleQuadRecording = false;
+    // Photo Mode: a still from the viewport's camera at the Photo Mode window's size, written as a
+    // PNG under ProjectRoot()/captures once its view has rendered its warm-up frames.
+    bool takePhoto = false;
     bool newScene = false;        // confirmed by the user
     bool clearScene = false;      // confirmed by the user
     bool clearSelectedBaseColorTexture = false;
@@ -199,6 +202,8 @@ struct EditorUiFrameResult
     // renders them even while nothing is recorded).
     QuadRecordingSettings quadRecording;
     bool quadRecordingPreview = false;
+    // The Photo Mode window's photo size and how it is made.
+    PhotoModeSettings photoMode;
 };
 
 // The editor shell, as Unreal's level editor or Unity's main window: the main menu, the toolbar, the
@@ -294,6 +299,11 @@ class EditorUiController
     {
         m_state.gpuMemoryStatus = std::move(status);
     }
+    // The GPU memory as the render thread last measured it, for the Photo Mode window's estimate.
+    void SetGpuMemory(const GpuMemoryReport& report)
+    {
+        m_state.gpuMemory = report;
+    }
     // Whether the render backend can run DLSS, and what the Graphics Debug window says of it
     // (VulkanDlss::Status).
     void SetDlssStatus(bool available, bool rayReconstructionAvailable, std::string status)
@@ -303,12 +313,14 @@ class EditorUiController
         m_state.dlssStatus = std::move(status);
     }
     // Whether the render backend can path trace and use hardware ray tracing (the Render > Pipeline
-    // modes and the Ray Tracing switch), and what the Graphics Debug window says of path tracing.
-    void SetPathTracingStatus(bool available, std::string status)
+    // modes and the Ray Tracing switch), and what the Graphics Debug window says of path tracing:
+    // a line, and how far the offline mode's image is (0 to 1; negative where it is not running).
+    void SetPathTracingStatus(bool available, std::string status, float progress = -1.0f)
     {
         m_state.pathTracingAvailable = available;
         m_state.commands.rayTracingSupported = available;
         m_state.pathTracingStatus = std::move(status);
+        m_state.pathTracingProgress = progress;
     }
     // DLSS resolves the viewport (see ResolveSceneExtents in the Vulkan renderer): it picks the render
     // size itself, so the viewport asks for every display pixel whatever the render scale says.
@@ -333,6 +345,11 @@ class EditorUiController
     {
         m_state.quadRecordingStatus = std::move(status);
         m_state.quadRecordingTarget = std::move(target);
+    }
+    // The photo being made, or how the last one ended, for the Photo Mode window.
+    void SetPhotoStatus(PhotoStatus status)
+    {
+        m_state.photoStatus = std::move(status);
     }
     // The audio output the Preferences window names: the device, or why there is none.
     void SetAudioStatus(std::string status)

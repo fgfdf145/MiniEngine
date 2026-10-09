@@ -1,6 +1,8 @@
 #include "compute_pass_util.h"
 
+#include "nvrhi_resources.h"
 #include "pipeline.h"
+#include "sampler_settings.h"
 
 #include <engine/core/paths/engine_paths.h>
 
@@ -23,23 +25,9 @@ uint32_t FindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, Vk
     throw std::runtime_error("Failed to find a memory type for a compute pass image");
 }
 
-VkSampler CreateClampSampler(VkDevice device, VkFilter filter)
+nvrhi::SamplerHandle CreateClampSampler(nvrhi::IDevice* device, VkFilter filter)
 {
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = filter;
-    samplerInfo.minFilter = filter;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-
-    VkSampler sampler = VK_NULL_HANDLE;
-    CheckVulkan(vkCreateSampler(device, &samplerInfo, nullptr, &sampler), "Failed to create a compute pass sampler");
-    return sampler;
+    return CreateNvrhiSampler(device, BuildClampSamplerDesc(filter == VK_FILTER_LINEAR), "Failed to create a compute pass sampler");
 }
 
 VkDescriptorSetLayout CreateComputeSetLayout(VkDevice device, std::span<const VkDescriptorType> types, VkShaderStageFlags stages)
@@ -191,12 +179,74 @@ VkWriteDescriptorSet ImageWrite(VkDescriptorSet set, uint32_t binding, VkDescrip
     return write;
 }
 
+VkImageMemoryBarrier ColorImageTransition(
+    VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, VkAccessFlags srcAccess, VkAccessFlags dstAccess)
+{
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask = srcAccess;
+    barrier.dstAccessMask = dstAccess;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
+    return barrier;
+}
+
+void TransitionColorImages(
+    VkCommandBuffer commandBuffer,
+    std::span<const VkImage> images,
+    VkImageLayout oldLayout,
+    VkImageLayout newLayout,
+    VkPipelineStageFlags srcStage,
+    VkAccessFlags srcAccess,
+    VkPipelineStageFlags dstStage,
+    VkAccessFlags dstAccess)
+{
+    std::vector<VkImageMemoryBarrier> barriers;
+    barriers.reserve(images.size());
+    for (VkImage image : images)
+    {
+        barriers.push_back(ColorImageTransition(image, oldLayout, newLayout, srcAccess, dstAccess));
+    }
+    vkCmdPipelineBarrier(
+        commandBuffer, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
+}
+
+void BeginFrameImageWrites(VkCommandBuffer commandBuffer, std::span<const VkImage> images)
+{
+    TransitionColorImages(
+        commandBuffer,
+        images,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_IMAGE_LAYOUT_GENERAL,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+}
+
+void EndFrameImageWrites(VkCommandBuffer commandBuffer, std::span<const VkImage> images, VkPipelineStageFlags srcStage, VkAccessFlags srcAccess)
+{
+    TransitionColorImages(
+        commandBuffer,
+        images,
+        VK_IMAGE_LAYOUT_GENERAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        srcStage,
+        srcAccess,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT);
+}
+
 HistoryImagePair::~HistoryImagePair()
 {
     Destroy();
 }
 
-void HistoryImagePair::Create(VkPhysicalDevice physicalDevice, VkDevice device, VkExtent2D extent, VkFormat format, VkImageUsageFlags extraUsage)
+void HistoryImagePair::Create(nvrhi::IDevice* nvrhiDevice, VkDevice device, VkExtent2D extent, VkFormat format, VkImageUsageFlags extraUsage)
 {
     Destroy();
     m_device = device;
@@ -214,16 +264,7 @@ void HistoryImagePair::Create(VkPhysicalDevice physicalDevice, VkDevice device, 
         imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | extraUsage;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &history.image), "Failed to create a history image");
-
-        VkMemoryRequirements requirements{};
-        vkGetImageMemoryRequirements(m_device, history.image, &requirements);
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = requirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &history.memory), "Failed to allocate history image memory");
-        CheckVulkan(vkBindImageMemory(m_device, history.image, history.memory, 0), "Failed to bind history image memory");
+        history.texture = CreateNvrhiImage(nvrhiDevice, imageInfo, history.image, "Failed to create a history image");
 
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -243,14 +284,7 @@ void HistoryImagePair::Destroy()
         {
             vkDestroyImageView(m_device, history.view, nullptr);
         }
-        if (history.image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, history.image, nullptr);
-        }
-        if (history.memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, history.memory, nullptr);
-        }
+        // The image and its memory go with NVRHI's texture.
         history = Image{};
     }
 }
@@ -263,6 +297,11 @@ VkImage HistoryImagePair::GetImage(uint32_t index) const
 VkImageView HistoryImagePair::GetView(uint32_t index) const
 {
     return m_images.at(index).view;
+}
+
+nvrhi::ITexture* HistoryImagePair::GetTexture(uint32_t index) const
+{
+    return m_images.at(index).texture;
 }
 
 void HistoryImagePair::RecordBarrier(VkCommandBuffer commandBuffer, bool historyValid) const

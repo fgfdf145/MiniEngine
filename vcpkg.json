@@ -25,8 +25,17 @@
     "nvrhi",
     {
       "name": "sdl3",
+      "default-features": false,
       "features": [
-        "vulkan"
+        "vulkan",
+        {
+          "name": "wayland",
+          "platform": "linux"
+        },
+        {
+          "name": "x11",
+          "platform": "linux"
+        }
       ]
     },
     {
@@ -38,6 +47,15 @@
     "tinyexr",
     "tinygltf",
     "vulkan",
+    {
+      "name": "vulkan-loader",
+      "features": [
+        "wayland",
+        "xcb",
+        "xlib"
+      ],
+      "platform": "linux"
+    },
     "yaml-cpp"
   ],
   "overrides": [

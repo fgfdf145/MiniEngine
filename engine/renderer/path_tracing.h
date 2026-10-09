@@ -47,10 +47,40 @@ class PathTraceAccumulation
 };
 
 // The longest history a pixel may average this frame: motionFrames while anything changes, then one
-// more for every still frame, up to maxFrames. Both are clamped to what the history's half-float
-// sample count holds exactly.
+// more for every still frame, up to maxFrames. Both are clamped to what the history's sample count
+// holds exactly: a half float's, or the offline mode's full float (PathTraceMaxFrames).
 uint32_t PathTraceHistoryCap(const PathTracingSettings& settings, uint32_t stillFrames);
 
 // kPathTraceMaxFrames: 2048, the largest count a half float increments exactly.
 inline constexpr uint32_t kPathTraceMaxFrames = 2048;
+// The offline mode's histories are full floats (exact to 2^24); a frame's sample then adds at least
+// 1/65536 of itself, well above their rounding.
+inline constexpr uint32_t kOfflinePathTraceMaxFrames = 65536;
+
+// The most frames a history of these settings averages: kOfflinePathTraceMaxFrames in the offline
+// mode, kPathTraceMaxFrames otherwise.
+uint32_t PathTraceMaxFrames(const PathTracingSettings& settings);
+
+// The settings the renderer runs (docs/design/2026-10-09-path-tracing-offline-mode-design.md): as they
+// are, or in the offline mode every path tracing feature on (ReSTIR PT off: the offline image is the
+// plain path tracer's unbiased accumulation), the offline bounces, light candidates and firefly clamp,
+// no accumulation while anything moves (its correlated noise is what ray reconstruction keeps as
+// texture), and as many still frames as the target's samples take.
+PathTracingSettings EffectivePathTracing(const PathTracingSettings& settings);
+
+// The offline mode's samples a pixel each frame, and the still frames that reach its target (0: no
+// target, never done).
+uint32_t OfflineSamplesPerPixel(const OfflinePathTracingSettings& settings);
+uint32_t OfflineTargetFrames(const OfflinePathTracingSettings& settings);
+
+// Where an offline image stands after this many still frames: the samples each pixel has (the frames
+// it averages, at most the target's, times the samples a frame), and whether the target is reached
+// and the trace stops (the frame after the last one it needed).
+struct OfflineProgress
+{
+    uint32_t samples = 0;
+    uint32_t targetSamples = 0;
+    bool done = false;
+};
+OfflineProgress OfflinePathTraceProgress(const OfflinePathTracingSettings& settings, uint32_t stillFrames);
 }

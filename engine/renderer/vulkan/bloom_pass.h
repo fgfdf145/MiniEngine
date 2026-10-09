@@ -12,17 +12,13 @@ namespace me
 
 // Bloom (shaders/vulkan/bloom.comp): downsamples SceneTaa through a mip chain, upsamples it back,
 // and mixes the glow into SceneTaa in place, before the exposure histogram and tone mapping read
-// it. The chain is one image with a level per BuildBloomMipChain entry, owned here, in GENERAL,
-// rewritten every frame. Records nothing when bloom is off.
+// it. The chain is one image with a level per BuildBloomMipChain entry, owned here and rewritten
+// every frame. Records through NVRHI (NvrhiPassScope): SceneTaa comes and goes in GENERAL, as the
+// native passes around it hold it. Records nothing when bloom is off.
 class VulkanBloomPass : public IScenePass
 {
   public:
-    VulkanBloomPass(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
-        VkPipelineCache pipelineCache,
-        const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout);
+    VulkanBloomPass(nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout);
     ~VulkanBloomPass() override;
 
     VulkanBloomPass(const VulkanBloomPass&) = delete;
@@ -38,29 +34,24 @@ class VulkanBloomPass : public IScenePass
 
   private:
     void CreateChain(VkExtent2D extent);
-    void DestroyChain();
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::SamplerHandle m_sampler;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
 
     std::vector<glm::uvec2> m_levelExtents;
-    VkImage m_chainImage = VK_NULL_HANDLE;
-    VkDeviceMemory m_chainMemory = VK_NULL_HANDLE;
-    std::vector<VkImageView> m_levelViews;
+    // Between frames in ShaderResource (keepInitialState): NVRHI moves its levels between reads and
+    // writes as the dispatches go.
+    nvrhi::TextureHandle m_chainTexture;
 
-    // Per frame slot: SceneTaa into level 0, and level 0 back into SceneTaa.
-    std::vector<VkDescriptorSet> m_firstDownsampleSets;
-    std::vector<VkDescriptorSet> m_compositeSets;
+    // Per transient copy: SceneTaa into level 0, and level 0 back into SceneTaa.
+    std::vector<nvrhi::BindingSetHandle> m_firstDownsampleSets;
+    std::vector<nvrhi::BindingSetHandle> m_compositeSets;
     // Index i - 1: level i - 1 into level i.
-    std::vector<VkDescriptorSet> m_downsampleSets;
+    std::vector<nvrhi::BindingSetHandle> m_downsampleSets;
     // Index i: level i + 1 added into level i.
-    std::vector<VkDescriptorSet> m_upsampleSets;
+    std::vector<nvrhi::BindingSetHandle> m_upsampleSets;
 };
 }

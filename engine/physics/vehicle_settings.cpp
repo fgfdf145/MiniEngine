@@ -291,6 +291,56 @@ float VehicleTurboBoost(const VehicleTurbo& turbo, float rpm, float throttle)
     return level;
 }
 
+float DrivetrainEfficiency(const VehicleSettings& settings, float gearRatio)
+{
+    const VehicleDrivetrainLosses& losses = settings.drivetrainLosses;
+    if (!losses.enabled || gearRatio == 0.0f)
+    {
+        return 1.0f;
+    }
+    // A ratio of 1 within rounding is the direct gear.
+    constexpr float kDirectTolerance = 0.005f;
+    const float gearbox = std::abs(std::abs(gearRatio) - 1.0f) <= kDirectTolerance ? losses.directGearEfficiency : losses.gearboxEfficiency;
+    const bool centreDifferential = settings.drive == VehicleDrive::AllWheel && settings.centreDrive == VehicleCentreDrive::Differential;
+    const float transfer = centreDifferential ? losses.transferEfficiency : 1.0f;
+    return std::clamp(gearbox * losses.finalDriveEfficiency * transfer, 0.05f, 1.0f);
+}
+
+float ReferenceDrivetrainEfficiency(const VehicleSettings& settings)
+{
+    // Any ratio other than 1 is an indirect gear.
+    constexpr float kIndirectGear = 2.0f;
+    return DrivetrainEfficiency(settings, kIndirectGear);
+}
+
+float DrivetrainLossTorque(float net, float efficiency)
+{
+    const float share = std::clamp(efficiency, 0.05f, 1.0f);
+    return net >= 0.0f ? -(1.0f - share) * net : (1.0f / share - 1.0f) * net;
+}
+
+float DrivetrainSpinTorque(const VehicleDrivetrainLosses& losses, float wheelSpeed)
+{
+    return std::max(losses.spinTorque, 0.0f) + std::max(losses.spinTorquePerSpeed, 0.0f) * std::abs(wheelSpeed);
+}
+
+float PeakCurvePower(const std::vector<glm::vec2>& curve)
+{
+    // Between two points the power is a quadratic in the rpm; a few samples along each find its top closely.
+    constexpr int kSamples = 16;
+    float peak = 0.0f;
+    for (size_t index = 0; index + 1 < curve.size(); ++index)
+    {
+        for (int sample = 0; sample <= kSamples; ++sample)
+        {
+            const float t = static_cast<float>(sample) / kSamples;
+            const glm::vec2 point = glm::mix(curve[index], curve[index + 1], t);
+            peak = std::max(peak, point.y * point.x * 2.0f * std::numbers::pi_v<float> / 60.0f);
+        }
+    }
+    return peak;
+}
+
 float VehicleTurboTorqueScale(const VehicleSettings& settings, float rpm, float boost)
 {
     if (settings.turbos.empty())
@@ -806,6 +856,20 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
     {
         settings.frontSuspension = *spec.frontSuspension;
         settings.rearSuspension = *spec.rearSuspension;
+    }
+    // The game's curves are what reaches the wheels; with the drivetrain's losses simulated the engine makes
+    // more, so that in an indirect gear the wheels get the same (the drive and its centre are known by now).
+    const float efficiency = ReferenceDrivetrainEfficiency(settings);
+    if (spec.torqueCurve.size() >= 2 && !settings.torqueCurve.empty() && efficiency < 1.0f)
+    {
+        for (std::vector<glm::vec2>* curve : {&settings.torqueCurve, &settings.ersTorqueCurve})
+        {
+            for (glm::vec2& point : *curve)
+            {
+                point.y /= efficiency;
+            }
+        }
+        settings.maxEngineTorque /= efficiency;
     }
     return settings;
 }

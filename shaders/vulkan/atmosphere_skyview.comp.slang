@@ -3,8 +3,11 @@
 #include "atmosphere_integrate.slang"
 
 [[vk::binding(2, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> skyViewOut;
-[[vk::binding(4, 1)]] Sampler2D transmittanceLut;
-[[vk::binding(5, 1)]] Sampler2D multiScatteringLut;
+// Set 1 is VulkanAtmosphere's NVRHI binding set: each sampled LUT's sampler at its binding + 64.
+[[vk::binding(4, 1)]] Texture2D transmittanceLut;
+[[vk::binding(68, 1)]] SamplerState transmittanceLutSampler;
+[[vk::binding(5, 1)]] Texture2D multiScatteringLut;
+[[vk::binding(69, 1)]] SamplerState multiScatteringLutSampler;
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -32,6 +35,6 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     ScatteringResult result = IntegrateScatteredLuminance(
         float3(0.0, viewHeight, 0.0), direction, sunDirection, ubo.sunIlluminance.rgb,
-        transmittanceLut, multiScatteringLut, false, 30.0, 9.0e9, true, true);
+        AtmosphereLut(transmittanceLut, transmittanceLutSampler), AtmosphereLut(multiScatteringLut, multiScatteringLutSampler), false, 30.0, 9.0e9, true, true);
     skyViewOut[texel] = float4(result.luminance, 1.0);
 }

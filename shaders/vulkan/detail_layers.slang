@@ -5,11 +5,16 @@
 // mask's channels weigh four tiling detail maps. Set 1 bindings 27 to 31, after the layer maps of
 // material_layers.slang. All five are bound as linear data: AC combines the sRGB-encoded values, and
 // the sum is decoded once here. Include after material_common.slang.
-[[vk::binding(27, 1)]] Sampler2D detailMaskTexture;
-[[vk::binding(28, 1)]] Sampler2D detailLayerRTexture;
-[[vk::binding(29, 1)]] Sampler2D detailLayerGTexture;
-[[vk::binding(30, 1)]] Sampler2D detailLayerBTexture;
-[[vk::binding(31, 1)]] Sampler2D detailLayerATexture;
+[[vk::binding(27, 1)]] Texture2D detailMaskTexture;
+[[vk::binding(MATERIAL_SAMPLER(27), 1)]] SamplerState detailMaskTextureSampler;
+[[vk::binding(28, 1)]] Texture2D detailLayerRTexture;
+[[vk::binding(MATERIAL_SAMPLER(28), 1)]] SamplerState detailLayerRTextureSampler;
+[[vk::binding(29, 1)]] Texture2D detailLayerGTexture;
+[[vk::binding(MATERIAL_SAMPLER(29), 1)]] SamplerState detailLayerGTextureSampler;
+[[vk::binding(30, 1)]] Texture2D detailLayerBTexture;
+[[vk::binding(MATERIAL_SAMPLER(30), 1)]] SamplerState detailLayerBTextureSampler;
+[[vk::binding(31, 1)]] Texture2D detailLayerATexture;
+[[vk::binding(MATERIAL_SAMPLER(31), 1)]] SamplerState detailLayerATextureSampler;
 
 float3 DetailLayersSrgbToLinear(float3 encoded)
 {

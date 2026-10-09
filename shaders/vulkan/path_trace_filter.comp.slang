@@ -6,6 +6,8 @@
 // the edges between surfaces and light are not. The specular channel also asks for a similar
 // roughness. As a still image's history grows past the motion cap the filter fades out, so the
 // converged image is the accumulation alone: the reference. stepSize 0 copies source to target.
+// Where ray reconstruction takes an accumulation (the offline mode), the result's specular alpha is
+// the specular path's hit distance the temporal pass kept in the surface history.
 
 #include "scene_common.slang"
 #include "gbuffer_common.slang"
@@ -32,6 +34,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float4 centerDiffuse;
     float4 centerSpecular;
     LoadPathTracePair(pathTrace.source, pixel, centerDiffuse, centerSpecular);
+    if ((pathTrace.flags & (PT_FLAG_HIT_DISTANCE | PT_FLAG_ACCUMULATE)) == (PT_FLAG_HIT_DISTANCE | PT_FLAG_ACCUMULATE) &&
+        pathTrace.target == PT_IMAGE_FINAL)
+    {
+        centerSpecular.a = ptHistorySurface[pixel].w;
+    }
     if (pathTrace.stepSize == 0u || !PathTraceSurfaceShaded(pixel, depth))
     {
         StorePathTracePair(pathTrace.target, pixel, centerDiffuse, centerSpecular);

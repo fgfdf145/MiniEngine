@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "gpu_timer.h"
+#include "nvrhi_native.h"
 #include "uniform_buffer.h"
 
 #include <engine/renderer/material.h>
@@ -75,6 +76,7 @@ class VulkanShadowPass
     VulkanShadowPass(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         VkDescriptorSetLayout materialSetLayout,
         uint32_t resolution);
@@ -111,21 +113,22 @@ class VulkanShadowPass
     // One layer's draws: the casters its cascade sees, opaque ones from the position stream.
     void RecordCascadeDraws(VkCommandBuffer commandBuffer, const glm::mat4& lightViewProjection, std::span<const ShadowDrawItem> drawItems) const;
     void CreateImage(VkPhysicalDevice physicalDevice);
-    void CreateSampler(VkPhysicalDevice physicalDevice);
+    void CreateSampler(VkPhysicalDevice physicalDevice, nvrhi::IDevice* nvrhiDevice);
     void CreateRenderPass();
     void CreateFramebuffers();
     void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout materialSetLayout);
     void DestroyHandles();
 
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     uint32_t m_resolution = 0;
     VkFormat m_format = VK_FORMAT_UNDEFINED;
     VkImage m_image = VK_NULL_HANDLE;
-    VkDeviceMemory m_memory = VK_NULL_HANDLE;
+    nvrhi::TextureHandle m_texture;
     VkImageView m_arrayView = VK_NULL_HANDLE;
     std::array<VkImageView, kShadowCascadeCount> m_layerViews{};
     std::array<VkFramebuffer, kShadowCascadeCount> m_framebuffers{};
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_opaquePipeline = VK_NULL_HANDLE;

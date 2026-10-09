@@ -1,5 +1,7 @@
 #include "render_features.h"
 
+#include "path_tracing.h"
+
 namespace me
 {
 
@@ -12,13 +14,15 @@ RenderFeatures ResolveRenderFeatures(const RenderDebugSettings& settings, const 
     const bool khronos = settings.khronosReference;
     const bool deferredOwn = features.deferred && !khronos;
 
+    const PathTracingSettings pathTracing = EffectivePathTracing(settings.pathTracing);
     features.hardwareRays = capabilities.rayQueries && settings.hardwareRayTracing;
     features.rayTracedEffects = features.hardwareRays && capabilities.raySceneReady && deferredOwn;
     features.pathTracingAvailable =
-        features.rayTracedEffects && (settings.pathTracing.restir ? capabilities.restirPt : capabilities.pathTracer);
-    features.pathTracing = settings.pathTracing.enabled && features.pathTracingAvailable;
-    features.restirPt = features.pathTracing && settings.pathTracing.restir;
-    features.plainPathTracing = features.pathTracing && !settings.pathTracing.restir;
+        features.rayTracedEffects && (pathTracing.restir ? capabilities.restirPt : capabilities.pathTracer);
+    features.pathTracing = pathTracing.enabled && features.pathTracingAvailable;
+    features.restirPt = features.pathTracing && pathTracing.restir;
+    features.plainPathTracing = features.pathTracing && !pathTracing.restir;
+    features.offlinePathTracing = features.plainPathTracing && pathTracing.offline.enabled;
 
     const bool dlssRayReconstruction = capabilities.dlss && capabilities.dlssRayReconstruction;
     // The forward-only order has no motion vectors; DLSS takes TAA's place while it resolves.
@@ -40,7 +44,7 @@ RenderFeatures ResolveRenderFeatures(const RenderDebugSettings& settings, const 
     features.toneMapperChoice = !khronos;
     features.gbufferViews = features.deferred;
 
-    features.rayTracedSunShadows = features.rayTracedEffects && !features.restirPt;
+    features.rayTracedSunShadows = features.rayTracedEffects && !features.restirPt && !features.offlinePathTracing;
     features.rayTracedLocalShadows = features.rayTracedSunShadows && settings.localLightShadows;
     features.rayTracedReflections = features.rayTracedEffects && !features.pathTracing && taaHistory;
     features.rayTracedAmbientOcclusion = features.rayTracedEffects && features.ao && settings.ao.enabled;
@@ -48,7 +52,7 @@ RenderFeatures ResolveRenderFeatures(const RenderDebugSettings& settings, const 
     features.occlusionRays = (features.rayTracedAmbientOcclusion && settings.rayTracing.ambientOcclusion) ||
                              (features.probeOcclusion && settings.rayTracing.probeOcclusion);
     features.rayTracedShadowDenoise = features.rayTracedSunShadows && settings.rayTracing.sunShadows && !dlssRayReconstruction;
-    features.pathTraceAccumulate = features.plainPathTracing && !dlssRayReconstruction;
+    features.pathTraceAccumulate = features.plainPathTracing && (!dlssRayReconstruction || features.offlinePathTracing);
     features.pathTraceDenoise = features.plainPathTracing && !dlssRayReconstruction;
     return features;
 }

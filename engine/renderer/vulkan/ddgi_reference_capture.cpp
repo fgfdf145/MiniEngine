@@ -88,7 +88,7 @@ void VulkanRenderer::ExplainDdgiLookup(const ImageCaptureRequest& device, glm::v
     {
         ImageCaptureRequest request = device;
         request.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-        request.layout = VK_IMAGE_LAYOUT_GENERAL;
+        request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         request.layer = level;
         request.image = m_ddgi->GetIrradianceImage();
         request.extent = {static_cast<uint32_t>(irrSize.x), static_cast<uint32_t>(irrSize.y)};
@@ -231,7 +231,7 @@ void VulkanRenderer::CompareDdgiProbes(const std::filesystem::path& prefix, cons
     atlasRequest.format = VK_FORMAT_R16G16B16A16_SFLOAT;
     constexpr uint32_t kTile = kDdgiIrradianceTexels + 2;
     atlasRequest.extent = {kTile * static_cast<uint32_t>(kDdgiGridSize.x * kDdgiGridSize.y), kTile * static_cast<uint32_t>(kDdgiGridSize.z)};
-    atlasRequest.layout = VK_IMAGE_LAYOUT_GENERAL;
+    atlasRequest.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     const std::vector<glm::vec4> atlas = ReadImageHalfFloats(atlasRequest);
 
     struct Probe

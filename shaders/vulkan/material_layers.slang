@@ -7,20 +7,34 @@
 // as the flat normal, so the factors alone apply. Needs material_common.slang, gbuffer_common.slang,
 // normal_map.slang, material_uv.slang and anisotropy_common.slang.
 
-[[vk::binding(13, 1)]] Sampler2D clearcoatTexture;                // R
-[[vk::binding(14, 1)]] Sampler2D clearcoatRoughnessTexture;       // G
-[[vk::binding(15, 1)]] Sampler2D sheenColorTexture;               // RGB, sRGB
-[[vk::binding(16, 1)]] Sampler2D sheenRoughnessTexture;           // A
-[[vk::binding(17, 1)]] Sampler2D anisotropyTexture;               // RG direction, B strength
-[[vk::binding(18, 1)]] Sampler2D specularTexture;                 // A
-[[vk::binding(19, 1)]] Sampler2D specularColorTexture;            // RGB, sRGB
-[[vk::binding(20, 1)]] Sampler2D clearcoatNormalTexture;          // tangent-space normal
-[[vk::binding(21, 1)]] Sampler2D iridescenceTexture;              // R
-[[vk::binding(22, 1)]] Sampler2D iridescenceThicknessTexture;     // G
-[[vk::binding(23, 1)]] Sampler2D transmissionTexture;             // R
-[[vk::binding(24, 1)]] Sampler2D thicknessTexture;                // G
-[[vk::binding(25, 1)]] Sampler2D diffuseTransmissionTexture;      // A
-[[vk::binding(26, 1)]] Sampler2D diffuseTransmissionColorTexture; // RGB, sRGB
+[[vk::binding(13, 1)]] Texture2D clearcoatTexture;                // R
+[[vk::binding(MATERIAL_SAMPLER(13), 1)]] SamplerState clearcoatTextureSampler;
+[[vk::binding(14, 1)]] Texture2D clearcoatRoughnessTexture;       // G
+[[vk::binding(MATERIAL_SAMPLER(14), 1)]] SamplerState clearcoatRoughnessTextureSampler;
+[[vk::binding(15, 1)]] Texture2D sheenColorTexture;               // RGB, sRGB
+[[vk::binding(MATERIAL_SAMPLER(15), 1)]] SamplerState sheenColorTextureSampler;
+[[vk::binding(16, 1)]] Texture2D sheenRoughnessTexture;           // A
+[[vk::binding(MATERIAL_SAMPLER(16), 1)]] SamplerState sheenRoughnessTextureSampler;
+[[vk::binding(17, 1)]] Texture2D anisotropyTexture;               // RG direction, B strength
+[[vk::binding(MATERIAL_SAMPLER(17), 1)]] SamplerState anisotropyTextureSampler;
+[[vk::binding(18, 1)]] Texture2D specularTexture;                 // A
+[[vk::binding(MATERIAL_SAMPLER(18), 1)]] SamplerState specularTextureSampler;
+[[vk::binding(19, 1)]] Texture2D specularColorTexture;            // RGB, sRGB
+[[vk::binding(MATERIAL_SAMPLER(19), 1)]] SamplerState specularColorTextureSampler;
+[[vk::binding(20, 1)]] Texture2D clearcoatNormalTexture;          // tangent-space normal
+[[vk::binding(MATERIAL_SAMPLER(20), 1)]] SamplerState clearcoatNormalTextureSampler;
+[[vk::binding(21, 1)]] Texture2D iridescenceTexture;              // R
+[[vk::binding(MATERIAL_SAMPLER(21), 1)]] SamplerState iridescenceTextureSampler;
+[[vk::binding(22, 1)]] Texture2D iridescenceThicknessTexture;     // G
+[[vk::binding(MATERIAL_SAMPLER(22), 1)]] SamplerState iridescenceThicknessTextureSampler;
+[[vk::binding(23, 1)]] Texture2D transmissionTexture;             // R
+[[vk::binding(MATERIAL_SAMPLER(23), 1)]] SamplerState transmissionTextureSampler;
+[[vk::binding(24, 1)]] Texture2D thicknessTexture;                // G
+[[vk::binding(MATERIAL_SAMPLER(24), 1)]] SamplerState thicknessTextureSampler;
+[[vk::binding(25, 1)]] Texture2D diffuseTransmissionTexture;      // A
+[[vk::binding(MATERIAL_SAMPLER(25), 1)]] SamplerState diffuseTransmissionTextureSampler;
+[[vk::binding(26, 1)]] Texture2D diffuseTransmissionColorTexture; // RGB, sRGB
+[[vk::binding(MATERIAL_SAMPLER(26), 1)]] SamplerState diffuseTransmissionColorTextureSampler;
 
 struct MaterialLayers
 {

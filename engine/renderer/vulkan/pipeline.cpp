@@ -14,9 +14,7 @@
 namespace me
 {
 
-namespace
-{
-std::vector<char> ReadFile(const std::filesystem::path& path)
+std::vector<char> ReadSpirvFile(const std::filesystem::path& path)
 {
     std::ifstream file(path, std::ios::ate | std::ios::binary);
     if (!file.is_open())
@@ -30,12 +28,11 @@ std::vector<char> ReadFile(const std::filesystem::path& path)
     file.read(buffer.data(), static_cast<std::streamsize>(fileSize));
     return buffer;
 }
-}
 
 VulkanShaderModule::VulkanShaderModule(VkDevice device, const std::filesystem::path& path)
     : m_device(device)
 {
-    const std::vector<char> code = ReadFile(path);
+    const std::vector<char> code = ReadSpirvFile(path);
 
     VkShaderModuleCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;

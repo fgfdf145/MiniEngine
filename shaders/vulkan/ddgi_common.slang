@@ -57,9 +57,13 @@ static const uint DDGI_FEEDBACK_INACTIVE = 4u;
 
 // Set 0 bindings 21 to 23 (VulkanDdgi): one array layer per level, a 10 x 10 (irradiance: rgb
 // irradiance / pi, a sky visibility) or 18 x 18 (visibility: mean distance, mean squared distance)
-// tile per probe, bordered.
-[[vk::binding(21, 0)]] Sampler2DArray ddgiIrradianceAtlas;
-[[vk::binding(22, 0)]] Sampler2DArray ddgiVisibilityAtlas;
+// tile per probe, bordered. ddgi_update.comp declares the atlases itself (DDGI_UPDATE_ATLASES).
+#ifndef DDGI_UPDATE_ATLASES
+[[vk::binding(21, 0)]] Texture2DArray ddgiIrradianceAtlas;
+[[vk::binding(FRAME_SAMPLER(21), 0)]] SamplerState ddgiIrradianceAtlasSampler;
+[[vk::binding(22, 0)]] Texture2DArray ddgiVisibilityAtlas;
+[[vk::binding(FRAME_SAMPLER(22), 0)]] SamplerState ddgiVisibilityAtlasSampler;
+#endif
 [[vk::binding(23, 0)]] StructuredBuffer<DdgiProbeState> ddgiProbeStates;
 
 uint DdgiLevelCount()
@@ -204,7 +208,7 @@ float4 DdgiSampleLevelAlong(uint level, float3 P, float3 N, float3 V, float3 D, 
 
         float3 probeToPoint = biased - probePosition;
         float distance = length(probeToPoint);
-        float2 moments = ddgiVisibilityAtlas.SampleLevel(float3(DdgiAtlasUv(slot, probeToPoint / max(distance, 1e-4), DDGI_VISIBILITY_TEXELS, visibilitySize), float(level)), 0.0)
+        float2 moments = ddgiVisibilityAtlas.SampleLevel(ddgiVisibilityAtlasSampler, float3(DdgiAtlasUv(slot, probeToPoint / max(distance, 1e-4), DDGI_VISIBILITY_TEXELS, visibilitySize), float(level)), 0.0)
                            .rg;
         float chebyshev = 1.0;
         if (distance > moments.x)
@@ -227,7 +231,7 @@ float4 DdgiSampleLevelAlong(uint level, float3 P, float3 N, float3 V, float3 D, 
         }
         weight *= trilinear;
 
-        float4 irradiance = ddgiIrradianceAtlas.SampleLevel(float3(DdgiAtlasUv(slot, D, DDGI_IRRADIANCE_TEXELS, irradianceSize), float(level)), 0.0);
+        float4 irradiance = ddgiIrradianceAtlas.SampleLevel(ddgiIrradianceAtlasSampler, float3(DdgiAtlasUv(slot, D, DDGI_IRRADIANCE_TEXELS, irradianceSize), float(level)), 0.0);
         sum += irradiance * weight;
         totalWeight += weight;
     }

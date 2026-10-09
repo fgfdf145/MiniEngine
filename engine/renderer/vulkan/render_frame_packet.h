@@ -56,6 +56,8 @@ struct RenderFramePacket
     float uiScale = 1.0f;
     // The output's pixels per display pixel where the viewport shows them (EditorUiFrameResult).
     float viewportOutputScale = 1.0f;
+    // RendererSharedState::temporalRestart: a change starts every temporal effect over.
+    uint32_t temporalRestart = 0;
     // The renderables changed since the last frame: the render thread starts an upload.
     bool contentChanged = false;
     std::shared_ptr<const CpuRenderSubmeshList> renderSubmeshes;
@@ -82,7 +84,9 @@ struct RenderFeedback
     bool minimapLoaded = false;
     GpuMemoryReport gpuMemory;
     // What path tracing is doing, for the Graphics Debug window: how far a still image has
-    // accumulated, or why it does not run.
+    // accumulated, or why it does not run; and the offline mode's share of its target samples
+    // (negative where it is not running).
     std::string pathTracingStatus;
+    float pathTracingProgress = -1.0f;
 };
 }

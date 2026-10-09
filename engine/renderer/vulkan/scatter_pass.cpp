@@ -2,6 +2,7 @@
 
 #include "compute_pass_util.h"
 #include "material_draw.h"
+#include "nvrhi_resources.h"
 #include "reverse_depth.h"
 
 #include <array>
@@ -27,14 +28,15 @@ VkImageMemoryBarrier InitialBarrier(VkImage image, VkImageAspectFlags aspect)
 }
 }
 
-VulkanScatterPass::VulkanScatterPass(VkPhysicalDevice physicalDevice, VkDevice device, const SceneRenderTargets& targets)
+VulkanScatterPass::VulkanScatterPass(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
         // The viewer reads the pre-pass with NEAREST: each sample is one surface point's light.
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
+        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         CreateRenderPass();
         CreateImages(targets.GetExtent());
     }
@@ -103,12 +105,12 @@ VkRenderPass VulkanScatterPass::GetRenderPass() const
 
 TextureDescriptorBinding VulkanScatterPass::GetLightBinding() const
 {
-    return TextureDescriptorBinding{m_light.view, m_sampler};
+    return BindTexture(m_light.view, m_light.texture, m_sampler);
 }
 
 TextureDescriptorBinding VulkanScatterPass::GetDepthBinding() const
 {
-    return TextureDescriptorBinding{m_depth.view, m_sampler};
+    return BindTexture(m_depth.view, m_depth.texture, m_sampler);
 }
 
 void VulkanScatterPass::CreateRenderPass()
@@ -199,16 +201,7 @@ void VulkanScatterPass::CreateImage(VkFormat format, VkImageUsageFlags usage, Vk
     imageInfo.usage = usage;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &image.image), "Failed to create a scatter pre-pass image");
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, image.image, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(m_physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &image.memory), "Failed to allocate a scatter pre-pass image");
-    CheckVulkan(vkBindImageMemory(m_device, image.image, image.memory, 0), "Failed to bind a scatter pre-pass image");
+    image.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, image.image, "Failed to create a scatter pre-pass image");
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -255,14 +248,7 @@ void VulkanScatterPass::DestroyImages()
         {
             vkDestroyImageView(m_device, image->view, nullptr);
         }
-        if (image->image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, image->image, nullptr);
-        }
-        if (image->memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, image->memory, nullptr);
-        }
+        // The image and its memory go with the texture, released with the rest below.
         *image = Image{};
     }
 }
@@ -275,10 +261,6 @@ void VulkanScatterPass::DestroyHandles()
         vkDestroyRenderPass(m_device, m_renderPass, nullptr);
         m_renderPass = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
 }
 }

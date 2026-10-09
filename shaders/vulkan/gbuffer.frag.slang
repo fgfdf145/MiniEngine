@@ -29,22 +29,35 @@ static const float PATH_TRACE_LAYER_MIN_ALPHA = 0.05;
 #endif
 #if PATH_TRACE_LAYER_PASS == 2
 // The nearest forward-shaded surface's depth (the depth pass's result), set 0 binding 29.
-[[vk::binding(29, 0)]] Sampler2D pathTraceLayerDepth;
+[[vk::binding(29, 0)]] Texture2D pathTraceLayerDepth;
 #endif
 
-[[vk::binding(0, 1)]] Sampler2D baseColorTexture;
-[[vk::binding(1, 1)]] Sampler2D normalTexture;
-[[vk::binding(2, 1)]] Sampler2D metallicTexture;
-[[vk::binding(3, 1)]] Sampler2D roughnessTexture;
-[[vk::binding(4, 1)]] Sampler2D occlusionTexture;
-[[vk::binding(5, 1)]] Sampler2D emissiveTexture;
-[[vk::binding(6, 1)]] Sampler2D secondaryBaseColorTexture;
-[[vk::binding(7, 1)]] Sampler2D secondaryNormalTexture;
-[[vk::binding(8, 1)]] Sampler2D secondaryMetallicTexture;
-[[vk::binding(9, 1)]] Sampler2D secondaryRoughnessTexture;
-[[vk::binding(10, 1)]] Sampler2D secondaryOcclusionTexture;
-[[vk::binding(11, 1)]] Sampler2D secondaryEmissiveTexture;
-[[vk::binding(12, 1)]] Sampler2D blendMaskTexture;
+[[vk::binding(0, 1)]] Texture2D baseColorTexture;
+[[vk::binding(MATERIAL_SAMPLER(0), 1)]] SamplerState baseColorTextureSampler;
+[[vk::binding(1, 1)]] Texture2D normalTexture;
+[[vk::binding(MATERIAL_SAMPLER(1), 1)]] SamplerState normalTextureSampler;
+[[vk::binding(2, 1)]] Texture2D metallicTexture;
+[[vk::binding(MATERIAL_SAMPLER(2), 1)]] SamplerState metallicTextureSampler;
+[[vk::binding(3, 1)]] Texture2D roughnessTexture;
+[[vk::binding(MATERIAL_SAMPLER(3), 1)]] SamplerState roughnessTextureSampler;
+[[vk::binding(4, 1)]] Texture2D occlusionTexture;
+[[vk::binding(MATERIAL_SAMPLER(4), 1)]] SamplerState occlusionTextureSampler;
+[[vk::binding(5, 1)]] Texture2D emissiveTexture;
+[[vk::binding(MATERIAL_SAMPLER(5), 1)]] SamplerState emissiveTextureSampler;
+[[vk::binding(6, 1)]] Texture2D secondaryBaseColorTexture;
+[[vk::binding(MATERIAL_SAMPLER(6), 1)]] SamplerState secondaryBaseColorTextureSampler;
+[[vk::binding(7, 1)]] Texture2D secondaryNormalTexture;
+[[vk::binding(MATERIAL_SAMPLER(7), 1)]] SamplerState secondaryNormalTextureSampler;
+[[vk::binding(8, 1)]] Texture2D secondaryMetallicTexture;
+[[vk::binding(MATERIAL_SAMPLER(8), 1)]] SamplerState secondaryMetallicTextureSampler;
+[[vk::binding(9, 1)]] Texture2D secondaryRoughnessTexture;
+[[vk::binding(MATERIAL_SAMPLER(9), 1)]] SamplerState secondaryRoughnessTextureSampler;
+[[vk::binding(10, 1)]] Texture2D secondaryOcclusionTexture;
+[[vk::binding(MATERIAL_SAMPLER(10), 1)]] SamplerState secondaryOcclusionTextureSampler;
+[[vk::binding(11, 1)]] Texture2D secondaryEmissiveTexture;
+[[vk::binding(MATERIAL_SAMPLER(11), 1)]] SamplerState secondaryEmissiveTextureSampler;
+[[vk::binding(12, 1)]] Texture2D blendMaskTexture;
+[[vk::binding(MATERIAL_SAMPLER(12), 1)]] SamplerState blendMaskTextureSampler;
 #include "material_layers.slang"
 #include "detail_layers.slang"
 

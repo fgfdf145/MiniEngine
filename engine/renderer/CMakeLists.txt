@@ -142,6 +142,11 @@ add_library(engine_renderer
     vulkan/device.h
     vulkan/nvrhi_device.cpp
     vulkan/nvrhi_device.h
+    vulkan/nvrhi_native.h
+    vulkan/nvrhi_pass.cpp
+    vulkan/nvrhi_pass.h
+    vulkan/nvrhi_resources.cpp
+    vulkan/nvrhi_resources.h
     vulkan/dlss.cpp
     vulkan/dlss.h
     vulkan/environment_probe.cpp
@@ -402,6 +407,9 @@ set(MINIENGINE_INVARIANT_POSITION_SHADERS
 set(MINIENGINE_SHADER_DEFINE_VARIANTS
     "gbuffer.frag|path_trace_layer_depth.frag|PATH_TRACE_LAYER_PASS=1"
     "gbuffer.frag|path_trace_layer_surface.frag|PATH_TRACE_LAYER_PASS=2"
+    # The path tracer's offline mode accumulates in full float (path_trace_common.slang).
+    "path_trace_temporal.comp|path_trace_temporal_float32.comp|PT_HISTORY_FLOAT32=1"
+    "path_trace_filter.comp|path_trace_filter_float32.comp|PT_HISTORY_FLOAT32=1"
 )
 
 # The path tracer's trace without what a frame does not need (VulkanPathTracePass picks one).
@@ -452,5 +460,13 @@ if(MINIENGINE_DLSS_FOUND)
     target_link_libraries(engine_renderer PRIVATE miniengine_ngx)
 endif()
 target_include_directories(engine_renderer PRIVATE "${Stb_INCLUDE_DIR}")
+# A static NVRHI leaves vulkan.hpp's dispatcher to the program (nvrhi_device.cpp); a shared one owns it.
+if(MINIENGINE_NVRHI_STATIC)
+    set_source_files_properties(vulkan/nvrhi_device.cpp
+        PROPERTIES
+            COMPILE_DEFINITIONS "MINIENGINE_NVRHI_STATIC=1"
+            SKIP_PRECOMPILE_HEADERS ON
+    )
+endif()
 
 add_dependencies(engine_renderer engine_renderer_shaders)

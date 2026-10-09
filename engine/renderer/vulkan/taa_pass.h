@@ -18,15 +18,14 @@ namespace me
 // size: this pass turns the G-buffer's motion vectors into the ones DLSS reads
 // (dlss_motion_vectors.comp), evaluates DLSS into SceneTaa, and copies the result into the history
 // image the SSR trace reads next frame, as the TAA resolve writes it.
+//
+// The resolve and the two DLSS input passes record through NVRHI (NvrhiPassScope); the history images
+// and SceneTaa come and go in GENERAL, as the native passes hold them. NGX's evaluation and the copy
+// after it stay native.
 class VulkanTaaPass : public IScenePass
 {
   public:
-    VulkanTaaPass(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
-        VkPipelineCache pipelineCache,
-        const SceneRenderTargets& targets,
-        VkDescriptorSetLayout frameSetLayout);
+    VulkanTaaPass(nvrhi::IDevice* nvrhiDevice, VkDevice device, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout);
     ~VulkanTaaPass() override;
 
     VulkanTaaPass(const VulkanTaaPass&) = delete;
@@ -47,53 +46,42 @@ class VulkanTaaPass : public IScenePass
     VkImageView GetHistoryView(uint32_t index) const;
 
   private:
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    void CreateMotionImage(VkExtent2D extent);
-    void DestroyMotionImage();
-    // Ray reconstruction's guides (dlss_rr_guides.comp), at the render size.
-    struct GuideImage
+    // An image DLSS reads, written here at the render size: NVRHI's, kept in ShaderResource (the
+    // layout NGX reads it in) between frames, with the native handles NGX takes.
+    struct DlssInputImage
     {
+        nvrhi::TextureHandle texture;
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
         VkFormat format = VK_FORMAT_UNDEFINED;
     };
-    void CreateGuideImages(VkExtent2D extent);
-    void DestroyGuideImages();
+    DlssInputImage CreateDlssInputImage(VkExtent2D extent, VkFormat format, const char* name) const;
+    void CreateBindingSets(const SceneRenderTargets& targets);
     void RecordDlss(
         VkCommandBuffer commandBuffer,
         const SceneRenderTargets& targets,
         const ScenePassFrameContext& frame) const;
-    void DestroyHandles();
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_nearestSampler = VK_NULL_HANDLE;
-    VkSampler m_linearSampler = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_linearSampler;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
     HistoryImagePair m_history;
-    // Indexed by frameSlot * 2 + readIndex: set r samples history r and stores to history 1 - r.
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    // Indexed by copy * 2 + readIndex: set r samples history r and stores to history 1 - r.
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
 
-    // DLSS's motion vectors (RG16F, render size) and the pass that writes them, one set per frame slot.
-    VkDescriptorSetLayout m_motionSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_motionDescriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_motionPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_motionPipeline = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_motionDescriptorSets;
-    VkImage m_motionImage = VK_NULL_HANDLE;
-    VkDeviceMemory m_motionMemory = VK_NULL_HANDLE;
-    VkImageView m_motionView = VK_NULL_HANDLE;
-    // Diffuse albedo, specular albedo, normal and roughness, written before a ray reconstruction
-    // evaluation; one set per transient copy names the G-buffer they are made from.
-    std::array<GuideImage, 5> m_guides{};
-    VkDescriptorSetLayout m_guideSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_guideDescriptorPool = VK_NULL_HANDLE;
-    VkPipelineLayout m_guidePipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_guidePipeline = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_guideDescriptorSets;
+    // DLSS's motion vectors (RG16F, render size) and the pass that writes them, one set per copy.
+    nvrhi::BindingLayoutHandle m_motionSetLayout;
+    nvrhi::ComputePipelineHandle m_motionPipeline;
+    std::vector<nvrhi::BindingSetHandle> m_motionBindingSets;
+    DlssInputImage m_motion;
+    // Ray reconstruction's guides (dlss_rr_guides.comp): diffuse albedo, specular albedo, normal and
+    // roughness, the specular hit distance and the reflections' motion vectors, written before a ray
+    // reconstruction evaluation; one set per transient copy names the G-buffer they are made from.
+    std::array<DlssInputImage, 5> m_guides{};
+    nvrhi::BindingLayoutHandle m_guideSetLayout;
+    nvrhi::ComputePipelineHandle m_guidePipeline;
+    std::vector<nvrhi::BindingSetHandle> m_guideBindingSets;
 };
 }

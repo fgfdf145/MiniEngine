@@ -7,7 +7,8 @@
 #define CLOUD_SHADOW_SLANG
 
 // Set 0 binding 26: the map, r the transmittance (VulkanAtmosphere), linear clamped.
-[[vk::binding(26, 0)]] Sampler2D cloudShadowMap;
+[[vk::binding(26, 0)]] Texture2D cloudShadowMap;
+[[vk::binding(FRAME_SAMPLER(26), 0)]] SamplerState cloudShadowMapSampler;
 
 // Must match kCloudShadowMapSize, kCloudShadowExtentMeters, kCloudShadowMinSunHeight and
 // kCloudShadowEdgeFade in engine/renderer/volumetric_clouds.h.
@@ -53,7 +54,7 @@ float CloudShadow(float3 worldPos)
     {
         return 1.0;
     }
-    return lerp(1.0, cloudShadowMap.SampleLevel(uv, 0.0).r, inside);
+    return lerp(1.0, cloudShadowMap.SampleLevel(cloudShadowMapSampler, uv, 0.0).r, inside);
 }
 
 #endif

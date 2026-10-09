@@ -1,9 +1,14 @@
 #include "uniform_buffer.h"
 
+#include "nvrhi_pass.h"
+#include "nvrhi_resources.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include <glm/geometric.hpp>
 #include <glm/matrix.hpp>
 
@@ -13,14 +18,16 @@ namespace me
 VulkanUniformBuffer::VulkanUniformBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     uint32_t imageCount,
-    VkDescriptorSetLayout frameSetLayout,
+    nvrhi::IBindingLayout* frameSetLayout,
     TextureDescriptorBinding shadowMap,
     TextureDescriptorBinding localShadowAtlas,
     EnvironmentDescriptorBindings environment,
     uint32_t drawCapacity)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_shadowMap(shadowMap),
       m_localShadowAtlas(localShadowAtlas),
       m_environment(environment),
@@ -34,8 +41,7 @@ VulkanUniformBuffer::VulkanUniformBuffer(
     try
     {
         CreateBuffers(imageCount);
-        CreateDescriptorPool(imageCount);
-        CreateDescriptorSets(imageCount);
+        BuildFrameBindingSets();
     }
     catch (...)
     {
@@ -51,131 +57,45 @@ VulkanUniformBuffer::~VulkanUniformBuffer()
 
 void VulkanUniformBuffer::DestroyHandles()
 {
-    for (size_t i = 0; i < m_buffers.size(); ++i)
-    {
-        if (m_mappedBuffers[i] != nullptr)
-        {
-            vkUnmapMemory(m_device, m_memories[i]);
-        }
-        if (m_buffers[i] != VK_NULL_HANDLE)
-        {
-            vkDestroyBuffer(m_device, m_buffers[i], nullptr);
-        }
-        if (m_memories[i] != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, m_memories[i], nullptr);
-        }
-    }
-    for (size_t i = 0; i < m_motionBuffers.size(); ++i)
-    {
-        if (m_motionBuffers[i] != VK_NULL_HANDLE)
-        {
-            vkDestroyBuffer(m_device, m_motionBuffers[i], nullptr);
-        }
-        // Freeing mapped memory unmaps it implicitly.
-        if (m_motionMemories[i] != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, m_motionMemories[i], nullptr);
-        }
-    }
-
-    const auto destroyMapped = [this](std::vector<VkBuffer>& buffers, std::vector<VkDeviceMemory>& memories, std::vector<void*>& mapped)
-    {
-        for (size_t i = 0; i < buffers.size(); ++i)
-        {
-            if (buffers[i] != VK_NULL_HANDLE)
-            {
-                vkDestroyBuffer(m_device, buffers[i], nullptr);
-            }
-            // Freeing mapped memory unmaps it implicitly.
-            if (memories[i] != VK_NULL_HANDLE)
-            {
-                vkFreeMemory(m_device, memories[i], nullptr);
-            }
-        }
-        buffers.clear();
-        memories.clear();
-        mapped.clear();
-    };
-    destroyMapped(m_lightBuffers, m_lightMemories, m_mappedLightBuffers);
-    if (m_materialBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, m_materialBuffer, nullptr);
-        m_materialBuffer = VK_NULL_HANDLE;
-    }
-    if (m_materialMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_materialMemory, nullptr);
-        m_materialMemory = VK_NULL_HANDLE;
-    }
+    // The sets first: they hold the buffers.
+    m_frameDescriptorSets.clear();
+    m_frameBindingSets.clear();
+    // The buffers and their memory (unmapped as it is freed) go with the handles.
+    m_lightBuffers.clear();
+    m_lightHandles.clear();
+    m_mappedLightBuffers.clear();
+    m_materialHandle = nullptr;
+    m_materialBuffer = VK_NULL_HANDLE;
     m_mappedMaterialBuffer = nullptr;
-    if (m_textureTransformBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, m_textureTransformBuffer, nullptr);
-        m_textureTransformBuffer = VK_NULL_HANDLE;
-    }
-    if (m_textureTransformMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_textureTransformMemory, nullptr);
-        m_textureTransformMemory = VK_NULL_HANDLE;
-    }
+    m_textureTransformHandle = nullptr;
+    m_textureTransformBuffer = VK_NULL_HANDLE;
     m_mappedTextureTransformBuffer = nullptr;
-    destroyMapped(m_clusterBuffers, m_clusterMemories, m_mappedClusterBuffers);
-    destroyMapped(m_shadowTileBuffers, m_shadowTileMemories, m_mappedShadowTileBuffers);
-
+    m_clusterBuffers.clear();
+    m_clusterHandles.clear();
+    m_mappedClusterBuffers.clear();
+    m_shadowTileBuffers.clear();
+    m_shadowTileHandles.clear();
+    m_mappedShadowTileBuffers.clear();
     m_buffers.clear();
-    m_memories.clear();
+    m_handles.clear();
     m_mappedBuffers.clear();
     m_motionBuffers.clear();
-    m_motionMemories.clear();
+    m_motionHandles.clear();
     m_mappedMotionBuffers.clear();
-
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
     // m_frameSetLayout is owned by VulkanFrameDescriptorSetLayout, not by this buffer.
 }
 
 void VulkanUniformBuffer::SetEnvironmentMap(TextureDescriptorBinding environmentMap)
 {
     m_environment.environmentMap = environmentMap;
-    const VkDescriptorImageInfo info{environmentMap.sampler, environmentMap.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    for (VkDescriptorSet set : m_frameDescriptorSets)
-    {
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = set;
-        write.dstBinding = 6;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.pImageInfo = &info;
-        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
-    }
+    BuildFrameBindingSets();
 }
 
 void VulkanUniformBuffer::SetScatterImages(TextureDescriptorBinding light, TextureDescriptorBinding depth)
 {
     m_environment.scatterLight = light;
     m_environment.scatterDepth = depth;
-    const std::array<VkDescriptorImageInfo, 2> infos = {
-        VkDescriptorImageInfo{light.sampler, light.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-        VkDescriptorImageInfo{depth.sampler, depth.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-    for (VkDescriptorSet set : m_frameDescriptorSets)
-    {
-        std::array<VkWriteDescriptorSet, 2> writes{};
-        for (uint32_t index = 0; index < 2; ++index)
-        {
-            writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[index].dstSet = set;
-            writes[index].dstBinding = 19 + index;
-            writes[index].descriptorCount = 1;
-            writes[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[index].pImageInfo = &infos[index];
-        }
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    }
+    BuildFrameBindingSets();
 }
 
 void VulkanUniformBuffer::SetPathTraceLayerImages(TextureDescriptorBinding depth, TextureDescriptorBinding diffuse, TextureDescriptorBinding specular)
@@ -183,41 +103,13 @@ void VulkanUniformBuffer::SetPathTraceLayerImages(TextureDescriptorBinding depth
     m_environment.pathTraceLayerDepth = depth;
     m_environment.pathTraceLayerDiffuse = diffuse;
     m_environment.pathTraceLayerSpecular = specular;
-    const std::array<VkDescriptorImageInfo, 3> infos = {
-        VkDescriptorImageInfo{depth.sampler, depth.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-        VkDescriptorImageInfo{diffuse.sampler, diffuse.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-        VkDescriptorImageInfo{specular.sampler, specular.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-    for (VkDescriptorSet set : m_frameDescriptorSets)
-    {
-        std::array<VkWriteDescriptorSet, 3> writes{};
-        for (uint32_t index = 0; index < 3; ++index)
-        {
-            writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[index].dstSet = set;
-            writes[index].dstBinding = 29 + index;
-            writes[index].descriptorCount = 1;
-            writes[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[index].pImageInfo = &infos[index];
-        }
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    }
+    BuildFrameBindingSets();
 }
 
 void VulkanUniformBuffer::SetCloudTarget(TextureDescriptorBinding target)
 {
     m_environment.cloudTarget = target;
-    const VkDescriptorImageInfo info{target.sampler, target.imageView, VK_IMAGE_LAYOUT_GENERAL};
-    for (VkDescriptorSet set : m_frameDescriptorSets)
-    {
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = set;
-        write.dstBinding = 28;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.pImageInfo = &info;
-        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
-    }
+    BuildFrameBindingSets();
 }
 
 VkDescriptorSet VulkanUniformBuffer::GetFrameDescriptorSet(uint32_t imageIndex) const
@@ -228,6 +120,16 @@ VkDescriptorSet VulkanUniformBuffer::GetFrameDescriptorSet(uint32_t imageIndex) 
     }
 
     return m_frameDescriptorSets[imageIndex];
+}
+
+nvrhi::IBindingSet* VulkanUniformBuffer::GetFrameBindingSet(uint32_t imageIndex) const
+{
+    if (imageIndex >= m_imageCount)
+    {
+        throw std::runtime_error("Frame binding set image index is out of range");
+    }
+
+    return m_frameBindingSets[imageIndex];
 }
 
 void VulkanUniformBuffer::Update(
@@ -335,150 +237,99 @@ void VulkanUniformBuffer::Update(
     }
 }
 
-VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(VkDevice device)
-    : m_device(device)
+VulkanFrameDescriptorSetLayout::VulkanFrameDescriptorSetLayout(nvrhi::IDevice* device)
 {
-    std::array<VkDescriptorSetLayoutBinding, 32> bindings{};
-    bindings[0].binding = 0;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    bindings[0].descriptorCount = 1;
-    // Compute too: the AO passes reconstruct view-space positions from the camera block.
-    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    nvrhi::BindingLayoutDesc desc;
+    // Every stage that reads set 0: the vertex shaders (the camera block, the previous model
+    // matrices), the fragment shaders and the compute passes.
+    desc.visibility = nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel | nvrhi::ShaderType::Compute;
+    desc.registerSpace = 0;
+    desc.registerSpaceIsDescriptorSet = true;
+    // A slot is its binding: the shaders number set 0 themselves.
+    desc.bindingOffsets = ShaderBindingOffsets();
+    const auto texture = [&desc](uint32_t binding)
+    {
+        desc.bindings.push_back(nvrhi::BindingLayoutItem::Texture_SRV(binding));
+        desc.bindings.push_back(nvrhi::BindingLayoutItem::Sampler(binding + kFrameSamplerBindingOffset));
+    };
+    // The shaders' StructuredBuffers: storage buffers, as NVRHI's raw buffer views are on Vulkan.
+    const auto buffer = [&desc](uint32_t binding)
+    {
+        desc.bindings.push_back(nvrhi::BindingLayoutItem::RawBuffer_SRV(binding));
+    };
+    // The camera block; the AO passes reconstruct view-space positions from it.
+    desc.bindings.push_back(nvrhi::BindingLayoutItem::ConstantBuffer(0));
     // The shadow map, sampled with depth comparison by the material fragment shader, and by the ray
     // traced reflections' hit shading beyond the traced shadows' reach.
-    bindings[1].binding = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    texture(1);
     // Each draw's previous model matrix, read by triangle.vert for motion vectors.
-    bindings[2].binding = 2;
-    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    buffer(2);
     // The atmosphere LUTs (3 transmittance, 4 sky-view, 5 aerial perspective) and the HDRI (6),
     // sampled by the sky, lighting and forward fragment shaders, and by the compute shader that
     // projects the sky onto SH.
     for (uint32_t binding = 3; binding <= 6; ++binding)
     {
-        bindings[binding].binding = binding;
-        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+        texture(binding);
     }
-    // The atmosphere's radiance SH, read by the shading of every surface. Compute too, here and for
-    // the sky cube, the lights and the local shadows: the DDGI probe rays shade what they hit
-    // (ddgi_trace.comp).
-    bindings[7].binding = 7;
-    bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[7].descriptorCount = 1;
-    bindings[7].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    // The atmosphere's radiance SH, read by the shading of every surface, the DDGI probe rays'
+    // among them (ddgi_trace.comp).
+    buffer(7);
     // The prefiltered sky (8) and the DFG table (9), for the specular lobe under a physical sky.
-    for (uint32_t binding = 8; binding <= 9; ++binding)
-    {
-        bindings[binding].binding = binding;
-        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-    }
+    texture(8);
+    texture(9);
     // The scene lights (10) and the cluster grid that indexes them (11), read by ShadeSurface.
-    for (uint32_t binding = 10; binding <= 11; ++binding)
-    {
-        bindings[binding].binding = binding;
-        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-    }
+    buffer(10);
+    buffer(11);
     // Every draw's material, read by the material fragment shaders at their draw slot, and by hardware
-    // ray tracing's hit shading at the hit's (ray_hit_common.glsl).
-    bindings[12].binding = 12;
-    bindings[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[12].descriptorCount = 1;
-    bindings[12].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    // ray tracing's hit shading at the hit's (ray_hit_common.slang).
+    buffer(12);
     // The local shadow atlas (13) and its tiles (14), read by ShadeSurface.
-    bindings[13].binding = 13;
-    bindings[13].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[13].descriptorCount = 1;
-    bindings[13].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-    bindings[14].binding = 14;
-    bindings[14].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[14].descriptorCount = 1;
-    bindings[14].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-    // The area lights' LTC tables (compute too: reflected hits are lit by the same lights).
-    for (uint32_t binding = 15; binding <= 16; ++binding)
-    {
-        bindings[binding].binding = binding;
-        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-    }
+    texture(13);
+    buffer(14);
+    // The area lights' LTC tables.
+    texture(15);
+    texture(16);
     // Each draw's texture transforms, read by gbuffer.frag and triangle.frag, and by hit shading.
-    bindings[17].binding = 17;
-    bindings[17].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[17].descriptorCount = 1;
-    bindings[17].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    buffer(17);
     // The transmission copy, sampled by triangle.frag for transmissive surfaces.
-    bindings[18].binding = 18;
-    bindings[18].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[18].descriptorCount = 1;
-    bindings[18].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    texture(18);
     // The scatter pre-pass's light and depth (VulkanScatterPass), sampled by triangle.frag for
     // materials that scatter (KHR_materials_volume_scatter).
-    for (uint32_t binding : {19u, 20u})
-    {
-        bindings[binding].binding = binding;
-        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    }
+    texture(19);
+    texture(20);
     // The DDGI probes: irradiance (21) and visibility (22) atlases and their states (23), read by
     // ShadeSurface and by the probe rays themselves (their infinite bounce).
-    for (uint32_t binding : {21u, 22u, 23u})
-    {
-        bindings[binding].binding = binding;
-        bindings[binding].descriptorType = binding == 23u ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-    }
+    texture(21);
+    texture(22);
+    buffer(23);
     // The volumetric clouds' large (24) and small (25) billows and plume map (27), read by the sky
     // and the environment capture, their shadow map (26), read wherever the sun is shadowed, and
     // the resolved clouds (28) the sky composites.
-    for (uint32_t binding : {24u, 25u, 26u, 27u, 28u})
+    for (uint32_t binding = 24; binding <= 28; ++binding)
     {
-        bindings[binding].binding = binding;
-        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+        texture(binding);
     }
     // The path traced layer of the forward-shaded surfaces: the nearest one's depth (29), which
     // gbuffer.frag's layer pre-pass and triangle.frag match against, and its traced diffuse (30) and
     // specular (31) light, which triangle.frag takes in place of the ambient terms.
-    for (uint32_t binding : {29u, 30u, 31u})
+    for (uint32_t binding = 29; binding <= 31; ++binding)
     {
-        bindings[binding].binding = binding;
-        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[binding].descriptorCount = 1;
-        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        texture(binding);
     }
 
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-    layoutInfo.pBindings = bindings.data();
-
-    CheckVulkan(
-        vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_layout),
-        "Failed to create frame descriptor set layout");
-}
-
-VulkanFrameDescriptorSetLayout::~VulkanFrameDescriptorSetLayout()
-{
-    if (m_layout != VK_NULL_HANDLE)
+    m_layout = device->createBindingLayout(desc);
+    if (!m_layout)
     {
-        vkDestroyDescriptorSetLayout(m_device, m_layout, nullptr);
+        throw std::runtime_error("Failed to create frame descriptor set layout");
     }
 }
 
 VkDescriptorSetLayout VulkanFrameDescriptorSetLayout::GetHandle() const
+{
+    return ToNative<VkDescriptorSetLayout>(m_layout->getNativeObject(nvrhi::ObjectTypes::VK_DescriptorSetLayout));
+}
+
+nvrhi::IBindingLayout* VulkanFrameDescriptorSetLayout::Get() const
 {
     return m_layout;
 }
@@ -486,14 +337,19 @@ VkDescriptorSetLayout VulkanFrameDescriptorSetLayout::GetHandle() const
 VulkanMaterialDescriptorSetLayout::VulkanMaterialDescriptorSetLayout(VkDevice device)
     : m_device(device)
 {
-    std::array<VkDescriptorSetLayoutBinding, kMaterialTextureBindingCount> bindings{};
-    for (uint32_t bindingIndex = 0; bindingIndex < static_cast<uint32_t>(bindings.size()); ++bindingIndex)
+    // Each texture (binding b) and its sampler (b + kMaterialSamplerBindingOffset).
+    std::array<VkDescriptorSetLayoutBinding, 2 * kMaterialTextureBindingCount> bindings{};
+    for (uint32_t bindingIndex = 0; bindingIndex < kMaterialTextureBindingCount; ++bindingIndex)
     {
-        bindings[bindingIndex].binding = bindingIndex;
-        bindings[bindingIndex].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[bindingIndex].descriptorCount = 1;
-        // The vertex stage too: a toon outline reads its width and the face mask (toon.vert).
-        bindings[bindingIndex].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        for (uint32_t sampler = 0; sampler < 2; ++sampler)
+        {
+            VkDescriptorSetLayoutBinding& binding = bindings[2 * bindingIndex + sampler];
+            binding.binding = bindingIndex + sampler * kMaterialSamplerBindingOffset;
+            binding.descriptorType = sampler == 0 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLER;
+            binding.descriptorCount = 1;
+            // The vertex stage too: a toon outline reads its width and the face mask (toon.vert).
+            binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
     }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -521,59 +377,24 @@ VkDescriptorSetLayout VulkanMaterialDescriptorSetLayout::GetHandle() const
 
 void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
 {
-    m_buffers.resize(imageCount);
-    m_memories.resize(imageCount);
-    m_mappedBuffers.resize(imageCount);
-
+    m_buffers.assign(imageCount, VK_NULL_HANDLE);
+    m_handles.assign(imageCount, nullptr);
+    m_mappedBuffers.assign(imageCount, nullptr);
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = sizeof(CameraUniformData);
-        bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_buffers[i]), "Failed to create uniform buffer");
-
-        VkMemoryRequirements memoryRequirements{};
-        vkGetBufferMemoryRequirements(m_device, m_buffers[i], &memoryRequirements);
-
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = memoryRequirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(
-            memoryRequirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_memories[i]), "Failed to allocate uniform buffer memory");
-        CheckVulkan(vkBindBufferMemory(m_device, m_buffers[i], m_memories[i], 0), "Failed to bind uniform buffer memory");
-        CheckVulkan(vkMapMemory(m_device, m_memories[i], 0, sizeof(CameraUniformData), 0, &m_mappedBuffers[i]), "Failed to map uniform buffer memory");
+        CreateMappedBuffer(
+            sizeof(CameraUniformData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, m_buffers[i], m_handles[i], m_mappedBuffers[i], "Failed to create uniform buffer");
     }
 
     const VkDeviceSize motionBytes = sizeof(glm::mat4) * m_motionSlotCount;
     m_motionBuffers.assign(imageCount, VK_NULL_HANDLE);
-    m_motionMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_motionHandles.assign(imageCount, nullptr);
     m_mappedMotionBuffers.assign(imageCount, nullptr);
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = motionBytes;
-        bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &m_motionBuffers[i]), "Failed to create previous model buffer");
-
-        VkMemoryRequirements memoryRequirements{};
-        vkGetBufferMemoryRequirements(m_device, m_motionBuffers[i], &memoryRequirements);
-
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = memoryRequirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(
-            memoryRequirements.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_motionMemories[i]), "Failed to allocate previous model buffer memory");
-        CheckVulkan(vkBindBufferMemory(m_device, m_motionBuffers[i], m_motionMemories[i], 0), "Failed to bind previous model buffer memory");
-        CheckVulkan(vkMapMemory(m_device, m_motionMemories[i], 0, motionBytes, 0, &m_mappedMotionBuffers[i]), "Failed to map previous model buffer memory");
+        CreateMappedBuffer(
+            motionBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_motionBuffers[i], m_motionHandles[i], m_mappedMotionBuffers[i], "Failed to create previous model buffer");
 
         // Identity until the first Update, so nothing ever reads uninitialised memory.
         const std::vector<glm::mat4> identities(m_motionSlotCount, glm::mat4(1.0f));
@@ -584,21 +405,21 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
     constexpr VkDeviceSize kClusterBytes =
         sizeof(glm::uvec2) * kLightClusterCount + sizeof(uint32_t) * kLightClusterIndexCapacity;
     m_lightBuffers.assign(imageCount, VK_NULL_HANDLE);
-    m_lightMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_lightHandles.assign(imageCount, nullptr);
     m_mappedLightBuffers.assign(imageCount, nullptr);
     m_clusterBuffers.assign(imageCount, VK_NULL_HANDLE);
-    m_clusterMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_clusterHandles.assign(imageCount, nullptr);
     m_mappedClusterBuffers.assign(imageCount, nullptr);
     constexpr VkDeviceSize kShadowTileBytes = sizeof(GpuLocalShadowTile) * kLocalShadowTileCount;
     m_shadowTileBuffers.assign(imageCount, VK_NULL_HANDLE);
-    m_shadowTileMemories.assign(imageCount, VK_NULL_HANDLE);
+    m_shadowTileHandles.assign(imageCount, nullptr);
     m_mappedShadowTileBuffers.assign(imageCount, nullptr);
     for (uint32_t i = 0; i < imageCount; ++i)
     {
-        CreateMappedBuffer(kShadowTileBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_shadowTileBuffers[i], m_shadowTileMemories[i], m_mappedShadowTileBuffers[i]);
+        CreateMappedBuffer(kShadowTileBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_shadowTileBuffers[i], m_shadowTileHandles[i], m_mappedShadowTileBuffers[i], "Failed to create the local shadow tile buffer");
         std::memset(m_mappedShadowTileBuffers[i], 0, static_cast<size_t>(kShadowTileBytes));
-        CreateMappedBuffer(kLightBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_lightBuffers[i], m_lightMemories[i], m_mappedLightBuffers[i]);
-        CreateMappedBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_clusterBuffers[i], m_clusterMemories[i], m_mappedClusterBuffers[i]);
+        CreateMappedBuffer(kLightBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_lightBuffers[i], m_lightHandles[i], m_mappedLightBuffers[i], "Failed to create light buffer");
+        CreateMappedBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_clusterBuffers[i], m_clusterHandles[i], m_mappedClusterBuffers[i], "Failed to create the light cluster buffer");
         // Empty until the first Update: no light, no cluster lists anything.
         std::memset(m_mappedLightBuffers[i], 0, static_cast<size_t>(kLightBytes));
         std::memset(m_mappedClusterBuffers[i], 0, static_cast<size_t>(kClusterBytes));
@@ -608,9 +429,9 @@ void VulkanUniformBuffer::CreateBuffers(uint32_t imageCount)
     // is left as it is (filling a map's tens of thousands of slots with defaults took tens of
     // milliseconds whenever the buffers grew).
     const VkDeviceSize materialBytes = sizeof(GpuMaterialData) * m_motionSlotCount;
-    CreateMappedBuffer(materialBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_materialBuffer, m_materialMemory, m_mappedMaterialBuffer);
+    CreateMappedBuffer(materialBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_materialBuffer, m_materialHandle, m_mappedMaterialBuffer, "Failed to create the material buffer");
     const VkDeviceSize transformBytes = sizeof(GpuTextureTransforms) * m_motionSlotCount;
-    CreateMappedBuffer(transformBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_textureTransformBuffer, m_textureTransformMemory, m_mappedTextureTransformBuffer);
+    CreateMappedBuffer(transformBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, m_textureTransformBuffer, m_textureTransformHandle, m_mappedTextureTransformBuffer, "Failed to create the texture transform buffer");
 }
 
 uint32_t VulkanUniformBuffer::GetDrawCapacity() const
@@ -632,281 +453,87 @@ void VulkanUniformBuffer::CreateMappedBuffer(
     VkDeviceSize size,
     VkBufferUsageFlags usage,
     VkBuffer& buffer,
-    VkDeviceMemory& memory,
-    void*& mapped)
+    nvrhi::BufferHandle& handle,
+    void*& mapped,
+    const char* failureMessage)
 {
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create light buffer");
-
-    VkMemoryRequirements memoryRequirements{};
-    vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
-
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = memoryRequirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(
-        memoryRequirements.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate light buffer memory");
-    CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind light buffer memory");
-    CheckVulkan(vkMapMemory(m_device, memory, 0, size, 0, &mapped), "Failed to map light buffer memory");
+    handle = CreateNvrhiBuffer(
+        m_nvrhiDevice, bufferInfo, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, buffer, failureMessage, &mapped);
 }
 
-void VulkanUniformBuffer::CreateDescriptorPool(uint32_t imageCount)
+void VulkanUniformBuffer::BuildFrameBindingSets()
 {
-    // Set 0 alone, one per swapchain image: its uniform buffer, image samplers and storage buffers (the
-    // material sets, set 1, live in VulkanMaterialSetCache).
-    const std::array<VkDescriptorPoolSize, 3> poolSizes = {{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, imageCount},
-                                                            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, imageCount * 23},
-                                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, imageCount * 8}}};
-
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-    poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = imageCount;
-
-    CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool), "Failed to create descriptor pool");
-}
-
-void VulkanUniformBuffer::CreateDescriptorSets(uint32_t imageCount)
-{
-    // Set 0: one frame descriptor set per swapchain image, allocated from the frame set layout.
-    std::vector<VkDescriptorSetLayout> frameLayouts(imageCount, m_frameSetLayout);
-    VkDescriptorSetAllocateInfo frameAllocateInfo{};
-    frameAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    frameAllocateInfo.descriptorPool = m_descriptorPool;
-    frameAllocateInfo.descriptorSetCount = imageCount;
-    frameAllocateInfo.pSetLayouts = frameLayouts.data();
-
-    m_frameDescriptorSets.resize(imageCount);
-    CheckVulkan(
-        vkAllocateDescriptorSets(m_device, &frameAllocateInfo, m_frameDescriptorSets.data()),
-        "Failed to allocate frame descriptor sets");
-
-    for (uint32_t i = 0; i < imageCount; ++i)
+    std::vector<nvrhi::BindingSetHandle> sets(m_imageCount);
+    std::vector<VkDescriptorSet> nativeSets(m_imageCount);
+    for (uint32_t i = 0; i < m_imageCount; ++i)
     {
-        VkDescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = m_buffers[i];
-        bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(CameraUniformData);
-
-        // The camera uniform buffer is written once per image here, into the set 0 allocated for
-        // that image — not once per material, which is what made the old single-set layout
-        // wasteful and is the whole point of this split.
-        VkDescriptorImageInfo shadowInfo{};
-        shadowInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        shadowInfo.imageView = m_shadowMap.imageView;
-        shadowInfo.sampler = m_shadowMap.sampler;
-
-        VkDescriptorBufferInfo motionInfo{};
-        motionInfo.buffer = m_motionBuffers[i];
-        motionInfo.offset = 0;
-        motionInfo.range = VK_WHOLE_SIZE;
-
-        std::array<VkWriteDescriptorSet, 32> frameWrites{};
-        frameWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        frameWrites[0].dstSet = m_frameDescriptorSets[i];
-        frameWrites[0].dstBinding = 0;
-        frameWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        frameWrites[0].descriptorCount = 1;
-        frameWrites[0].pBufferInfo = &bufferInfo;
-        frameWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        frameWrites[1].dstSet = m_frameDescriptorSets[i];
-        frameWrites[1].dstBinding = 1;
-        frameWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        frameWrites[1].descriptorCount = 1;
-        frameWrites[1].pImageInfo = &shadowInfo;
-        frameWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        frameWrites[2].dstSet = m_frameDescriptorSets[i];
-        frameWrites[2].dstBinding = 2;
-        frameWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        frameWrites[2].descriptorCount = 1;
-        frameWrites[2].pBufferInfo = &motionInfo;
-        const std::array<VkDescriptorImageInfo, 4> environmentInfos = {
-            VkDescriptorImageInfo{m_environment.transmittance.sampler, m_environment.transmittance.imageView, VK_IMAGE_LAYOUT_GENERAL},
-            VkDescriptorImageInfo{m_environment.skyView.sampler, m_environment.skyView.imageView, VK_IMAGE_LAYOUT_GENERAL},
-            VkDescriptorImageInfo{m_environment.aerialPerspective.sampler, m_environment.aerialPerspective.imageView, VK_IMAGE_LAYOUT_GENERAL},
-            VkDescriptorImageInfo{m_environment.environmentMap.sampler, m_environment.environmentMap.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-        for (uint32_t index = 0; index < 4; ++index)
+        nvrhi::BindingSetDesc desc;
+        const auto texture = [&desc](uint32_t binding, const TextureDescriptorBinding& source)
         {
-            VkWriteDescriptorSet& write = frameWrites[3 + index];
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = m_frameDescriptorSets[i];
-            write.dstBinding = 3 + index;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.descriptorCount = 1;
-            write.pImageInfo = &environmentInfos[index];
-        }
-        const VkDescriptorBufferInfo irradianceInfo{m_environment.irradiance, 0, VK_WHOLE_SIZE};
-        frameWrites[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        frameWrites[7].dstSet = m_frameDescriptorSets[i];
-        frameWrites[7].dstBinding = 7;
-        frameWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        frameWrites[7].descriptorCount = 1;
-        frameWrites[7].pBufferInfo = &irradianceInfo;
-        const std::array<VkDescriptorImageInfo, 2> specularInfos = {
-            VkDescriptorImageInfo{m_environment.prefiltered.sampler, m_environment.prefiltered.imageView, VK_IMAGE_LAYOUT_GENERAL},
-            VkDescriptorImageInfo{m_environment.brdfLut.sampler, m_environment.brdfLut.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-        for (uint32_t index = 0; index < 2; ++index)
-        {
-            VkWriteDescriptorSet& write = frameWrites[8 + index];
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = m_frameDescriptorSets[i];
-            write.dstBinding = 8 + index;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.descriptorCount = 1;
-            write.pImageInfo = &specularInfos[index];
-        }
-
-        const std::array<VkDescriptorBufferInfo, 2> lightInfos = {
-            VkDescriptorBufferInfo{m_lightBuffers[i], 0, VK_WHOLE_SIZE},
-            VkDescriptorBufferInfo{m_clusterBuffers[i], 0, VK_WHOLE_SIZE}};
-        for (uint32_t index = 0; index < 2; ++index)
-        {
-            VkWriteDescriptorSet& write = frameWrites[10 + index];
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = m_frameDescriptorSets[i];
-            write.dstBinding = 10 + index;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            write.descriptorCount = 1;
-            write.pBufferInfo = &lightInfos[index];
-        }
-        const VkDescriptorBufferInfo materialInfo{m_materialBuffer, 0, VK_WHOLE_SIZE};
-        frameWrites[12].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        frameWrites[12].dstSet = m_frameDescriptorSets[i];
-        frameWrites[12].dstBinding = 12;
-        frameWrites[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        frameWrites[12].descriptorCount = 1;
-        frameWrites[12].pBufferInfo = &materialInfo;
-        const VkDescriptorImageInfo atlasInfo{m_localShadowAtlas.sampler, m_localShadowAtlas.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        frameWrites[13].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        frameWrites[13].dstSet = m_frameDescriptorSets[i];
-        frameWrites[13].dstBinding = 13;
-        frameWrites[13].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        frameWrites[13].descriptorCount = 1;
-        frameWrites[13].pImageInfo = &atlasInfo;
-        const VkDescriptorBufferInfo shadowTileInfo{m_shadowTileBuffers[i], 0, VK_WHOLE_SIZE};
-        frameWrites[14].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        frameWrites[14].dstSet = m_frameDescriptorSets[i];
-        frameWrites[14].dstBinding = 14;
-        frameWrites[14].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        frameWrites[14].descriptorCount = 1;
-        frameWrites[14].pBufferInfo = &shadowTileInfo;
-        const std::array<VkDescriptorImageInfo, 2> ltcInfos = {
-            VkDescriptorImageInfo{m_environment.ltcInverseMatrices.sampler, m_environment.ltcInverseMatrices.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            VkDescriptorImageInfo{m_environment.ltcAmplitudes.sampler, m_environment.ltcAmplitudes.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-        for (uint32_t index = 0; index < 2; ++index)
-        {
-            VkWriteDescriptorSet& write = frameWrites[15 + index];
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = m_frameDescriptorSets[i];
-            write.dstBinding = 15 + index;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.descriptorCount = 1;
-            write.pImageInfo = &ltcInfos[index];
-        }
-        const VkDescriptorBufferInfo textureTransformInfo{m_textureTransformBuffer, 0, VK_WHOLE_SIZE};
-        frameWrites[17].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        frameWrites[17].dstSet = m_frameDescriptorSets[i];
-        frameWrites[17].dstBinding = 17;
-        frameWrites[17].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        frameWrites[17].descriptorCount = 1;
-        frameWrites[17].pBufferInfo = &textureTransformInfo;
-        const VkDescriptorImageInfo transmissionInfo{m_environment.transmission.sampler, m_environment.transmission.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        frameWrites[18].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        frameWrites[18].dstSet = m_frameDescriptorSets[i];
-        frameWrites[18].dstBinding = 18;
-        frameWrites[18].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        frameWrites[18].descriptorCount = 1;
-        frameWrites[18].pImageInfo = &transmissionInfo;
-        const VkDescriptorImageInfo scatterLightInfo{m_environment.scatterLight.sampler, m_environment.scatterLight.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        const VkDescriptorImageInfo scatterDepthInfo{m_environment.scatterDepth.sampler, m_environment.scatterDepth.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        for (uint32_t binding : {19u, 20u})
-        {
-            frameWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            frameWrites[binding].dstSet = m_frameDescriptorSets[i];
-            frameWrites[binding].dstBinding = binding;
-            frameWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            frameWrites[binding].descriptorCount = 1;
-            frameWrites[binding].pImageInfo = binding == 19u ? &scatterLightInfo : &scatterDepthInfo;
-        }
-        const VkDescriptorImageInfo ddgiIrradianceInfo{m_environment.ddgiIrradiance.sampler, m_environment.ddgiIrradiance.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo ddgiVisibilityInfo{m_environment.ddgiVisibility.sampler, m_environment.ddgiVisibility.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorBufferInfo ddgiStateInfo{m_environment.ddgiProbeStates, 0, VK_WHOLE_SIZE};
-        for (uint32_t binding : {21u, 22u, 23u})
-        {
-            frameWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            frameWrites[binding].dstSet = m_frameDescriptorSets[i];
-            frameWrites[binding].dstBinding = binding;
-            frameWrites[binding].descriptorCount = 1;
-            if (binding == 23u)
+            if (source.texture == nullptr || source.nvrhiSampler == nullptr)
             {
-                frameWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                frameWrites[binding].pBufferInfo = &ddgiStateInfo;
+                throw std::runtime_error("Set 0 binding " + std::to_string(binding) + " has no NVRHI texture or sampler");
             }
-            else
+            desc.bindings.push_back(nvrhi::BindingSetItem::Texture_SRV(binding, source.texture));
+            desc.bindings.push_back(nvrhi::BindingSetItem::Sampler(binding + kFrameSamplerBindingOffset, source.nvrhiSampler));
+        };
+        const auto buffer = [&desc](uint32_t binding, nvrhi::IBuffer* source)
+        {
+            if (source == nullptr)
             {
-                frameWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                frameWrites[binding].pImageInfo = binding == 21u ? &ddgiIrradianceInfo : &ddgiVisibilityInfo;
+                throw std::runtime_error("Set 0 binding " + std::to_string(binding) + " has no NVRHI buffer");
             }
-        }
-        const VkDescriptorImageInfo cloudShapeInfo{m_environment.cloudShapeNoise.sampler, m_environment.cloudShapeNoise.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo cloudDetailInfo{m_environment.cloudDetailNoise.sampler, m_environment.cloudDetailNoise.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo cloudShadowInfo{m_environment.cloudShadow.sampler, m_environment.cloudShadow.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo cloudWeatherInfo{m_environment.cloudWeather.sampler, m_environment.cloudWeather.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo cloudTargetInfo{m_environment.cloudTarget.sampler, m_environment.cloudTarget.imageView, VK_IMAGE_LAYOUT_GENERAL};
-        for (uint32_t binding : {24u, 25u, 26u, 27u, 28u})
-        {
-            frameWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            frameWrites[binding].dstSet = m_frameDescriptorSets[i];
-            frameWrites[binding].dstBinding = binding;
-            frameWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            frameWrites[binding].descriptorCount = 1;
-            frameWrites[binding].pImageInfo = binding == 24u   ? &cloudShapeInfo
-                                              : binding == 25u ? &cloudDetailInfo
-                                              : binding == 26u ? &cloudShadowInfo
-                                              : binding == 27u ? &cloudWeatherInfo
-                                                               : &cloudTargetInfo;
-        }
-        const std::array<VkDescriptorImageInfo, 3> pathTraceLayerInfos = {
-            VkDescriptorImageInfo{m_environment.pathTraceLayerDepth.sampler, m_environment.pathTraceLayerDepth.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            VkDescriptorImageInfo{m_environment.pathTraceLayerDiffuse.sampler, m_environment.pathTraceLayerDiffuse.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            VkDescriptorImageInfo{m_environment.pathTraceLayerSpecular.sampler, m_environment.pathTraceLayerSpecular.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-        for (uint32_t index = 0; index < 3; ++index)
-        {
-            VkWriteDescriptorSet& write = frameWrites[29 + index];
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = m_frameDescriptorSets[i];
-            write.dstBinding = 29 + index;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.descriptorCount = 1;
-            write.pImageInfo = &pathTraceLayerInfos[index];
-        }
+            desc.bindings.push_back(nvrhi::BindingSetItem::RawBuffer_SRV(binding, source));
+        };
+        // The camera block, written once per image here, into the set for that image: not once per
+        // material, which is what made the old single-set layout wasteful and is the whole point of
+        // this split.
+        desc.bindings.push_back(nvrhi::BindingSetItem::ConstantBuffer(0, m_handles[i]));
+        texture(1, m_shadowMap);
+        buffer(2, m_motionHandles[i]);
+        texture(3, m_environment.transmittance);
+        texture(4, m_environment.skyView);
+        texture(5, m_environment.aerialPerspective);
+        texture(6, m_environment.environmentMap);
+        buffer(7, m_environment.irradiance);
+        texture(8, m_environment.prefiltered);
+        texture(9, m_environment.brdfLut);
+        buffer(10, m_lightHandles[i]);
+        buffer(11, m_clusterHandles[i]);
+        buffer(12, m_materialHandle);
+        texture(13, m_localShadowAtlas);
+        buffer(14, m_shadowTileHandles[i]);
+        texture(15, m_environment.ltcInverseMatrices);
+        texture(16, m_environment.ltcAmplitudes);
+        buffer(17, m_textureTransformHandle);
+        texture(18, m_environment.transmission);
+        texture(19, m_environment.scatterLight);
+        texture(20, m_environment.scatterDepth);
+        texture(21, m_environment.ddgiIrradiance);
+        texture(22, m_environment.ddgiVisibility);
+        buffer(23, m_environment.ddgiProbeStates);
+        texture(24, m_environment.cloudShapeNoise);
+        texture(25, m_environment.cloudDetailNoise);
+        texture(26, m_environment.cloudShadow);
+        texture(27, m_environment.cloudWeather);
+        texture(28, m_environment.cloudTarget);
+        texture(29, m_environment.pathTraceLayerDepth);
+        texture(30, m_environment.pathTraceLayerDiffuse);
+        texture(31, m_environment.pathTraceLayerSpecular);
 
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(frameWrites.size()), frameWrites.data(), 0, nullptr);
+        sets[i] = m_nvrhiDevice->createBindingSet(desc, m_frameSetLayout);
+        if (!sets[i])
+        {
+            throw std::runtime_error("Failed to create a frame binding set");
+        }
+        nativeSets[i] = ToNative<VkDescriptorSet>(sets[i]->getNativeObject(nvrhi::ObjectTypes::VK_DescriptorSet));
     }
-}
-
-uint32_t VulkanUniformBuffer::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const
-{
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    vkGetPhysicalDeviceMemoryProperties(m_physicalDevice, &memoryProperties);
-
-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
-    {
-        const bool typeMatches = (typeFilter & (1u << i)) != 0;
-        const bool propertiesMatch = (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties;
-        if (typeMatches && propertiesMatch)
-        {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("Failed to find suitable uniform buffer memory type");
+    m_frameBindingSets = std::move(sets);
+    m_frameDescriptorSets = std::move(nativeSets);
 }
 }

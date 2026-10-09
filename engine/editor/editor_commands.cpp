@@ -317,6 +317,7 @@ void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state
     AddOption(registry, "render.pipeline.rasterization", "Rasterization", "Render/Pipeline/Rasterization", ICON_PH_CUBE, ImGuiMod_Ctrl | ImGuiKey_1, state.pipelineMode, RenderPipelineMode::Rasterization);
     AddOption(registry, "render.pipeline.hybrid", "Hybrid", "Render/Pipeline/Hybrid", ICON_PH_CUBE_TRANSPARENT, ImGuiMod_Ctrl | ImGuiKey_2, state.pipelineMode, RenderPipelineMode::Hybrid, rayTracingSupported);
     AddOption(registry, "render.pipeline.path_tracing", "Path Tracing", "Render/Pipeline/Path Tracing", ICON_PH_MAGIC_WAND, ImGuiMod_Ctrl | ImGuiKey_3, state.pipelineMode, RenderPipelineMode::PathTracing, rayTracingSupported);
+    AddOption(registry, "render.pipeline.path_tracing_offline", "Path Tracing (Offline)", "Render/Pipeline/Path Tracing (Offline)", ICON_PH_HOURGLASS, ImGuiMod_Ctrl | ImGuiKey_4, state.pipelineMode, RenderPipelineMode::PathTracingOffline, rayTracingSupported);
     // Path tracing always traces rays, so the switch shows on and cannot be turned off there.
     Add(
         registry, "render.ray_tracing", "Ray Tracing", "Render/Ray Tracing", ICON_PH_LIGHTNING, 0,
@@ -326,11 +327,13 @@ void RegisterRenderCommands(CommandRegistry& registry, EditorCommandState& state
         },
         [&state]
         {
-            return state.rayTracing || state.pipelineMode == RenderPipelineMode::PathTracing;
+            return state.rayTracing || state.pipelineMode == RenderPipelineMode::PathTracing ||
+                   state.pipelineMode == RenderPipelineMode::PathTracingOffline;
         },
         [&state]
         {
-            return state.rayTracingSupported && state.pipelineMode != RenderPipelineMode::PathTracing;
+            return state.rayTracingSupported && state.pipelineMode != RenderPipelineMode::PathTracing &&
+                   state.pipelineMode != RenderPipelineMode::PathTracingOffline;
         });
     registry.AddSeparator("Render");
     // The Khronos reference view (Graphics Debug) always uses PBR Neutral.
@@ -378,6 +381,8 @@ void RegisterToolsCommands(CommandRegistry& registry, EditorCommandState& state,
             return state.quadRecording;
         },
         IfBound(scene.toggleQuadRecording));
+    // A still from the viewport's camera at the Photo Mode window's size; the viewport keeps its own.
+    AddBound(registry, "tools.take_photo", "Take Photo", "Tools/Take Photo", ICON_PH_APERTURE, ImGuiMod_Ctrl | ImGuiKey_F12, scene.takePhoto);
     // Shaders are compiled with the build, not by the editor, so there is no log or cache to show.
     AddBound(registry, "tools.shader_log", "Shader Compiler Log", "Tools/Shader Compiler Log...", ICON_PH_FILE_TEXT, 0, scene.showShaderLog);
     registry.AddSeparator("Tools");

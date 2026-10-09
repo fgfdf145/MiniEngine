@@ -1,0 +1,218 @@
+scene:
+  version: 3
+entities:
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000000
+    tag: area_light_floor
+    model:
+      display_name: area_light_floor.gltf
+      source_path: assets/models/area_light_floor/area_light_floor.gltf
+      source_uuid: aa255755-f8c3-4a13-9791-ceade6795006
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, -0.4, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000001
+    tag: anisotropy_layers
+    model:
+      display_name: anisotropy_layers.gltf
+      source_path: assets/models/anisotropy_layers/anisotropy_layers.gltf
+      source_uuid: 7a0786b1-91b4-401b-812a-bfc4364aca10
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0.9, -2.0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000002
+    tag: ior_specular_coat
+    model:
+      display_name: ior_specular_coat.gltf
+      source_path: assets/models/ior_specular_coat/ior_specular_coat.gltf
+      source_uuid: 345d3ccd-952d-4bc5-8e83-15cb4fa0f531
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0.9, -0.5]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000003
+    tag: iridescence
+    model:
+      display_name: iridescence.gltf
+      source_path: assets/models/iridescence/iridescence.gltf
+      source_uuid: a5bccb1c-7014-4b83-af13-aa817dc74f52
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0.9, 1.0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000004
+    tag: smooth_spheres
+    model:
+      display_name: smooth_spheres.gltf
+      source_path: assets/models/smooth_spheres/smooth_spheres.gltf
+      source_uuid: cb19e58b-ccc6-4ed3-afcf-73ec8b055fa8
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0.9, 2.5]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000005
+    tag: texture_transforms_unlit
+    model:
+      display_name: texture_transforms_unlit.gltf
+      source_path: assets/models/texture_transforms_unlit/texture_transforms_unlit.gltf
+      source_uuid: 4cb655da-e8f6-4fad-b5ef-dec973e55272
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 1.0, -3.5]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 5a1a0000-0000-4000-8000-0000000000f0
+    tag: water
+    model:
+      display_name: gta_water.gltf
+      source_path: assets/models/gta_water/gta_water.gltf
+      source_uuid: bc8bd19d-46dd-45dc-badd-d6998e170698
+      base_color_texture_override: ""
+      base_color_texture_override_uuid: ""
+    transform:
+      translation: [0, 0.35, 2.5]
+      rotation: [0, 0, 0]
+      scale: [0.0002, 0.0002, 0.0002]
+lights:
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000100
+    tag: Sun
+    light_type: directional
+    color: [1, 0.96, 0.9]
+    intensity: 20000
+    range: 12
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [2, 1]
+    cast_shadows: true
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 0, 0]
+      rotation: [-10, -30, 44]
+      scale: [1, 1, 1]
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000101
+    tag: Point
+    light_type: point
+    color: [1, 0.8, 0.6]
+    intensity: 3000
+    range: 12
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [2, 1]
+    cast_shadows: true
+    source_radius: 0.1
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [2, 2.5, 1.5]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000102
+    tag: Spot
+    light_type: spot
+    color: [0.6, 0.8, 1]
+    intensity: 5000
+    range: 12
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [2, 1]
+    cast_shadows: true
+    source_radius: 0.05
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [-2, 3, 0.5]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000103
+    tag: Area
+    light_type: area
+    color: [1, 1, 1]
+    intensity: 4000
+    range: 12
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [2, 1]
+    cast_shadows: true
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 3, -1.5]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+  - entity_uuid: 5a1a0000-0000-4000-8000-000000000104
+    tag: Sky fill
+    light_type: hemisphere
+    color: [0.4, 0.5, 0.7]
+    intensity: 2000
+    range: 12
+    spot_inner_angle: 20
+    spot_outer_angle: 35
+    area_size: [2, 1]
+    cast_shadows: false
+    source_radius: 0
+    ground_color: [0.3, 0.25, 0.2]
+    transform:
+      translation: [0, 0, 0]
+      rotation: [0, 0, 0]
+      scale: [1, 1, 1]
+environment:
+  mode: atmosphere
+  atmosphere:
+    ground_albedo: [0.045, 0.045, 0.05]
+    ground_plane: false
+    seamless_horizon: true
+    rayleigh_density_scale: 1
+    mie_density_scale: 1
+    mie_anisotropy: 0.8
+    ozone_density_scale: 1
+    aerial_perspective_distance_scale: 1
+    sun_angular_diameter_degrees: 0.545
+  hdri:
+    path: ""
+    uuid: ""
+    intensity: 1000
+    rotation_degrees: 0
+  height_fog:
+    enabled: false
+    density: 0.001
+    height_falloff: 0.02
+    fog_height: 0
+    start_distance: 0
+    max_opacity: 1
+    albedo: [1, 1, 1]
+    anisotropy: 0.3
+  clouds:
+    enabled: false
+    coverage: 0.45
+    base_altitude: 1500
+    thickness: 2500
+    density: 0.02
+    shape_scale: 7000
+    detail_scale: 600
+    weather_scale: 40000
+    billows: 1
+    forward_anisotropy: 0.8
+    back_anisotropy: -0.3
+    back_weight: 0.3
+    albedo: 0.98
+    ambient_scale: 1
+    haze_distance: 25000
+editor:
+  gizmo:
+    operation: combined
+    mode: world
+    use_snap: false
+    translation_snap: [1, 1, 1]
+    rotation_snap: 15
+    scale_snap: [1, 1, 1]

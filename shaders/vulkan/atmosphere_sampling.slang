@@ -9,10 +9,20 @@
 #include "spherical_harmonics.slang"
 
 // Set 0 bindings 3 to 6; see VulkanFrameDescriptorSetLayout.
-[[vk::binding(3, 0)]] Sampler2D atmosphereTransmittanceLut;
-[[vk::binding(4, 0)]] Sampler2D atmosphereSkyViewLut;
-[[vk::binding(5, 0)]] Sampler3D atmosphereAerialPerspective;
-[[vk::binding(6, 0)]] Sampler2D environmentMap;
+[[vk::binding(3, 0)]] Texture2D atmosphereTransmittanceLut;
+[[vk::binding(FRAME_SAMPLER(3), 0)]] SamplerState atmosphereTransmittanceLutSampler;
+[[vk::binding(4, 0)]] Texture2D atmosphereSkyViewLut;
+[[vk::binding(FRAME_SAMPLER(4), 0)]] SamplerState atmosphereSkyViewLutSampler;
+[[vk::binding(5, 0)]] Texture3D atmosphereAerialPerspective;
+[[vk::binding(FRAME_SAMPLER(5), 0)]] SamplerState atmosphereAerialPerspectiveSampler;
+[[vk::binding(6, 0)]] Texture2D environmentMap;
+[[vk::binding(FRAME_SAMPLER(6), 0)]] SamplerState environmentMapSampler;
+
+// The transmittance LUT, for the atmosphere functions that take an IAtmosphereLut.
+SeparateAtmosphereLut FrameTransmittanceLut()
+{
+    return AtmosphereLut(atmosphereTransmittanceLut, atmosphereTransmittanceLutSampler);
+}
 // Set 0 binding 7: the atmosphere's radiance SH, written by atmosphere_irradiance.comp.
 struct SkyIrradiance
 {
@@ -21,8 +31,10 @@ struct SkyIrradiance
 [[vk::binding(7, 0)]] StructuredBuffer<SkyIrradiance> skyIrradiance; // one element
 // Set 0 bindings 8 and 9: the GGX-prefiltered sky (mip m for roughness m / 5) and the DFG table
 // (x = N.V, y = roughness).
-[[vk::binding(8, 0)]] SamplerCube prefilteredEnvironment;
-[[vk::binding(9, 0)]] Sampler2D environmentBrdfLut;
+[[vk::binding(8, 0)]] TextureCube prefilteredEnvironment;
+[[vk::binding(FRAME_SAMPLER(8), 0)]] SamplerState prefilteredEnvironmentSampler;
+[[vk::binding(9, 0)]] Texture2D environmentBrdfLut;
+[[vk::binding(FRAME_SAMPLER(9), 0)]] SamplerState environmentBrdfLutSampler;
 
 #include "height_fog.slang"
 #include "cloud_shadow.slang"
@@ -45,7 +57,7 @@ float3 SunDisk(float3 direction, float3 up, float viewHeight)
     {
         return float3(0.0);
     }
-    float3 transmittance = SampleTransmittance(atmosphereTransmittanceLut, viewHeight, dot(direction, up));
+    float3 transmittance = SampleTransmittance(FrameTransmittanceLut(), viewHeight, dot(direction, up));
     float solidAngle = 2.0 * ATMOSPHERE_PI * (1.0 - cosRadius);
     // asin of the cross product's length stays precise at the tiny angles inside the disk, where
     // acos of the dot product does not.
@@ -81,7 +93,7 @@ float3 SampleSkyViewLut(float3 direction, out bool intersectGround)
 
     intersectGround = RaySphereIntersectNearest(camera, direction, float3(0.0), BottomRadius()) >= 0.0;
     float2 uv = SkyViewLutParamsToUv(intersectGround, dot(direction, up), lightViewCos, viewHeight);
-    float3 luminance = atmosphereSkyViewLut.SampleLevel(uv, 0.0).rgb;
+    float3 luminance = atmosphereSkyViewLut.SampleLevel(atmosphereSkyViewLutSampler, uv, 0.0).rgb;
     return intersectGround ? luminance : luminance + ubo.nightSky.rgb;
 }
 
@@ -128,8 +140,8 @@ float3 GroundViewTransmittance(float3 direction, out float3 groundUp)
     float t = max(RaySphereIntersectNearest(camera, direction, float3(0.0), BottomRadius()), 0.0);
     groundUp = normalize(camera + t * direction);
     float viewHeight = length(camera);
-    float3 fromGround = SampleTransmittance(atmosphereTransmittanceLut, BottomRadius() + PLANET_RADIUS_OFFSET_KM, dot(-direction, groundUp));
-    float3 fromCamera = SampleTransmittance(atmosphereTransmittanceLut, viewHeight, dot(-direction, camera / viewHeight));
+    float3 fromGround = SampleTransmittance(FrameTransmittanceLut(), BottomRadius() + PLANET_RADIUS_OFFSET_KM, dot(-direction, groundUp));
+    float3 fromCamera = SampleTransmittance(FrameTransmittanceLut(), viewHeight, dot(-direction, camera / viewHeight));
     return clamp(fromGround / max(fromCamera, float3(1e-6)), float3(0.0), float3(1.0));
 }
 
@@ -138,7 +150,7 @@ float3 GroundViewTransmittance(float3 direction, out float3 groundUp)
 float3 GroundSunIrradiance(float3 groundUp)
 {
     float cosSunZenith = dot(groundUp, ubo.sunDirectionAndMode.xyz);
-    float3 transmittance = SampleTransmittance(atmosphereTransmittanceLut, BottomRadius() + PLANET_RADIUS_OFFSET_KM, cosSunZenith);
+    float3 transmittance = SampleTransmittance(FrameTransmittanceLut(), BottomRadius() + PLANET_RADIUS_OFFSET_KM, cosSunZenith);
     return cosSunZenith > 0.0 ? ubo.sunIlluminance.rgb * transmittance : float3(0.0);
 }
 
@@ -154,7 +166,7 @@ float GroundSpecularAlbedo(float3 direction, float3 groundUp)
 {
     const float size = 64.0;
     float NdV = max(dot(groundUp, -direction), 0.0);
-    float2 dfg = environmentBrdfLut.SampleLevel(clamp(float2(NdV, GROUND_PLANE_ROUGHNESS), float2(0.5 / size), float2(1.0 - 0.5 / size)), 0.0).rg;
+    float2 dfg = environmentBrdfLut.SampleLevel(environmentBrdfLutSampler, clamp(float2(NdV, GROUND_PLANE_ROUGHNESS), float2(0.5 / size), float2(1.0 - 0.5 / size)), 0.0).rg;
     return 0.04 * dfg.x + dfg.y;
 }
 
@@ -234,7 +246,7 @@ float3 SampleEnvironmentMap(float3 direction)
 {
     float u = 0.5 + atan2(direction.x, -direction.z) / (2.0 * ATMOSPHERE_PI) + ubo.hdriParameters.y;
     float v = acos(clamp(direction.y, -1.0, 1.0)) / ATMOSPHERE_PI;
-    return environmentMap.SampleLevel(float2(u, v), 0.0).rgb * ubo.hdriParameters.x;
+    return environmentMap.SampleLevel(environmentMapSampler, float2(u, v), 0.0).rgb * ubo.hdriParameters.x;
 }
 
 // Hazes a surface's radiance by the atmosphere between it and the camera: color * T + L, from the
@@ -259,7 +271,7 @@ float3 ApplyAerialPerspective(float3 color, float3 worldPosition)
         slice = 0.5;
     }
     float w = sqrt(slice / AERIAL_PERSPECTIVE_SLICE_COUNT);
-    float4 aerialPerspective = atmosphereAerialPerspective.SampleLevel(float3(uv, w), 0.0);
+    float4 aerialPerspective = atmosphereAerialPerspective.SampleLevel(atmosphereAerialPerspectiveSampler, float3(uv, w), 0.0);
     float transmittance = 1.0 - weight * (1.0 - aerialPerspective.a);
     return ApplyHeightFog(color * transmittance + aerialPerspective.rgb * weight, worldPosition);
 }

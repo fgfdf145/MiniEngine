@@ -18,7 +18,8 @@
 #include "ddgi_common.slang"
 
 // One layer per cascade, sampled with a LESS_OR_EQUAL depth comparison (see VulkanShadowPass).
-[[vk::binding(1, 0)]] Sampler2DArrayShadow shadowMap;
+[[vk::binding(1, 0)]] Texture2DArray<float> shadowMap;
+[[vk::binding(FRAME_SAMPLER(1), 0)]] SamplerComparisonState shadowMapSampler;
 
 // Every light the shader evaluates: ubo.lightCounts.x directional lights, then the local ones. The
 // C++ side is GpuLightData, written by VulkanUniformBuffer::Update.
@@ -42,7 +43,8 @@ uint LightClusterIndex(uint index)
 // The local lights' shadow atlas (see VulkanLocalShadowPass), sampled with a LESS_OR_EQUAL depth
 // comparison, and its tiles (GpuLocalShadowTile). A light's areaRightAxis.w is 1 + its first tile,
 // 0 when it casts no shadow; a point or area light's six cube faces follow in SelectCubeFace order.
-[[vk::binding(13, 0)]] Sampler2DShadow localShadowAtlas;
+[[vk::binding(13, 0)]] Texture2D<float> localShadowAtlas;
+[[vk::binding(FRAME_SAMPLER(13), 0)]] SamplerComparisonState localShadowAtlasSampler;
 
 struct LocalShadowTileData
 {
@@ -55,8 +57,10 @@ struct LocalShadowTileData
 
 // The area lights' LTC tables (engine/renderer/ltc_table.h): the inverse matrices and the lobe's
 // (albedo, Fresnel share), 64 x 64 RGBA32F, x = sqrt(1 - N.V), y = roughness.
-[[vk::binding(15, 0)]] Sampler2D ltcInverseMatrices;
-[[vk::binding(16, 0)]] Sampler2D ltcAmplitudes;
+[[vk::binding(15, 0)]] Texture2D ltcInverseMatrices;
+[[vk::binding(FRAME_SAMPLER(15), 0)]] SamplerState ltcInverseMatricesSampler;
+[[vk::binding(16, 0)]] Texture2D ltcAmplitudes;
+[[vk::binding(FRAME_SAMPLER(16), 0)]] SamplerState ltcAmplitudesSampler;
 
 // Where (roughness, N.V) falls in the LTC tables, clamped to texel centres.
 float2 LtcTableUv(float roughness, float NdV)
@@ -293,6 +297,11 @@ float AnisotropicSpecularTerm(float3 N, float3 V, float3 L, float3 H, float roug
     return D * Vis;
 }
 
+// The diffuse share of the last light EvaluateSceneLight (EvaluateBRDF, EvaluateAreaLight) gave, for
+// the path tracer's offline mode, which demodulates the direct light into its diffuse and specular
+// channels (path_trace.comp.slang). Shaders that never read it lose the stores at compile time.
+static float3 lastLightDiffuse = float3(0.0);
+
 // ---------------------------------------------------------------------------
 // Cook-Torrance BRDF contribution for one light sample
 // Returns outgoing radiance.
@@ -355,6 +364,7 @@ float3 EvaluateBRDF(
         diffuse = lerp(diffuse, transmitted, specularParams.transmissionFactor);
     }
     result += diffuse;
+    lastLightDiffuse = diffuse;
 
     float specularNdL = max(dot(N, specularL), 0.0);
     if (specularNdL > 0.0)
@@ -579,8 +589,8 @@ float3 EvaluateAreaLight(
     if (coat.factor > 0.0)
     {
         float2 uv = LtcTableUv(coat.roughness, max(dot(coat.normal, V), 0.0));
-        float3x3 minv = LtcInverseMatrix(ltcInverseMatrices.SampleLevel(uv, 0.0), coat.normal, V);
-        float2 amplitude = ltcAmplitudes.SampleLevel(uv, 0.0).rg;
+        float3x3 minv = LtcInverseMatrix(ltcInverseMatrices.SampleLevel(ltcInverseMatricesSampler, uv, 0.0), coat.normal, V);
+        float2 amplitude = ltcAmplitudes.SampleLevel(ltcAmplitudesSampler, uv, 0.0).rg;
         float coverage = LtcIntegrateQuad(mul(minv, c0), mul(minv, c1), mul(minv, c2), mul(minv, c3));
         coatContribution = luminance * (coverage * (COAT_F0 * amplitude.x + (1.0 - COAT_F0) * amplitude.y));
     }
@@ -619,8 +629,8 @@ float3 EvaluateAreaLight(
     else
     {
         float2 uv = LtcTableUv(roughness, NdV);
-        float3x3 minv = LtcInverseMatrix(ltcInverseMatrices.SampleLevel(uv, 0.0), N, V);
-        float2 amplitude = ltcAmplitudes.SampleLevel(uv, 0.0).rg;
+        float3x3 minv = LtcInverseMatrix(ltcInverseMatrices.SampleLevel(ltcInverseMatricesSampler, uv, 0.0), N, V);
+        float2 amplitude = ltcAmplitudes.SampleLevel(ltcAmplitudesSampler, uv, 0.0).rg;
         float coverage = LtcIntegrateQuad(mul(minv, c0), mul(minv, c1), mul(minv, c2), mul(minv, c3));
         // F0 norm + (F90 - F0) fresnel, as the split-sum pair (norm - fresnel, fresnel).
         specular = luminance * coverage * BaseSpecularAlbedo(float2(amplitude.x - amplitude.y, amplitude.y), F0, F90, specularParams);
@@ -630,6 +640,7 @@ float3 EvaluateAreaLight(
     // Burley's diffuse, weighted by the Fresnel toward the centre, applied to the exact irradiance.
     float3 kD = DiffuseWeight(max(dot(V, centreH), 0.0), metallic, specularParams);
     float3 diffuse = kD * albedo * BurleyDiffuse(NdV, clamp(dot(N, toCentre), 1e-4, 1.0), max(dot(toCentre, centreH), 0.0), roughness) * irradiance;
+    lastLightDiffuse = diffuse;
 
     return diffuse + specular;
 }
@@ -662,7 +673,7 @@ float SampleShadowCascade(int cascade, float3 worldPos, float3 geoNormal)
         {
             // An explicit level: the lookup runs in non-uniform control flow, where implicit
             // derivatives are undefined, and the map has a single mip level anyway.
-            lit += shadowMap.SampleCmpLevelZero(float3(uv + float2(x, y) * texel, float(cascade)), lightClip.z);
+            lit += shadowMap.SampleCmpLevelZero(shadowMapSampler, float3(uv + float2(x, y) * texel, float(cascade)), lightClip.z);
         }
     }
     return lit / 9.0;
@@ -737,7 +748,7 @@ float EvaluateLocalShadow(SceneLightData light, float3 worldPos, float3 geoNorma
         for (int x = -1; x <= 1; ++x)
         {
             // An explicit level for the same reason as the cascades: non-uniform control flow.
-            lit += localShadowAtlas.SampleCmpLevelZero(coords.xy + float2(x, y) * atlasTexel, coords.z);
+            lit += localShadowAtlas.SampleCmpLevelZero(localShadowAtlasSampler, coords.xy + float2(x, y) * atlasTexel, coords.z);
         }
     }
     return lit / 9.0;
@@ -752,7 +763,7 @@ float2 SampleEnvironmentBrdf(float roughness, float NdV)
 {
     const float size = 64.0;
     float2 uv = clamp(float2(NdV, roughness), float2(0.5 / size), float2(1.0 - 0.5 / size));
-    return environmentBrdfLut.SampleLevel(uv, 0.0).rg;
+    return environmentBrdfLut.SampleLevel(environmentBrdfLutSampler, uv, 0.0).rg;
 }
 
 // Scales a single-scattering GGX specular term up by the energy the lobe loses to light bouncing
@@ -920,6 +931,7 @@ float3 EvaluateSceneLight(
 {
     coatContribution = float3(0.0);
     sheenContribution = float3(0.0);
+    lastLightDiffuse = float3(0.0);
 
     if (int(light.directionAndType.w) == LIGHT_AREA)
     {
@@ -1035,7 +1047,7 @@ float3 EvaluateSkyAmbient(float3 worldPosition, float3 N, float3 geoNormal, floa
     float3 R = reflect(-V, anisotropy.strength > 0.0 ? AnisotropicBentNormal(N, V, anisotropy.tangent, anisotropy.strength, roughness) : N);
     float3 environment = SceneSpecularEnvironment(
         worldPosition, N, R, V,
-        prefilteredEnvironment.SampleLevel(R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R));
+        prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, R, roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R));
     float3 diffuse = diffuseAlbedo * SceneDiffuseAmbient(worldPosition, N, V) * ao;
     if (specular.diffuseTransmissionFactor > 0.0)
     {
@@ -1071,7 +1083,7 @@ float SampleSheenAlbedo(float roughness, float NdV)
 {
     const float size = 64.0;
     float2 uv = clamp(float2(NdV, roughness), float2(0.5 / size), float2(1.0 - 0.5 / size));
-    return environmentBrdfLut.SampleLevel(uv, 0.0).b;
+    return environmentBrdfLut.SampleLevel(environmentBrdfLutSampler, uv, 0.0).b;
 }
 
 // The sheen's share of the ambient term, as Filament shades it: the GGX-prefiltered sky along the
@@ -1086,7 +1098,7 @@ float3 EvaluateSheenAmbient(float3 worldPosition, float3 N, float3 V, SheenParam
         return sheen.color * albedo * SceneSpecularEnvironment(worldPosition, N, uniformR, V, SceneAmbientAlong(uniformR));
     }
     float3 R = reflect(-V, N);
-    float3 sky = prefilteredEnvironment.SampleLevel(R, sheen.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
+    float3 sky = prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, R, sheen.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb;
     return sheen.color * albedo * SceneSpecularEnvironment(worldPosition, N, R, V, sky + SceneLightsAmbientAlong(R));
 }
 
@@ -1108,7 +1120,7 @@ float3 EvaluateCoatAmbient(float3 worldPosition, CoatParams coat, float3 geoNorm
                            ? SceneSpecularEnvironment(worldPosition, coat.normal, R, V, SceneAmbientAlong(R))
                            : SceneSpecularEnvironment(
                                  worldPosition, coat.normal, R, V,
-                                 prefilteredEnvironment.SampleLevel(R, coat.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R));
+                                 prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, R, coat.roughness * (PREFILTER_MIP_COUNT - 1.0)).rgb + SceneLightsAmbientAlong(R));
     return coatAlbedo * SpecularAmbientRadiance(environment, reflection, NdV, ao, coat.roughness, HorizonSpecularOcclusion(R, geoNormal));
 }
 
@@ -1201,6 +1213,9 @@ PathTraceLobes PathTraceLobesOf(
 static bool pathTracedIndirect = false;
 static float3 pathTracedDiffuse = float3(0.0);
 static float3 pathTracedSpecular = float3(0.0);
+// And in its offline mode the two carry the direct light as well: ShadeSurface adds no light of its
+// own, its emission aside.
+static bool pathTracedDirect = false;
 
 // Ambient plus every direct light for one resolved surface point; the caller adds emissive. The
 // arithmetic and its order are exactly what triangle.frag's main() ran inline before phase two,
@@ -1245,8 +1260,8 @@ float3 ShadeSurface(
     float3 energyCompensation = EvaluateBaseSpecularAlbedos(directEnvironmentBrdf, albedo, metallic, specular).total / max(uncompensated, float3(1e-4));
 
     // Directional lights reach everywhere, so they are never binned: every pixel loops over them.
-    // The shadow caster is always one of them.
-    uint directionalCount = ubo.lightCounts.x;
+    // The shadow caster is always one of them. The path tracer's offline mode traces them all itself.
+    uint directionalCount = pathTracedDirect ? 0u : ubo.lightCounts.x;
     int shadowLightIndex = int(ubo.shadowParams.x);
     float3 directAccum = float3(0.0);
     float3 coatAccum = float3(0.0);
@@ -1287,7 +1302,7 @@ float3 ShadeSurface(
     // Local lights: the pixel's cluster lists every one whose range reaches it, in ascending order,
     // and a light left out contributes exactly zero, so this sums the same values in the same order
     // as the brute-force loop below. That loop stays as the comparison path.
-    if (ubo.lightCounts.z != 0u && !shadeAllLocalLights)
+    if (!pathTracedDirect && ubo.lightCounts.z != 0u && !shadeAllLocalLights)
     {
         uint2 range = LightClusterRange(FindLightCluster(worldPosition));
         for (uint k = 0u; k < range.y; ++k)
@@ -1311,7 +1326,7 @@ float3 ShadeSurface(
             sheenAccum += sheenContribution;
         }
     }
-    else
+    else if (!pathTracedDirect)
     {
         for (uint i = directionalCount; i < ubo.lightCounts.y; ++i)
         {

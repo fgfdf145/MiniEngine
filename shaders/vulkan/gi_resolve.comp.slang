@@ -9,11 +9,13 @@
 #include "gbuffer_common.slang"
 #include "vbao_common.slang"
 
-[[vk::binding(0, 1)]] Sampler2D giRawTexture;
-[[vk::binding(1, 1)]] Sampler2D depthTexture;
-[[vk::binding(2, 1)]] Sampler2D velocityTexture;
-[[vk::binding(3, 1)]] Sampler2D normalTexture;
-[[vk::binding(4, 1)]] Sampler2D historyTexture;
+// Set 1 is VulkanGiResolvePass's NVRHI binding set; the inputs are read with Load only, the history
+// as a storage image like the one written (both stay in GENERAL).
+[[vk::binding(0, 1)]] Texture2D giRawTexture;
+[[vk::binding(1, 1)]] Texture2D depthTexture;
+[[vk::binding(2, 1)]] Texture2D velocityTexture;
+[[vk::binding(3, 1)]] Texture2D normalTexture;
+[[vk::binding(4, 1)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> historyTexture;
 [[vk::binding(5, 1)]] [[vk::image_format("rgba32f")]] RWTexture2D<float4> historyImage;
 [[vk::binding(6, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> giImage;
 
@@ -116,7 +118,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float2 previousUv = uv - velocityTexture.Load(int3(pixel, 0)).rg;
         if (all(previousUv >= float2(0.0)) && all(previousUv < float2(1.0)))
         {
-            float4 history = historyTexture.Load(int3(int2(previousUv * aoConstants.extent), 0));
+            float4 history = historyTexture[int2(previousUv * aoConstants.extent)];
             float historyDistance;
             float historyCount;
             UnpackDistanceAndCount(history.w, historyDistance, historyCount);

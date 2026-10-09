@@ -10,7 +10,9 @@
 
 #include "pre_exposure.slang"
 
-[[vk::binding(0, 1)]] Sampler2D sourceTexture;
+// Set 1 is VulkanBloomPass's NVRHI binding set: the texture at 0, its sampler at 64.
+[[vk::binding(0, 1)]] Texture2D sourceTexture;
+[[vk::binding(64, 1)]] SamplerState sourceTextureSampler;
 [[vk::binding(1, 1)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> destinationImage;
 
 // Must match BloomPushConstants in engine/renderer/vulkan/bloom_pass.cpp.
@@ -43,7 +45,7 @@ float3 Sanitize(float3 color)
 
 float3 Tap(float2 uv, float2 offset)
 {
-    return Sanitize(sourceTexture.SampleLevel(uv + offset * bloom.sourceTexelSize, 0.0).rgb);
+    return Sanitize(sourceTexture.SampleLevel(sourceTextureSampler, uv + offset * bloom.sourceTexelSize, 0.0).rgb);
 }
 
 float KarisWeight(float3 color)
@@ -119,7 +121,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     else
     {
         float3 scene = Sanitize(destinationImage[pixel].rgb);
-        float3 glow = Sanitize(sourceTexture.SampleLevel(uv, 0.0).rgb);
+        float3 glow = Sanitize(sourceTexture.SampleLevel(sourceTextureSampler, uv, 0.0).rgb);
         result = scene * bloom.destinationWeight.rgb + glow * bloom.sourceWeight.rgb;
     }
     destinationImage[pixel] = float4(Sanitize(result), 1.0);

@@ -9,6 +9,7 @@
 #include "ui/panels/camera_panel.h"
 #include "ui/panels/drive_paths_panel.h"
 #include "ui/panels/graphics_debug_panel.h"
+#include "ui/panels/photo_mode_panel.h"
 #include "ui/panels/quad_recording_panel.h"
 #include "ui/panels/input_monitor_panel.h"
 #include "ui/panels/scene_panel.h"
@@ -88,6 +89,7 @@ void EditorUiController::RegisterWindows()
     m_windows.Register<SuspensionRigsPanel>();
     m_windows.Register<DrivePathsPanel>();
     m_windows.Register<QuadRecordingPanel>();
+    m_windows.Register<PhotoModePanel>();
     m_windows.Register<ThemePanel>();
     // Floating tool windows, opened by commands or by other windows.
     m_windows.Register<ModelProcessorWindow>();
@@ -181,6 +183,10 @@ void EditorUiController::RegisterCommands()
     {
         m_commandActions.toggleQuadRecording = true;
     };
+    scene.takePhoto = [this]
+    {
+        m_commandActions.takePhoto = true;
+    };
     scene.stepSimulation = [this]
     {
         m_commandActions.stepVehicleDrive = true;
@@ -220,6 +226,7 @@ void EditorUiController::BeginFrame(SDL_Window* window, const EngineSettings& se
         m_state.audio = settings.audio;
         m_state.process = settings.process;
         m_state.quadRecording = settings.quadRecording;
+        m_state.photoMode = settings.photoMode;
         m_windows.ApplyOpenState(settings.editorUi.windows);
         m_state.commands.autoLayout = settings.editorUi.autoLayout;
         m_hasAppliedEngineSettings = true;
@@ -235,6 +242,7 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
     settings.audio = m_state.audio;
     settings.process = m_state.process;
     settings.quadRecording = m_state.quadRecording;
+    settings.photoMode = m_state.photoMode;
     m_windows.WriteOpenState(settings.editorUi.windows);
     settings.editorUi.autoLayout = m_state.commands.autoLayout;
     m_style.WriteSettings(settings.editorUi);
@@ -279,6 +287,7 @@ EditorUiFrameResult EditorUiController::Draw(
     const EngineAudioSettings previousAudio = m_state.audio;
     const platform::process::ProcessAllocation previousProcess = m_state.process;
     const QuadRecordingSettings previousQuadRecording = m_state.quadRecording;
+    const PhotoModeSettings previousPhotoMode = m_state.photoMode;
     // The Quad Recording window asks for its preview again each frame it draws.
     m_state.quadRecordingPreview = false;
     // Every panel's open state, to save the settings when one opens or closes.
@@ -332,7 +341,7 @@ EditorUiFrameResult EditorUiController::Draw(
                                    std::abs(previousUiScale - m_style.UiScaleMultiplier()) > 0.0001f ||
                                    windowToggled || previousAudio != m_state.audio ||
                                    previousProcess != m_state.process ||
-                                   previousQuadRecording != m_state.quadRecording;
+                                   previousQuadRecording != m_state.quadRecording || previousPhotoMode != m_state.photoMode;
 
     result.renderDebug = m_state.renderDebug;
     result.audio = m_state.audio;
@@ -348,6 +357,7 @@ EditorUiFrameResult EditorUiController::Draw(
     result.vehiclePhysicsStepSeconds = 1.0f / static_cast<float>(std::max(m_state.vehicle.physicsRateHz, 1));
     result.quadRecording = m_state.quadRecording;
     result.quadRecordingPreview = m_state.quadRecordingPreview;
+    result.photoMode = m_state.photoMode;
     return result;
 }
 
@@ -379,12 +389,14 @@ void EditorUiController::SyncCommandStateFromEditor(const IEditorWorld& scene)
     m_state.commands.toneMapping = m_state.renderDebug.toneMapper;
     m_state.commands.khronosReference = m_state.renderDebug.khronosReference;
     m_state.commands.antiAliasing = m_state.renderDebug.taa ? AntiAliasingMode::Taa : AntiAliasingMode::None;
-    // The pipeline is what the settings make of it: path tracing, the ray traced effects over
-    // rasterization (hybrid), or rasterization alone.
+    // The pipeline is what the settings make of it: path tracing (offline or real time), the ray
+    // traced effects over rasterization (hybrid), or rasterization alone.
     m_state.commands.rayTracing = m_state.renderDebug.hardwareRayTracing;
-    m_state.commands.pipelineMode = m_state.renderDebug.pathTracing.enabled  ? RenderPipelineMode::PathTracing
-                                    : m_state.renderDebug.hardwareRayTracing ? RenderPipelineMode::Hybrid
-                                                                             : RenderPipelineMode::Rasterization;
+    const PathTracingSettings& pathTracing = m_state.renderDebug.pathTracing;
+    m_state.commands.pipelineMode = pathTracing.enabled && pathTracing.offline.enabled ? RenderPipelineMode::PathTracingOffline
+                                    : pathTracing.enabled                              ? RenderPipelineMode::PathTracing
+                                    : m_state.renderDebug.hardwareRayTracing           ? RenderPipelineMode::Hybrid
+                                                                                       : RenderPipelineMode::Rasterization;
     m_state.commands.videoRecording = m_state.videoRecording.active;
     m_state.commands.quadRecording = m_state.quadRecordingStatus.active;
     // Play is driving a car: whatever the commands asked last frame, this is what happened.
@@ -429,8 +441,10 @@ void EditorUiController::ApplyCommandStateToEditor(const EditorCommandState& bef
     }
     if (m_state.commands.pipelineMode != before.pipelineMode)
     {
-        m_state.renderDebug.pathTracing.enabled = m_state.commands.pipelineMode == RenderPipelineMode::PathTracing;
-        m_state.renderDebug.hardwareRayTracing = m_state.commands.pipelineMode != RenderPipelineMode::Rasterization;
+        const RenderPipelineMode mode = m_state.commands.pipelineMode;
+        m_state.renderDebug.pathTracing.enabled = mode == RenderPipelineMode::PathTracing || mode == RenderPipelineMode::PathTracingOffline;
+        m_state.renderDebug.pathTracing.offline.enabled = mode == RenderPipelineMode::PathTracingOffline;
+        m_state.renderDebug.hardwareRayTracing = mode != RenderPipelineMode::Rasterization;
     }
     if (m_state.commands.playState != before.playState)
     {

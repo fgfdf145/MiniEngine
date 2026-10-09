@@ -4,8 +4,9 @@
 
 // One invocation per pixel, and one per bin: the workgroup has exactly
 // kExposureHistogramBinCount invocations, so each clears and flushes one shared bin.
-[[vk::binding(0, 0)]] Sampler2D hdrTexture;
-[[vk::binding(1, 0)]] Sampler2D depthTexture;
+// Read with Load only, so no samplers (VulkanExposureHistogramPass's NVRHI binding set).
+[[vk::binding(0, 0)]] Texture2D hdrTexture;
+[[vk::binding(1, 0)]] Texture2D depthTexture;
 
 // Cleared by the pass before this dispatch and read back on the CPU once the frame's fence has
 // signaled.

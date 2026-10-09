@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nvrhi_native.h"
 #include "scene_pass.h"
 #include "uniform_buffer.h"
 
@@ -30,7 +31,7 @@ class VulkanPathTraceLayerPass : public IScenePass
     // albedo, normal, surface and velocity, the rest unused.
     static constexpr uint32_t kSurfaceColorSlots = 8;
 
-    VulkanPathTraceLayerPass(VkPhysicalDevice physicalDevice, VkDevice device, const SceneRenderTargets& targets);
+    VulkanPathTraceLayerPass(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets);
     ~VulkanPathTraceLayerPass() override;
 
     VulkanPathTraceLayerPass(const VulkanPathTraceLayerPass&) = delete;
@@ -67,7 +68,7 @@ class VulkanPathTraceLayerPass : public IScenePass
     struct Image
     {
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::TextureHandle texture;
         VkImageView view = VK_NULL_HANDLE;
     };
     enum SurfaceImage : uint32_t
@@ -86,8 +87,9 @@ class VulkanPathTraceLayerPass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     bool m_supported = false;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     std::array<VkFormat, kSurfaceImageCount> m_surfaceFormats{};
     VkRenderPass m_depthRenderPass = VK_NULL_HANDLE;
     VkRenderPass m_surfaceRenderPass = VK_NULL_HANDLE;

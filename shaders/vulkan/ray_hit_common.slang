@@ -46,7 +46,20 @@ uint64_t RayDeviceAddress(uint2 address)
 [[vk::binding(6, RAY_SCENE_SET)]] StructuredBuffer<RayMeshGeometry> rayMeshGeometries;
 // Each leaf triangle's index in its mesh's index list / 3, laid out as meshTriangles.
 [[vk::binding(7, RAY_SCENE_SET)]] StructuredBuffer<uint> raySourceTriangles;
-[[vk::binding(0, RAY_TEXTURE_SET)]] Sampler2D rayTextures[];
+// The texture table: every material sampler (VulkanSamplerCache::SamplerAt's order), then the slots'
+// textures; a texture's sampler is its slot's RayMaterial::samplers entry.
+#define RAY_SAMPLER_COUNT 108
+[[vk::binding(0, RAY_TEXTURE_SET)]] SamplerState raySamplers[RAY_SAMPLER_COUNT];
+[[vk::binding(1, RAY_TEXTURE_SET)]] Texture2D rayTextures[];
+
+// Slot texture slotTexture (RAY_TEXTURE_*) of draw slot drawSlot at level lod.
+float4 RayTextureSampleLevel(uint drawSlot, uint slotTexture, float2 uv, float lod)
+{
+    uint4 samplers = rayMaterials[drawSlot].samplers;
+    uint samplerIndex = ((slotTexture < 4u ? samplers.x : samplers.y) >> ((slotTexture & 3u) * 8u)) & 0xffu;
+    uint textureIndex = drawSlot * RAY_TEXTURES_PER_SLOT + slotTexture;
+    return rayTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(raySamplers[NonUniformResourceIndex(samplerIndex)], uv, lod);
+}
 
 // The three corners of a hit triangle, as indices into its mesh's vertex buffer.
 struct RayHitCorners
@@ -165,7 +178,7 @@ float4 RayTexture(RayHitSurface surface, MaterialData material, uint slotTexture
 {
     uint textureIndex = surface.drawSlot * RAY_TEXTURES_PER_SLOT + slotTexture;
     float2 uv = MaterialSlotUv(material, surface.drawSlot, materialTextureSlot, surface.uv0, surface.uv1);
-    return rayTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(uv, RayTextureLod(surface, textureIndex, footprintWidth, cosTheta));
+    return RayTextureSampleLevel(surface.drawSlot, slotTexture, uv, RayTextureLod(surface, textureIndex, footprintWidth, cosTheta));
 }
 
 // The plain base of the material at the hit: base colour (times the vertex colour), metallic,
@@ -259,7 +272,7 @@ bool AcceptTexturedHit(uint instance, uint triangle, float2 barycentrics, uint r
     float width = float(TextureSize(rayTextures[NonUniformResourceIndex(textureIndex)], 0).x);
     float lod = max(log2(width / 256.0), 0.0);
     float2 uv = MaterialSlotUv(material, drawSlot, 0u, uv0, uv1);
-    float alpha = rayTextures[NonUniformResourceIndex(textureIndex)].SampleLevel(uv, lod).a * material.baseColorFactor.a;
+    float alpha = RayTextureSampleLevel(drawSlot, RAY_TEXTURE_BASE_COLOR, uv, lod).a * material.baseColorFactor.a;
     return (materialFlags & RAY_MATERIAL_ALPHA_BLEND) != 0u ? RayHash(rayId, triangle) < alpha : alpha >= material.alphaCutoff;
 }
 

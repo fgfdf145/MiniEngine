@@ -83,7 +83,7 @@ VertexOutput main(VertexInput input)
         float width = material.outline.x;
         if (ToonHas(material, TOON_FEATURE_OUTLINE_WIDTH_TEXTURE))
         {
-            width *= toonOutlineWidthMap.SampleLevel(input.inTexCoord, 0.0).g;
+            width *= toonOutlineWidthMap.SampleLevel(toonOutlineWidthMapSampler, input.inTexCoord, 0.0).g;
         }
         worldPosition.xyz += smoothNormal * (width * scale * 0.00005);
 

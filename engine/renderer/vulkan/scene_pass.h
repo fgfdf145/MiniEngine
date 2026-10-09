@@ -71,13 +71,18 @@ struct ScenePassFrameContext
     std::span<const VulkanDrawItem> decalDrawItems;
     const VulkanPipelineSet* decalPipelines = nullptr;
     VkDescriptorSet frameDescriptorSet = VK_NULL_HANDLE;
+    // The same set as NVRHI's binding set, and the frame's NVRHI command list, whose native command
+    // buffer the passes' Record gets: the passes that record through NVRHI (NvrhiPassScope) use both.
+    nvrhi::IBindingSet* frameBindingSet = nullptr;
+    nvrhi::ICommandList* commandList = nullptr;
     // Records large draw lists in parallel (RecordMaterialPass); null records everything inline.
     VulkanParallelRecorder* recorder = nullptr;
     // Physical radiance to HDR target units, the same value as the camera block's exposure.x (see
     // PreExposureFromEv100). Always positive.
     float preExposure = 1.0f;
-    // Set 2 for passes that sample the G-buffer; see VulkanGBufferDescriptors.
+    // Set 2 for passes that sample the G-buffer; see VulkanGBufferDescriptors. The same set as NVRHI's.
     VkDescriptorSet gbufferDescriptorSet = VK_NULL_HANDLE;
+    nvrhi::IBindingSet* gbufferBindingSet = nullptr;
     // What the tone mapping pass writes to the viewport.
     GBufferDebugView gbufferView = GBufferDebugView::Off;
     // AO parameters for this frame. enabled is already false in the forward-only order.
@@ -112,6 +117,9 @@ struct ScenePassFrameContext
     TemporalHistoryFrame ssrHistory;
     // The aperture the glare is diffracted through, from this frame's EV (see GlareFNumberFromEv100).
     float glareFNumber = kGlareMinFNumber;
+    // The height in pixels of the image the sensor's height maps to, which sets the glare's pixel
+    // pitch: the output's, or the whole photo's for a view that renders one tile of it.
+    uint32_t glareImageHeight = 0;
     // Linear Rec.709 to linear Rec.709, applied before tone mapping (see WhiteBalanceMatrix).
     glm::mat3 whiteBalance{1.0f};
     // The swapchain is HDR10: the tone mapping pass uses GT7's HDR curve for hdrPeakNits and writes
@@ -156,6 +164,9 @@ struct ScenePassFrameContext
     bool pathTraceHitDistance = false;
     TemporalHistoryFrame pathTraceHistory;
     float pathTraceHistoryScale = 1.0f;
+    // The offline mode's image has all its samples: the path tracer traces nothing and carries its
+    // accumulations over (the layer's too, where its history is valid).
+    bool pathTraceHold = false;
     uint32_t pathTraceHistoryCap = 1;
     TemporalHistoryFrame restirPtHistory;
     glm::vec3 previousCameraPosition{0.0f};

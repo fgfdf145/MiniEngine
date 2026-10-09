@@ -718,8 +718,9 @@ void VulkanRenderer::DrawFrame()
     State().editorUi.SetSelectionOutlineTexture(kSelectionOutlineTextureId);
     // Fixed once NGX has started, before the render thread exists.
     State().editorUi.SetDlssStatus(m_dlss->IsAvailable(), m_dlss->IsRayReconstructionAvailable(), m_dlss->Status());
-    State().editorUi.SetPathTracingStatus(m_rayScene->HasHardwareRayTracing(), m_pathTracingStatusShown);
+    State().editorUi.SetPathTracingStatus(m_rayScene->HasHardwareRayTracing(), m_pathTracingStatusShown, m_pathTracingProgressShown);
     State().editorUi.SetGpuMemoryStatus(FormatGpuMemoryStatus(State().gpuMemory, State().worldStreaming));
+    State().editorUi.SetGpuMemory(State().gpuMemory);
     const EditorUiFrameResult uiFrame = DrawEditorUi(kViewportTextureId, viewportExtent);
     ApplyUiActions(uiFrame);
     EditorWorld().FlushDirtyTransforms();
@@ -824,11 +825,33 @@ void VulkanRenderer::ApplyRenderFeedback()
     m_minimapAvailable = feedback.minimapLoaded;
     State().gpuMemory = feedback.gpuMemory;
     m_pathTracingStatusShown = feedback.pathTracingStatus;
+    m_pathTracingProgressShown = feedback.pathTracingProgress;
     if (feedback.outOfMemory.value_or(false))
     {
         // World streaming gives memory back before it asks for more.
         State().worldStreaming.uploadOutOfMemory = true;
     }
+}
+
+void VulkanRenderer::RestartTemporalEffects()
+{
+    const auto restart = [](VulkanSceneView& view)
+    {
+        view.ResetHistories();
+        view.taaFrameIndex = 0;
+        view.aoFrameIndex = 0;
+        if (view.atmosphere)
+        {
+            view.atmosphere->RestartHistory();
+        }
+    };
+    restart(m_view);
+    for (const std::unique_ptr<VulkanSceneView>& view : m_captureViews)
+    {
+        restart(*view);
+    }
+    m_pathTraceAccumulation.Reset();
+    m_dlssResetPending = true;
 }
 
 void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentChanged, RenderExtent viewportExtent)
@@ -840,6 +863,7 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
     packet.camera = State().camera;
     packet.viewportMatrices = State().viewportMatrices;
     packet.renderDebug = State().renderDebug;
+    packet.temporalRestart = State().temporalRestart;
     packet.viewportExtent = viewportExtent;
     packet.displayExtent = {};
     if (State().fixedViewportExtent.has_value() || State().renderDebug.viewportResolution.fixed)
@@ -905,6 +929,11 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     }
     SyncSceneTargets(packet.viewportExtent, packet.renderDebug);
     SyncCaptureViews(packet.captureViews);
+    if (packet.temporalRestart != m_temporalRestart)
+    {
+        m_temporalRestart = packet.temporalRestart;
+        RestartTemporalEffects();
+    }
 
     uint32_t imageIndex = 0;
     const auto waitStart = std::chrono::steady_clock::now();
@@ -1239,7 +1268,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     // a shadow into view. Without a palette (not yet ticked) it keeps the pose it has.
     for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
     {
-        if (!renderSubmesh->skinned || renderSubmesh->skinningSet == VK_NULL_HANDLE)
+        if (!renderSubmesh->skinned || !renderSubmesh->skinningSet)
         {
             continue;
         }
@@ -1249,7 +1278,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
             continue;
         }
         shared.skinningDispatches.push_back(VulkanSkinningPass::Dispatch{
-            renderSubmesh->buffer.get(), renderSubmesh->skinningSet, palette, renderSubmesh->paletteOffset, renderSubmesh->jointCount});
+            renderSubmesh->buffer.get(), renderSubmesh->skinningSet.Get(), palette, renderSubmesh->paletteOffset, renderSubmesh->jointCount});
     }
     // Every tyre too, deformed or not: one the car no longer squashes goes back to its shape at rest,
     // and its last frame's shape keeps rolling into its motion vectors.
@@ -1260,7 +1289,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     }();
     for (const std::shared_ptr<const RenderSubmesh>& renderSubmesh : m_renderSubmeshes)
     {
-        if (!renderSubmesh->tyre || renderSubmesh->skinningSet == VK_NULL_HANDLE)
+        if (!renderSubmesh->tyre || !renderSubmesh->skinningSet)
         {
             continue;
         }
@@ -1268,7 +1297,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         const std::vector<glm::mat4>* deformations = packet.transforms.GetTyreDeformations(renderSubmesh->entity);
         const bool deformed = deformations != nullptr && first + 2 <= deformations->size();
         shared.skinningDispatches.push_back(VulkanSkinningPass::Dispatch{
-            renderSubmesh->buffer.get(), renderSubmesh->skinningSet, deformed ? deformations : &kTyreAtRest, deformed ? first : 0u, 2, true});
+            renderSubmesh->buffer.get(), renderSubmesh->skinningSet.Get(), deformed ? deformations : &kTyreAtRest, deformed ? first : 0u, 2, true});
     }
     // From the viewport's histogram; every view is balanced the same.
     shared.whiteBalance = UpdateWhiteBalance(packet);
@@ -1278,9 +1307,14 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     for (size_t index = 0; index < m_captureViews.size(); ++index)
     {
         VulkanSceneView& view = *m_captureViews[index];
-        Camera camera = packet.captureViews[index].camera;
+        const SceneCaptureView& capture = packet.captureViews[index];
+        if (capture.resetHistory)
+        {
+            view.ResetHistories();
+        }
+        Camera camera = capture.camera;
         UpdateAutoExposure(view, camera, packet, shared.frameSlot);
-        capturePrepared.push_back(PrepareView(view, camera, packet.captureViews[index].matrices, false, shared, packet));
+        capturePrepared.push_back(PrepareView(view, camera, capture.matrices, false, shared, packet, capture.wholeExtent));
     }
     m_cpuStages.Mark("CaptureViews");
     const std::unique_ptr<PreparedView> mainPrepared = PrepareView(m_view, packet.camera, packet.viewportMatrices, true, shared, packet);
@@ -1360,10 +1394,15 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         m_minimapBinding != VK_NULL_HANDLE ? static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(m_minimapBinding)) : ImTextureID_Invalid);
     for (size_t index = 0; index < kCaptureViewTextureIds.size(); ++index)
     {
+        const bool quadView = index < m_captureViews.size() && index != m_photoViewIndex;
         packet.ui.ReplaceTexture(
-            kCaptureViewTextureIds[index],
-            index < m_captureViews.size() ? m_captureViews[index]->targets->GetLdrTextureId(imageIndex) : ImTextureID_Invalid);
+            kCaptureViewTextureIds[index], quadView ? m_captureViews[index]->targets->GetLdrTextureId(imageIndex) : ImTextureID_Invalid);
     }
+    packet.ui.ReplaceTexture(
+        kPhotoViewTextureId,
+        m_photoViewIndex.has_value() && *m_photoViewIndex < m_captureViews.size()
+            ? m_captureViews[*m_photoViewIndex]->targets->GetLdrTextureId(imageIndex)
+            : ImTextureID_Invalid);
 
     m_cpuStages.Mark("FrameSetup");
     m_commandContext->RecordCommandBuffer(imageIndex, [&](VkCommandBuffer commandBuffer)
@@ -1389,7 +1428,7 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               m_gpuTimer->BeginFrame(commandBuffer, frame.frameSlot);
 
                                               // The skinned submeshes posed first: every pass after draws them.
-                                              m_skinningPass->Record(commandBuffer, frame.frameSlot, shared.skinningDispatches);
+                                              m_skinningPass->Record(commandBuffer, frame.commandList, frame.frameSlot, shared.skinningDispatches);
                                               m_gpuTimer->Mark(commandBuffer, "Skinning");
 
                                               // Ahead of the scene passes, whose material pass samples it, and of
@@ -1413,7 +1452,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               // VulkanAtmosphere).
                                               m_atmosphere->Record(
                                                   commandBuffer,
-                                                  frame.frameDescriptorSet,
+                                                  frame.commandList,
+                                                  frame.frameBindingSet,
                                                   environmentMode == EnvironmentMode::Atmosphere ? &atmosphereParameters : nullptr,
                                                   frame.frameSlot,
                                                   environmentData.cloudLayer.w > 0.0f ? &environmentData.cloudLife : nullptr);
@@ -1424,14 +1464,16 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               m_atmosphere->RecordView(
                                                   commandBuffer,
                                                   *m_view.atmosphere,
-                                                  frame.frameDescriptorSet,
+                                                  frame.commandList,
+                                                  frame.frameBindingSet,
                                                   environmentMode == EnvironmentMode::Atmosphere,
                                                   m_gpuTimer.get());
                                               m_gpuTimer->Mark(commandBuffer, "CloudResolve");
                                               // After the atmosphere, whose sky-view LUT the capture samples.
                                               m_environmentProbe->Record(
                                                   commandBuffer,
-                                                  frame.frameDescriptorSet,
+                                                  frame.commandList,
+                                                  frame.frameBindingSet,
                                                   environmentMode != EnvironmentMode::None,
                                                   environmentData);
                                               m_gpuTimer->Mark(commandBuffer, "EnvironmentProbe");
@@ -1469,7 +1511,8 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                                   m_atmosphere->RecordView(
                                                       commandBuffer,
                                                       *view.atmosphere,
-                                                      prepared->frame.frameDescriptorSet,
+                                                      prepared->frame.commandList,
+                                                      prepared->frame.frameBindingSet,
                                                       environmentMode == EnvironmentMode::Atmosphere);
                                                   RecordScenePasses(commandBuffer, view, prepared->frame, prepared->passOrder, nullptr);
                                                   static constexpr std::array<RenderTargetId, 1> kCaptureReads = {RenderTargetId::SceneLdr};
@@ -1612,7 +1655,8 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     const ViewportMatrices& viewportMatrices,
     bool viewport,
     const SharedFrameState& shared,
-    RenderFramePacket& packet)
+    RenderFramePacket& packet,
+    RenderExtent wholeExtent)
 {
     auto prepared = std::make_unique<PreparedView>();
     prepared->view = &view;
@@ -1626,6 +1670,8 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     // has: DLSS (it resolves with the engine's TAA instead), path tracing (it rasterises with the ray
     // traced effects), and the G-buffer debug views.
     RenderDebugSettings renderDebug = packet.renderDebug;
+    // The offline mode's switches stand in for the path tracer's own (EffectivePathTracing).
+    renderDebug.pathTracing = EffectivePathTracing(renderDebug.pathTracing);
     RenderCapabilities capabilities = shared.capabilities;
     if (!viewport)
     {
@@ -1649,7 +1695,11 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
         ShadowCameraInput shadowCamera{};
         shadowCamera.view = viewportMatrices.view;
         shadowCamera.verticalFovRadians = glm::radians(camera.fovDegrees);
-        shadowCamera.aspect = static_cast<float>(extent.width) / static_cast<float>(std::max(extent.height, 1u));
+        // A tile's camera keeps the whole photo's lens; its cascades cover the whole photo's frustum,
+        // the same for every tile.
+        shadowCamera.aspect = wholeExtent.IsValid()
+                                  ? static_cast<float>(wholeExtent.width) / static_cast<float>(wholeExtent.height)
+                                  : static_cast<float>(extent.width) / static_cast<float>(std::max(extent.height, 1u));
         shadowCamera.nearPlane = camera.nearPlane;
         shadowCamera.farPlane = camera.farPlane;
         ShadowCascadeSettings shadowSettings{};
@@ -1734,6 +1784,10 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     lightUpload.clustered = clusteredLighting;
     lightUpload.shadowTiles = shared.gpuShadowTiles;
 
+    if (viewport && features.plainPathTracing)
+    {
+        SyncPathTraceHistoryPrecision(view, features.offlinePathTracing);
+    }
     // The forward-shaded surfaces path traced as well (the viewport's path tracing only), from images
     // made before the camera block says so.
     const bool pathTraceLayer = viewport && features.pathTracing && renderDebug.pathTracing.forwardSurfaces &&
@@ -1896,7 +1950,10 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.scatterDrawItems = prepared->scatterDrawItems;
     frame.scatterPipelines = m_scatterPipelines.get();
     frame.frameDescriptorSet = view.uniformBuffer->GetFrameDescriptorSet(imageIndex);
+    frame.frameBindingSet = view.uniformBuffer->GetFrameBindingSet(imageIndex);
+    frame.commandList = m_commandContext->GetCommandList();
     frame.gbufferDescriptorSet = view.gbufferDescriptors->GetSet(*view.targets, imageIndex, frame.frameSlot);
+    frame.gbufferBindingSet = view.gbufferDescriptors->GetBindingSet(*view.targets, imageIndex, frame.frameSlot);
     // The order and the forward filter both derive from this one switch, here, so they cannot
     // disagree. The forward-only order never runs the geometry pass and leaves the G-buffer
     // undefined, so its debug views are forced off rather than trusted to the UI's disabled state.
@@ -1930,6 +1987,7 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.pathTracing.enabled = features.pathTracing;
     frame.localLightCount = static_cast<uint32_t>(shared.selectedLights.size()) - shared.directionalLightCount;
     frame.pathTracing.restir = features.restirPt;
+    frame.pathTracing.offline.enabled = features.offlinePathTracing;
     // The layer accumulates and denoises by the settings whatever DLSS does: ray reconstruction never
     // sees it.
     frame.pathTraceLayer = pathTraceLayer;
@@ -1991,6 +2049,7 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.hdrOutput = m_swapchain->IsHdr();
     frame.hdrPeakNits = std::clamp(renderDebug.hdrPeakNits, 250.0f, 10000.0f);
     // HDR output shows more of the highlight's brightness directly, so it needs less glare.
+    frame.glareImageHeight = wholeExtent.IsValid() ? wholeExtent.height : outputExtent.height;
     frame.glareFNumber = GlareFNumberFromEv100(
         camera.exposureEv100,
         frame.hdrOutput ? frame.hdrPeakNits : kGlareSdrPeakNits);
@@ -2009,10 +2068,11 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
         frame.rayTracing.denoise = frame.rayTracing.denoise && features.rayTracedShadowDenoise;
         frame.pathTracing.accumulate = frame.pathTracing.accumulate && features.pathTraceAccumulate;
         frame.pathTracing.denoise = frame.pathTracing.denoise && features.pathTraceDenoise;
-        // The raw paths' reflections reproject by their hit distance (its guides).
+        // The raw paths' reflections reproject by their hit distance (its guides); so do the offline
+        // mode's accumulated ones, which keep the latest hit distance beside them.
         frame.pathTraceHitDistance = frame.dlssRayReconstruction && frame.pathTracing.reflectionGuides && frame.pathTracing.enabled &&
                                      !frame.pathTracing.restir &&
-                                     !frame.pathTracing.accumulate && !frame.pathTracing.denoise;
+                                     (frame.pathTracing.offline.enabled || (!frame.pathTracing.accumulate && !frame.pathTracing.denoise));
         m_dlssResetPending = false;
     }
     // The traced shadow accumulates only while its filters run.
@@ -2065,6 +2125,7 @@ void VulkanRenderer::PublishFeedback(const RenderFramePacket& frame)
     }
     m_feedback.gpuMemory = m_gpuMemory;
     m_feedback.pathTracingStatus = m_pathTracingStatus;
+    m_feedback.pathTracingProgress = m_pathTracingProgress;
 }
 
 GpuMemoryReport VulkanRenderer::MeasureGpuMemory(const RenderFramePacket& frame) const
@@ -2091,6 +2152,12 @@ GpuMemoryReport VulkanRenderer::MeasureGpuMemory(const RenderFramePacket& frame)
         growth = std::max(0.0, displayPixels / outputPixels - 1.0);
     }
     report.reserve = static_cast<uint64_t>(static_cast<double>(targetBytes) * kResolutionDependentFactor * growth) + kMargin;
+    if (m_view.targets)
+    {
+        const VkExtent2D output = m_view.targets->GetOutputExtent();
+        report.viewBytesPerPixel =
+            static_cast<double>(targetBytes) * kResolutionDependentFactor / std::max(1.0, static_cast<double>(output.width) * output.height);
+    }
     return report;
 }
 
@@ -2174,6 +2241,7 @@ void VulkanRenderer::CreateSwapchainResources()
         m_view.targets = std::make_unique<SceneRenderTargets>(
             m_device->GetPhysicalDevice(),
             m_device->GetHandle(),
+            m_nvrhi->Get(),
             ldrFormat,
             viewportExtent,
             viewportExtent,
@@ -2231,7 +2299,7 @@ void VulkanRenderer::CreateDeviceResources()
     // reload rebuild descriptor sets without invalidating the pipelines. The pipeline cache
     // outliving every VulkanPipelineSet is what lets a rebuild reuse the driver's earlier shader
     // compilation.
-    m_frameSetLayout = std::make_unique<VulkanFrameDescriptorSetLayout>(m_device->GetHandle());
+    m_frameSetLayout = std::make_unique<VulkanFrameDescriptorSetLayout>(m_nvrhi->Get());
     m_materialSetLayout = std::make_unique<VulkanMaterialDescriptorSetLayout>(m_device->GetHandle());
     m_materialSets = std::make_unique<VulkanMaterialSetCache>(m_device->GetHandle(), m_materialSetLayout->GetHandle());
     m_stagingChunkPool = std::make_unique<VulkanStagingChunkPool>(m_device->GetHandle());
@@ -2245,33 +2313,36 @@ void VulkanRenderer::CreateDeviceResources()
     m_view.shadowPass = std::make_unique<VulkanShadowPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         m_materialSetLayout->GetHandle(),
         kShadowMapResolution);
     m_localShadowPass = std::make_unique<VulkanLocalShadowPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         m_materialSetLayout->GetHandle());
-    m_transmissionImage = std::make_unique<VulkanTransmissionImage>(m_device->GetPhysicalDevice(), m_device->GetHandle());
+    m_transmissionImage = std::make_unique<VulkanTransmissionImage>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get());
 
-    m_atmosphere = std::make_unique<VulkanAtmosphere>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_pipelineCache,
-        m_frameSetLayout->GetHandle());
+    m_atmosphere = std::make_unique<VulkanAtmosphere>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), m_frameSetLayout->Get());
     m_view.atmosphere = m_atmosphere->CreateView();
     // The scene as the DDGI probe rays trace it, one instance buffer per frame in flight. With
     // hardware ray tracing its texture table names a white texture where no material's is.
     TextureDescriptorBinding rayDefaultTexture{};
+    std::vector<VkSampler> raySamplerTable;
     if (m_device->SupportsRayQuery())
     {
+        for (uint32_t index = 0; index < VulkanSamplerCache::kSamplerCount; ++index)
+        {
+            raySamplerTable.push_back(m_samplerCache->GetNative(VulkanSamplerCache::SamplerAt(index)));
+        }
         VulkanUploadBatch rayUploadBatch(
             m_device->GetHandle(),
             m_device->GetQueueFamilies().graphicsFamily.value(),
             m_device->GetGraphicsQueue());
         m_rayDefaultTexture = std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(), CreateSolidTexture(255, 255, 255, 255), rayUploadBatch, VulkanTextureFormat::LinearData);
+            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), CreateSolidTexture(255, 255, 255, 255), rayUploadBatch, VulkanTextureFormat::LinearData);
         rayUploadBatch.Flush();
         rayDefaultTexture = TextureDescriptorBinding{m_rayDefaultTexture->GetImageView(), m_samplerCache->GetNative(TextureSampler{})};
     }
@@ -2282,29 +2353,24 @@ void VulkanRenderer::CreateDeviceResources()
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_device->SupportsRayQuery(),
         rayDefaultTexture,
+        std::move(raySamplerTable),
         m_device->SupportsUpdateUnusedWhilePending());
     m_rayScene->SetRetire([this](std::function<void()> release)
                           {
                               Retire(std::move(release));
                           });
-    m_skinningPass = std::make_unique<VulkanSkinningPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_pipelineCache,
-        static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+    m_skinningPass = std::make_unique<VulkanSkinningPass>(m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     m_ddgi = std::make_unique<VulkanDdgi>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         m_frameSetLayout->GetHandle(),
         m_rayScene->GetSetLayout(),
         static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight),
         m_rayScene->HasHardwareRayTracing());
     m_environmentProbe = std::make_unique<VulkanEnvironmentProbe>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_pipelineCache,
-        m_frameSetLayout->GetHandle());
+        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), m_frameSetLayout->Get());
 
     // Set 0 binding 6 must name a valid image even when no HDRI is loaded.
     VulkanUploadBatch uploadBatch(
@@ -2318,6 +2384,7 @@ void VulkanRenderer::CreateDeviceResources()
     m_defaultEnvironmentMap = std::make_unique<VulkanTexture>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         black,
         uploadBatch);
     // The DFG table, one mip, RGBA32F; the shader clamps its lookups to texel centres, so the
@@ -2325,6 +2392,7 @@ void VulkanRenderer::CreateDeviceResources()
     m_environmentBrdfLut = std::make_unique<VulkanTexture>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         BuildEnvironmentBrdfLut(kEnvironmentBrdfLutSize, kEnvironmentBrdfSampleCount),
         uploadBatch);
     // The LTC tables; like the DFG table, the shader clamps its lookups to texel centres.
@@ -2337,9 +2405,9 @@ void VulkanRenderer::CreateDeviceResources()
         return data;
     };
     m_ltcInverseMatrices = std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(), m_device->GetHandle(), ltcTexture(kLtcInverseMatrices), uploadBatch);
+        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), ltcTexture(kLtcInverseMatrices), uploadBatch);
     m_ltcAmplitudes = std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(), m_device->GetHandle(), ltcTexture(kLtcAmplitudes), uploadBatch);
+        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), ltcTexture(kLtcAmplitudes), uploadBatch);
     uploadBatch.Flush();
 
     m_gpuTimer = std::make_unique<VulkanGpuTimer>(
@@ -2411,6 +2479,47 @@ void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
                                  {
                                      CaptureViewportNow(path);
                                  });
+}
+
+PhotoViewPicture VulkanRenderer::ReadPhotoView()
+{
+    return m_renderThread->RunExclusive([&]()
+                                        {
+                                            return ReadPhotoViewNow();
+                                        });
+}
+
+PhotoViewPicture VulkanRenderer::ReadPhotoViewNow()
+{
+    if (!m_photoViewIndex.has_value() || *m_photoViewIndex >= m_captureViews.size())
+    {
+        throw std::runtime_error(m_photoViewError.empty() ? "no frame drew the photo" : m_photoViewError);
+    }
+    if (!m_lastRecordedImageIndex.has_value())
+    {
+        throw std::runtime_error("No frame has been drawn to capture");
+    }
+    vkDeviceWaitIdle(m_device->GetHandle());
+
+    const VulkanSceneView& view = *m_captureViews[*m_photoViewIndex];
+    ImageCaptureRequest request{};
+    request.physicalDevice = m_device->GetPhysicalDevice();
+    request.device = m_device->GetHandle();
+    request.queueFamily = m_device->GetQueueFamilies().graphicsFamily.value();
+    request.queue = m_device->GetGraphicsQueue();
+    // SceneLdr is indexed by swapchain image; the frame slot is ignored for it.
+    const uint32_t index = view.targets->ResolveIndex(RenderTargetId::SceneLdr, *m_lastRecordedImageIndex, 0);
+    request.image = view.targets->GetImage(RenderTargetId::SceneLdr, index);
+    request.format = view.targets->GetFormat(RenderTargetId::SceneLdr);
+    request.extent = view.targets->GetOutputExtent();
+    // The capture views end their frame with SceneLdr shader-read (kCaptureReads).
+    request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    PhotoViewPicture picture;
+    picture.rgba = ReadImageRgba8(request);
+    picture.width = request.extent.width;
+    picture.height = request.extent.height;
+    picture.exposureEv100 = view.exposureEv100.value_or(State().camera.exposureEv100);
+    return picture;
 }
 
 void VulkanRenderer::CaptureDdgiReference(const DdgiReferenceRequest& reference)
@@ -2558,12 +2667,14 @@ void VulkanRenderer::FlushQuadVideoFrames()
 std::vector<VulkanVideoReadback::MosaicTile> VulkanRenderer::BuildQuadMosaicTiles(uint32_t imageIndex) const
 {
     const QuadVideoRecording* const recording = ActiveQuadRecording();
-    if (recording == nullptr || m_captureViews.size() != recording->mosaic.tiles.size())
+    // The quad cameras come first; Photo Mode's view may follow them.
+    if (recording == nullptr || m_captureViews.size() < recording->mosaic.tiles.size() ||
+        (m_photoViewIndex.has_value() && *m_photoViewIndex < recording->mosaic.tiles.size()))
     {
         return {};
     }
     std::vector<VulkanVideoReadback::MosaicTile> tiles;
-    for (size_t index = 0; index < m_captureViews.size(); ++index)
+    for (size_t index = 0; index < recording->mosaic.tiles.size(); ++index)
     {
         const VulkanSceneView& view = *m_captureViews[index];
         const VideoMosaicTile& tile = recording->mosaic.tiles[index];
@@ -2616,11 +2727,11 @@ void VulkanRenderer::DestroyDeviceResources()
 
 // The sampler of the float textures (the environment map and the DFG and LTC tables): linear with
 // mips, repeating in u for the longitude wrap and clamping in v at the poles.
-VkSampler VulkanRenderer::EquirectangularSampler() const
+nvrhi::ISampler* VulkanRenderer::EquirectangularSampler() const
 {
     TextureSampler sampler;
     sampler.wrapT = TextureWrap::ClampToEdge;
-    return m_samplerCache->GetNative(sampler);
+    return m_samplerCache->Get(sampler);
 }
 
 EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings(const VulkanSceneView& view) const
@@ -2636,19 +2747,19 @@ EnvironmentDescriptorBindings VulkanRenderer::BuildEnvironmentBindings(const Vul
     bindings.cloudTarget = m_atmosphere->GetCloudTargetBinding(*view.atmosphere);
     bindings.irradiance = m_atmosphere->GetIrradianceBuffer();
     bindings.prefiltered = m_environmentProbe->GetPrefilteredBinding();
-    const VkSampler floatTableSampler = EquirectangularSampler();
-    bindings.brdfLut = TextureDescriptorBinding{m_environmentBrdfLut->GetImageView(), floatTableSampler};
-    bindings.ltcInverseMatrices = TextureDescriptorBinding{m_ltcInverseMatrices->GetImageView(), floatTableSampler};
-    bindings.ltcAmplitudes = TextureDescriptorBinding{m_ltcAmplitudes->GetImageView(), floatTableSampler};
+    nvrhi::ISampler* floatTableSampler = EquirectangularSampler();
+    bindings.brdfLut = BindTexture(m_environmentBrdfLut->GetImageView(), m_environmentBrdfLut->GetNvrhiTexture(), floatTableSampler);
+    bindings.ltcInverseMatrices = BindTexture(m_ltcInverseMatrices->GetImageView(), m_ltcInverseMatrices->GetNvrhiTexture(), floatTableSampler);
+    bindings.ltcAmplitudes = BindTexture(m_ltcAmplitudes->GetImageView(), m_ltcAmplitudes->GetNvrhiTexture(), floatTableSampler);
     bindings.transmission = m_transmissionImage->GetSampledBinding();
     bindings.scatterLight = view.scatterPass->GetLightBinding();
     bindings.scatterDepth = view.scatterPass->GetDepthBinding();
     PathTraceLayerBindings(view, bindings.pathTraceLayerDepth, bindings.pathTraceLayerDiffuse, bindings.pathTraceLayerSpecular);
     bindings.ddgiIrradiance = m_ddgi->GetIrradianceBinding();
     bindings.ddgiVisibility = m_ddgi->GetVisibilityBinding();
-    bindings.ddgiProbeStates = m_ddgi->GetProbeStateBuffer();
+    bindings.ddgiProbeStates = m_ddgi->GetProbeStateHandle();
     const VulkanTexture& environmentMap = m_environmentMap ? *m_environmentMap : *m_defaultEnvironmentMap;
-    bindings.environmentMap = TextureDescriptorBinding{environmentMap.GetImageView(), floatTableSampler};
+    bindings.environmentMap = BindTexture(environmentMap.GetImageView(), environmentMap.GetNvrhiTexture(), floatTableSampler);
     return bindings;
 }
 
@@ -2665,10 +2776,31 @@ void VulkanRenderer::PathTraceLayerBindings(
     }
     // Never sampled while the camera block says there is no layer (textureParams.y), but named in
     // the layout the real ones rest in.
-    const TextureDescriptorBinding placeholder{m_environmentBrdfLut->GetImageView(), EquirectangularSampler()};
+    const TextureDescriptorBinding placeholder =
+        BindTexture(m_environmentBrdfLut->GetImageView(), m_environmentBrdfLut->GetNvrhiTexture(), EquirectangularSampler());
     depth = placeholder;
     diffuse = placeholder;
     specular = placeholder;
+}
+
+void VulkanRenderer::SyncPathTraceHistoryPrecision(VulkanSceneView& view, bool fullPrecision)
+{
+    if (view.pathTracePass == nullptr || !view.pathTracePass->SetFullPrecisionHistory(fullPrecision))
+    {
+        return;
+    }
+    // The frames in flight still use the old images; set 0 stops naming the layer's result, which
+    // the next path traced frame makes again (and points set 0 back at).
+    m_commandContext->WaitForAllFrames();
+    view.pathTracePass->ReleaseImages();
+    TextureDescriptorBinding depth;
+    TextureDescriptorBinding diffuse;
+    TextureDescriptorBinding specular;
+    PathTraceLayerBindings(view, depth, diffuse, specular);
+    view.uniformBuffer->SetPathTraceLayerImages(depth, diffuse, specular);
+    view.pathTraceLayerHistory.Reset();
+    view.pathTraceHistory.Reset();
+    m_pathTraceAccumulation.Reset();
 }
 
 bool VulkanRenderer::PreparePathTraceLayer(VulkanSceneView& view, bool halfResolution)
@@ -2738,6 +2870,7 @@ void VulkanRenderer::UpdateMinimapTexture(const std::string& path)
                 m_minimapTexture = std::make_unique<VulkanTexture>(
                     m_device->GetPhysicalDevice(),
                     m_device->GetHandle(),
+                    m_nvrhi->Get(),
                     file.string(),
                     uploadBatch,
                     VulkanTextureFormat::LinearData);
@@ -2800,16 +2933,16 @@ void VulkanRenderer::UpdateEnvironmentMap(const SceneEnvironment& environment)
                     m_device->GetQueueFamilies().graphicsFamily.value(),
                     m_device->GetGraphicsQueue());
                 auto texture = std::make_unique<VulkanTexture>(
-                    m_device->GetPhysicalDevice(), m_device->GetHandle(), image, uploadBatch);
+                    m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), image, uploadBatch);
                 uploadBatch.Flush();
                 // The frame sets name the old map until rewritten, and may be in use.
                 m_commandContext->WaitForAllFrames();
                 if (m_view.uniformBuffer)
                 {
-                    m_view.uniformBuffer->SetEnvironmentMap(TextureDescriptorBinding{texture->GetImageView(), EquirectangularSampler()});
+                    m_view.uniformBuffer->SetEnvironmentMap(BindTexture(texture->GetImageView(), texture->GetNvrhiTexture(), EquirectangularSampler()));
                     for (const std::unique_ptr<VulkanSceneView>& view : m_captureViews)
                     {
-                        view->uniformBuffer->SetEnvironmentMap(TextureDescriptorBinding{texture->GetImageView(), EquirectangularSampler()});
+                        view->uniformBuffer->SetEnvironmentMap(BindTexture(texture->GetImageView(), texture->GetNvrhiTexture(), EquirectangularSampler()));
                     }
                 }
                 if (m_environmentProbe)
@@ -2872,7 +3005,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_pathTraceLayerDepthPipelines.reset();
         m_pathTraceLayerSurfacePipelines.reset();
     }
-    view.gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), *view.targets);
+    view.gbufferDescriptors = std::make_unique<VulkanGBufferDescriptors>(m_device->GetHandle(), m_nvrhi->Get(), *view.targets);
 
     auto geometryPass = std::make_unique<VulkanGeometryPass>(
         m_device->GetHandle(), m_pipelineCache, *view.targets, m_frameSetLayout->GetHandle());
@@ -2926,7 +3059,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     }
     // The scatter pre-pass: the forward shader's inputs, its own output (light and draw slot, alpha
     // included), its own depth, no blending.
-    auto scatterPass = std::make_unique<VulkanScatterPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), *view.targets);
+    auto scatterPass = std::make_unique<VulkanScatterPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), *view.targets);
     if (viewport)
     {
         MaterialPipelineSetConfig scatterConfig{};
@@ -2946,11 +3079,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
 
     // A rebuilt exposure pass starts with zeroed histograms, which meter as empty, so auto
     // exposure holds its current EV for the kMaxFramesInFlight frames until real ones arrive.
-    auto exposurePass = std::make_unique<VulkanExposureHistogramPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets);
+    auto exposurePass = std::make_unique<VulkanExposureHistogramPass>(m_nvrhi->Get(), *view.targets);
     view.exposurePass = exposurePass.get();
 
     // Construction order does not matter: RecordScenePasses follows BuildScenePassOrder.
@@ -2958,6 +3087,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanRtShadowPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -2965,6 +3095,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     auto pathTracePass = std::make_unique<VulkanPathTracePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -2972,7 +3103,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_atmosphere->GetMultiScatteringBinding());
     view.pathTracePass = pathTracePass.get();
     // The forward-shaded surfaces' layer it traces too: gbuffer.frag twice, against its two passes.
-    auto pathTraceLayerPass = std::make_unique<VulkanPathTraceLayerPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), *view.targets);
+    auto pathTraceLayerPass = std::make_unique<VulkanPathTraceLayerPass>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), *view.targets);
     if (viewport && pathTraceLayerPass->IsSupported() && pathTracePass->IsSupported())
     {
         MaterialPipelineSetConfig layerConfig{};
@@ -3005,6 +3136,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     auto restirPtPass = std::make_unique<VulkanRestirPtPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3013,6 +3145,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::move(restirPtPass));
     view.passes.push_back(std::make_unique<VulkanAoTracePass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3020,6 +3153,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanAoResolvePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle()));
@@ -3031,26 +3165,13 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         view.gbufferDescriptors->GetEmptySetLayout(),
         view.gbufferDescriptors->GetSetLayout(),
         *m_rayScene));
-    view.passes.push_back(std::make_unique<VulkanGiTracePass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle()));
-    view.passes.push_back(std::make_unique<VulkanGiResolvePass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle()));
+    view.passes.push_back(std::make_unique<VulkanGiTracePass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
+    view.passes.push_back(std::make_unique<VulkanGiResolvePass>(m_nvrhi->Get(), m_device->GetHandle(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::make_unique<VulkanGiCompositePass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        view.gbufferDescriptors->GetEmptySetLayout(),
-        view.gbufferDescriptors->GetSetLayout()));
+        m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), view.gbufferDescriptors->GetBindingLayout()));
     view.passes.push_back(std::make_unique<VulkanDdgiDebugPass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3060,7 +3181,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     if (!view.toonMaterials)
     {
         view.toonMaterials = std::make_unique<VulkanToonMaterials>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
     }
     view.passes.push_back(std::make_unique<VulkanToonPrepass>(
         m_device->GetHandle(),
@@ -3071,17 +3192,13 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         *view.toonMaterials));
     view.passes.push_back(std::make_unique<VulkanToonPass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
         m_materialSetLayout->GetHandle(),
         *view.toonMaterials));
-    view.passes.push_back(std::make_unique<VulkanTransmissionCopyPass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle(),
-        *m_transmissionImage));
+    view.passes.push_back(std::make_unique<VulkanTransmissionCopyPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get(), *m_transmissionImage));
     // Compatible with the opaque half's render pass, so the same forward pipelines draw in it.
     view.passes.push_back(std::make_unique<VulkanForwardPass>(
         m_device->GetHandle(),
@@ -3089,18 +3206,14 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         *view.targets,
         m_frameSetLayout->GetHandle(),
         ForwardPassPart::Translucent));
-    auto taaPass = std::make_unique<VulkanTaaPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle());
+    auto taaPass = std::make_unique<VulkanTaaPass>(m_nvrhi->Get(), m_device->GetHandle(), *view.targets, m_frameSetLayout->Get());
     const VulkanTaaPass& taa = *taaPass;
     view.passes.push_back(std::move(taaPass));
     // After TAA in this list, whose order OnTargetsRebuilt follows: the trace names TAA's history
     // images, which TAA recreates first.
     view.passes.push_back(std::make_unique<VulkanSsrTracePass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle(),
@@ -3109,22 +3222,13 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
     view.passes.push_back(std::make_unique<VulkanSsrResolvePass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets,
         m_frameSetLayout->GetHandle()));
-    view.passes.push_back(std::make_unique<VulkanBloomPass>(
-        m_device->GetPhysicalDevice(),
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        m_frameSetLayout->GetHandle()));
+    view.passes.push_back(std::make_unique<VulkanBloomPass>(m_nvrhi->Get(), *view.targets, m_frameSetLayout->Get()));
     view.passes.push_back(std::move(exposurePass));
-    view.passes.push_back(std::make_unique<VulkanTonemapPass>(
-        m_device->GetHandle(),
-        m_pipelineCache,
-        *view.targets,
-        view.gbufferDescriptors->GetSetLayout(),
-        view.gbufferDescriptors->GetEmptySetLayout()));
+    view.passes.push_back(std::make_unique<VulkanTonemapPass>(m_nvrhi->Get(), *view.targets, view.gbufferDescriptors->GetBindingLayout()));
     view.passes.push_back(std::make_unique<VulkanSelectionMaskPass>(
         m_device->GetHandle(),
         m_pipelineCache,
@@ -3132,6 +3236,7 @@ void VulkanRenderer::CreateScenePasses(VulkanSceneView& view)
         m_materialSetLayout->GetHandle()));
     view.passes.push_back(std::make_unique<VulkanSelectionOutlinePass>(
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         *view.targets));
 }
@@ -3146,8 +3251,9 @@ std::unique_ptr<VulkanUniformBuffer> VulkanRenderer::CreateViewUniformBuffer(con
     auto uniformBuffer = std::make_unique<VulkanUniformBuffer>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         static_cast<uint32_t>(m_swapchain->GetImageViews().size()),
-        m_frameSetLayout->GetHandle(),
+        m_frameSetLayout->Get(),
         view.shadowPass->GetSampledBinding(),
         m_localShadowPass->GetSampledBinding(),
         BuildEnvironmentBindings(view),
@@ -3326,20 +3432,46 @@ void VulkanRenderer::SyncCaptureViews(std::span<const SceneCaptureView> cameras)
         m_captureViews.resize(cameras.size());
         LOG_INFO("Capture views: {}", cameras.size());
     }
+    m_photoViewIndex.reset();
     for (size_t index = 0; index < cameras.size(); ++index)
     {
         const VkExtent2D extent = ToVkExtent(cameras[index].extent);
-        if (index == m_captureViews.size())
+        try
         {
-            m_captureViews.push_back(CreateCaptureView(extent));
-            LOG_INFO("Capture view {} made at {}x{}", index, extent.width, extent.height);
-            continue;
+            if (index == m_captureViews.size())
+            {
+                m_captureViews.push_back(CreateCaptureView(extent));
+                LOG_INFO(
+                    "Capture view {} made at {}x{} ({} MB of targets)",
+                    index,
+                    extent.width,
+                    extent.height,
+                    m_captureViews.back()->targets->GetAllocatedBytes() >> 20);
+            }
+            else if (!m_captureViews[index]->targets->MatchesExtent(extent, extent))
+            {
+                RebuildViewTargets(*m_captureViews[index], extent, extent);
+                LOG_INFO("Capture view {} resized to {}x{}", index, extent.width, extent.height);
+            }
         }
-        VulkanSceneView& view = *m_captureViews[index];
-        if (!view.targets->MatchesExtent(extent, extent))
+        catch (const std::exception& error)
         {
-            RebuildViewTargets(view, extent, extent);
-            LOG_INFO("Capture view {} resized to {}x{}", index, extent.width, extent.height);
+            // A photo can ask for more than the GPU has; the views made so far still draw, and the
+            // photo reports why it has none.
+            if (!cameras[index].photo)
+            {
+                throw;
+            }
+            vkDeviceWaitIdle(m_device->GetHandle());
+            m_captureViews.resize(index);
+            m_photoViewError = fmt::format("its {}x{} view could not be made: {}", extent.width, extent.height, error.what());
+            LOG_ERROR("Photo: {}", m_photoViewError);
+            return;
+        }
+        if (cameras[index].photo)
+        {
+            m_photoViewIndex = index;
+            m_photoViewError.clear();
         }
     }
 }
@@ -3352,6 +3484,7 @@ std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D ex
     view->targets = std::make_unique<SceneRenderTargets>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_view.targets->GetFormat(RenderTargetId::SceneLdr),
         extent,
         extent,
@@ -3359,6 +3492,7 @@ std::unique_ptr<VulkanSceneView> VulkanRenderer::CreateCaptureView(VkExtent2D ex
     view->shadowPass = std::make_unique<VulkanShadowPass>(
         m_device->GetPhysicalDevice(),
         m_device->GetHandle(),
+        m_nvrhi->Get(),
         m_pipelineCache,
         m_materialSetLayout->GetHandle(),
         kShadowMapResolution);
@@ -3452,7 +3586,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             return it->second;
         if (auto stored = m_textureStore.find(key); stored != m_textureStore.end())
             return indexOf(key, stored->second.texture.get());
-        auto texture = std::make_unique<VulkanTexture>(m_device->GetPhysicalDevice(), m_device->GetHandle(), data, *uploadBatch, fmt);
+        auto texture = std::make_unique<VulkanTexture>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), data, *uploadBatch, fmt);
         flushUploadBatchIfNeeded();
         return indexOf(key, store(key, std::move(texture), true));
     };
@@ -3645,7 +3779,7 @@ void VulkanRenderer::UploadSceneResources(const RenderFramePacket& frame)
             {
                 // Addressable for the ray scene's hit shading when rays run on the hardware.
                 renderSubmesh->buffer = std::make_shared<VulkanBuffer>(
-                    m_device->GetPhysicalDevice(), m_device->GetHandle(),
+                    m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
                     *cpuRenderSubmesh.mesh, *uploadBatch, m_device->SupportsRayQuery());
                 if (!cpuRenderSubmesh.mesh->IsPosed())
                 {
@@ -3993,7 +4127,7 @@ void VulkanRenderer::PumpSceneUpload(const RenderFramePacket& frame)
                 // Addressable for the ray scene's hit shading when rays run on the hardware.
                 m_preparedBuffers[mesh.get()] = PreparedBuffers{
                     mesh,
-                    std::make_shared<VulkanBuffer>(m_device->GetPhysicalDevice(), m_device->GetHandle(), *mesh, batch(), m_device->SupportsRayQuery())};
+                    std::make_shared<VulkanBuffer>(m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(), *mesh, batch(), m_device->SupportsRayQuery())};
             }
             // A backlog as large as a map's first load stages for longer, though never without a limit:
             // 64 large textures took over 50 ms of one frame.
@@ -4112,14 +4246,14 @@ std::unique_ptr<VulkanTexture> VulkanRenderer::UploadPreparedTexture(
     {
         ++stats.floatTextures;
         return std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(),
+            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
             *prepared.halfFloat, uploadBatch);
     }
     if (!prepared.compressed)
     {
         ++stats.uncompressed;
         return std::make_unique<VulkanTexture>(
-            m_device->GetPhysicalDevice(), m_device->GetHandle(),
+            m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
             prepared.rgba, uploadBatch, ToVulkanTextureFormat(usage));
     }
     if (prepared.fromCache)
@@ -4132,7 +4266,7 @@ std::unique_ptr<VulkanTexture> VulkanRenderer::UploadPreparedTexture(
         stats.compressSeconds += prepared.compressSeconds;
     }
     return std::make_unique<VulkanTexture>(
-        m_device->GetPhysicalDevice(), m_device->GetHandle(),
+        m_device->GetPhysicalDevice(), m_device->GetHandle(), m_nvrhi->Get(),
         *prepared.compressed, uploadBatch);
 }
 
@@ -4171,8 +4305,7 @@ void VulkanRenderer::DropSubmeshesOfRemovedEntities(const RenderFramePacket& fra
                 }
             }
             m_materialSets->Release(renderSubmesh->materialSet);
-            m_skinningPass->Release(renderSubmesh->skinningSet);
-            renderSubmesh->skinningSet = VK_NULL_HANDLE;
+            renderSubmesh->skinningSet = nullptr;
         }
     }
     std::erase_if(m_renderSubmeshes, isRemoved);
@@ -4358,8 +4491,7 @@ void VulkanRenderer::ApplyRenderContent(
                 }
             }
             m_materialSets->Release(renderSubmesh->materialSet);
-            m_skinningPass->Release(renderSubmesh->skinningSet);
-            renderSubmesh->skinningSet = VK_NULL_HANDLE;
+            renderSubmesh->skinningSet = nullptr;
             m_liveSubmeshes.erase(renderSubmesh->revision);
         }
         for (const RenderSubmesh* renderSubmesh : placed)
@@ -4731,6 +4863,9 @@ void VulkanRenderer::UpdatePathTracing(
         const bool sceneChanged = packet.contentChanged || m_ddgiMovingInstances.MovedThisFrame() || m_pathTraceGeometryEpoch != m_ddgiGeometryEpoch;
         stillFrames = m_pathTraceAccumulation.Advance(view, lighting, packet.renderDebug, sceneChanged);
         frame.pathTraceHistoryCap = PathTraceHistoryCap(frame.pathTracing, stillFrames);
+        // The offline image stops tracing once a still image has its samples.
+        frame.pathTraceHold = plainPathTracing && frame.pathTracing.offline.enabled &&
+                              OfflinePathTraceProgress(frame.pathTracing.offline, stillFrames).done;
     }
     else
     {
@@ -4742,6 +4877,7 @@ void VulkanRenderer::UpdatePathTracing(
     m_view.pathTraceHistoryPreExposure = preExposure;
 
     const RenderDebugSettings& renderDebug = packet.renderDebug;
+    m_pathTracingProgress = -1.0f;
     if (!renderDebug.pathTracing.enabled)
     {
         m_pathTracingStatus.clear();
@@ -4763,6 +4899,43 @@ void VulkanRenderer::UpdatePathTracing(
                               : renderDebug.forwardOnly       ? "Off in the forward-only order"
                               : renderDebug.khronosReference  ? "Off in the Khronos reference view"
                                                               : "Waiting for the ray scene";
+    }
+    else if (frame.pathTracing.offline.enabled)
+    {
+        // How far the offline image is, timed from its first still frame.
+        const OfflinePathTracingSettings& offline = frame.pathTracing.offline;
+        const OfflineProgress progress = OfflinePathTraceProgress(offline, stillFrames);
+        const auto now = std::chrono::steady_clock::now();
+        if (stillFrames == 0u)
+        {
+            m_offlineStart = now;
+            m_offlineSeconds.reset();
+        }
+        const double seconds = std::chrono::duration<double>(now - m_offlineStart).count();
+        if (progress.done && !m_offlineSeconds)
+        {
+            m_offlineSeconds = seconds;
+        }
+        const char* const denoiser = frame.dlssRayReconstruction ? "ray reconstruction" : "own filter";
+        if (progress.done)
+        {
+            m_pathTracingStatus = std::format("Offline: done, {} spp in {:.1f} s ({})", progress.targetSamples, m_offlineSeconds.value_or(seconds), denoiser);
+        }
+        else if (progress.targetSamples == 0u)
+        {
+            m_pathTracingStatus = std::format("Offline: {} spp, {:.1f} s, no target ({})", progress.samples, seconds, denoiser);
+        }
+        else
+        {
+            const double left = seconds * (static_cast<double>(progress.targetSamples) / static_cast<double>(std::max(progress.samples, 1u)) - 1.0);
+            m_pathTracingStatus = stillFrames == 0u ? std::format("Offline: {} spp a frame, waiting for a still image ({})",
+                                                                  OfflineSamplesPerPixel(offline), denoiser)
+                                                    : std::format("Offline: {} / {} spp, {:.1f} s, about {:.0f} s left ({})", progress.samples,
+                                                                  progress.targetSamples, seconds, left, denoiser);
+        }
+        m_pathTracingProgress =
+            progress.targetSamples == 0u ? -1.0f : std::min(static_cast<float>(progress.samples) / static_cast<float>(progress.targetSamples), 1.0f);
+        return;
     }
     else if (frame.dlssRayReconstruction)
     {
@@ -4894,7 +5067,9 @@ glm::mat3 VulkanRenderer::UpdateWhiteBalance(RenderFramePacket& frame)
 
 void VulkanRenderer::UpdateAutoExposure(VulkanSceneView& view, Camera& camera, const RenderFramePacket& frame, uint32_t frameSlot)
 {
-    const AutoExposureSettings& settings = camera.autoExposure;
+    // The scene's own stops (a white studio) on top of the camera's.
+    AutoExposureSettings settings = camera.autoExposure;
+    settings.compensationEv += frame.environment.exposureCompensationEv;
     // Whatever sets the EV below, the next frame adapts from it.
     struct RememberExposure
     {

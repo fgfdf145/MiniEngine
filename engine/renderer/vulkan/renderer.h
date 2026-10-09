@@ -129,8 +129,8 @@ struct RenderSubmesh : std::enable_shared_from_this<RenderSubmesh>
     // A tyre (MeshData::deformable): the skinning pass deforms its buffers by its TyreDeformation from
     // the entity's (RenderTransformSnapshot::GetTyreDeformations), every frame.
     bool tyre = false;
-    // The skinning pass's descriptor set for its buffers, made with the submesh.
-    mutable VkDescriptorSet skinningSet = VK_NULL_HANDLE;
+    // The skinning pass's binding set for its buffers, made with the submesh.
+    mutable nvrhi::BindingSetHandle skinningSet;
     glm::vec3 localBoundsCenter{0.0f};
     float localBoundsRadius = 0.0f;
     // CpuRenderSubmesh::castShadows and drawDistance.
@@ -212,6 +212,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     bool WantsKeyboardCapture() const override;
     void FlushVideoFrames() override;
     void FlushQuadVideoFrames() override;
+    PhotoViewPicture ReadPhotoView() override;
     void RunWithRenderIdle(const std::function<void()>& work) override;
 
   private:
@@ -221,6 +222,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     void ApplyImGuiTextureRequests(const ImDrawData& drawData);
     // Main thread: everything the render thread will read of this frame.
     void BuildFramePacket(RenderFramePacket& packet, bool contentChanged, RenderExtent viewportExtent);
+    // Every view's temporal effects start over: histories, the TAA jitter sequence, the AO noise,
+    // the clouds' reconstruction, the path tracer's accumulation and DLSS's history.
+    void RestartTemporalEffects();
     // A frame's work that every view shares, done once before the views (RenderFrame): the lights,
     // every draw's model matrix and the shadow casters, the sky, the probes, the local shadow atlas,
     // the skinning and the white balance.
@@ -273,7 +277,8 @@ class VulkanRenderer : public EditorRenderBackendBase
         const ViewportMatrices& viewportMatrices,
         bool viewport,
         const SharedFrameState& shared,
-        RenderFramePacket& packet);
+        RenderFramePacket& packet,
+        RenderExtent wholeExtent = {});
     // The camera block's environment for a camera at cameraPosition, its clouds' march jitter at
     // taaFrameIndex.
     EnvironmentUniformData BuildViewEnvironment(
@@ -285,6 +290,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The device-local memory now (docs/design/2026-10-07-vram-budget-design.md). Render thread.
     GpuMemoryReport MeasureGpuMemory(const RenderFramePacket& frame) const;
     void CaptureViewportNow(const std::filesystem::path& path);
+    PhotoViewPicture ReadPhotoViewNow();
     // In ddgi_reference_capture.cpp.
     void CaptureDdgiReferenceNow(const DdgiReferenceRequest& reference);
     void LogFrameTimingsNow() const;
@@ -304,9 +310,12 @@ class VulkanRenderer : public EditorRenderBackendBase
     // halfResolution: the layer is traced at half the resolution each way (its images remade, the
     // frames in flight finished first, when that changes).
     bool PreparePathTraceLayer(VulkanSceneView& view, bool halfResolution);
+    // The path tracer's accumulations in the format the frame needs (full float in the offline mode);
+    // images of the other one are released after the frames using them, the layer's result unbound.
+    void SyncPathTraceHistoryPrecision(VulkanSceneView& view, bool fullPrecision);
     // A view's set 0 for drawCapacity draws, with every live draw's material written in.
     std::unique_ptr<VulkanUniformBuffer> CreateViewUniformBuffer(const VulkanSceneView& view, uint32_t drawCapacity) const;
-    VkSampler EquirectangularSampler() const;
+    nvrhi::ISampler* EquirectangularSampler() const;
     EnvironmentMode EffectiveEnvironmentMode(const SceneEnvironment& environment) const;
     // Starts, finishes or skips the background decode of the scene's HDRI; installs it when ready.
     void UpdateEnvironmentMap(const SceneEnvironment& environment);
@@ -462,6 +471,8 @@ class VulkanRenderer : public EditorRenderBackendBase
     DlssPreset m_activeDlssPreset = DlssPreset::Default;
     bool m_activeDlssRayReconstruction = false;
     bool m_dlssResetPending = true;
+    // The last RenderFramePacket::temporalRestart drawn with.
+    uint32_t m_temporalRestart = 0;
     std::vector<std::shared_ptr<const RenderSubmesh>> m_renderSubmeshes;
     // m_renderSubmeshes by revision, for the next upload to keep.
     std::unordered_map<uint64_t, std::shared_ptr<const RenderSubmesh>> m_liveSubmeshes;
@@ -653,8 +664,13 @@ class VulkanRenderer : public EditorRenderBackendBase
     // The viewport's camera: its targets, passes, frame sets and histories (scene_view.h). Its
     // shadow pass is made with the device; the rest with the swapchain.
     VulkanSceneView m_view;
-    // The quad recording's cameras, in the frame's order (RenderFramePacket::captureViews).
+    // The quad recording's cameras, then Photo Mode's, in the frame's order
+    // (RenderFramePacket::captureViews).
     std::vector<std::unique_ptr<VulkanSceneView>> m_captureViews;
+    // Which of them is Photo Mode's (SceneCaptureView::photo), as the frame last synced named them;
+    // and why it could not be made, when it could not (too large for the GPU's memory, typically).
+    std::optional<size_t> m_photoViewIndex;
+    std::string m_photoViewError;
     // The sun and sky references auto exposure meters against, gathered while recording the
     // previous frame; shared by every view.
     ExposureReferences m_exposureReferences;
@@ -679,6 +695,12 @@ class VulkanRenderer : public EditorRenderBackendBase
     // thread's copy from the feedback.
     std::string m_pathTracingStatus;
     std::string m_pathTracingStatusShown;
+    float m_pathTracingProgress = -1.0f;
+    float m_pathTracingProgressShown = -1.0f;
+    // When the offline image started accumulating (its first still frame), and how long it took once
+    // it was done.
+    std::chrono::steady_clock::time_point m_offlineStart{};
+    std::optional<double> m_offlineSeconds;
     // How far the clouds have moved, run on by every frame's time (engine/renderer/volumetric_clouds.h).
     CloudMotion m_cloudMotion;
     std::unique_ptr<VulkanPipelineSet> m_forwardPipelines;

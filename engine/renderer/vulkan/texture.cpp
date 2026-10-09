@@ -1,5 +1,7 @@
 #include "texture.h"
 
+#include "nvrhi_native.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -10,11 +12,13 @@ namespace me
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     const std::string& path,
     VulkanUploadBatch& uploadBatch,
     VulkanTextureFormat textureFormat)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_textureFormat(textureFormat)
 {
     try
@@ -31,11 +35,13 @@ VulkanTexture::VulkanTexture(
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     const TextureData& textureData,
     VulkanUploadBatch& uploadBatch,
     VulkanTextureFormat textureFormat)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_textureFormat(textureFormat)
 {
     // A throw out of a constructor skips the destructor, so whatever was created before the
@@ -54,10 +60,12 @@ VulkanTexture::VulkanTexture(
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     const HalfFloatTextureData& textureData,
     VulkanUploadBatch& uploadBatch)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_textureFormat(VulkanTextureFormat::LinearData)
 {
     try
@@ -84,10 +92,12 @@ VulkanTexture::VulkanTexture(
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     const FloatTextureData& equirectangular,
     VulkanUploadBatch& uploadBatch)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_textureFormat(VulkanTextureFormat::LinearData)
 {
     try
@@ -134,10 +144,12 @@ VulkanTexture::VulkanTexture(
 VulkanTexture::VulkanTexture(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     const CompressedTexture& texture,
     VulkanUploadBatch& uploadBatch)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     try
     {
@@ -207,14 +219,7 @@ void VulkanTexture::UploadTexels(
                             1
                       : 1;
 
-    CreateImage(
-        width,
-        height,
-        m_mipLevels,
-        vkFormat,
-        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        m_image,
-        m_memory);
+    CreateImage(width, height, m_mipLevels, vkFormat);
 
     // All commands below go into the caller's shared batch command buffer, in this same order,
     // so the transition -> copy -> mip-chain sequence for this image is preserved exactly as
@@ -301,14 +306,7 @@ void VulkanTexture::UploadCompressedTexture(const CompressedTexture& texture, Vu
 
     const VkFormat vkFormat = ToVkFormat(texture.format);
     m_mipLevels = static_cast<uint32_t>(texture.levels.size());
-    CreateImage(
-        texture.levels[0].width,
-        texture.levels[0].height,
-        m_mipLevels,
-        vkFormat,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        m_image,
-        m_memory);
+    CreateImage(texture.levels[0].width, texture.levels[0].height, m_mipLevels, vkFormat);
 
     // The whole chain arrives in one copy: no blits, which block formats could not do anyway.
     const VkCommandBuffer commandBuffer = uploadBatch.GetCommandBuffer();
@@ -373,17 +371,20 @@ void VulkanTexture::DestroyHandles()
         vkDestroyImageView(m_device, m_imageView, nullptr);
         m_imageView = VK_NULL_HANDLE;
     }
-    if (m_image != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(m_device, m_image, nullptr);
-        m_image = VK_NULL_HANDLE;
-    }
+    // The image goes before the range it is bound to.
+    m_texture = nullptr;
+    m_image = VK_NULL_HANDLE;
     VulkanMemoryPool::Free(m_device, m_memory);
 }
 
 VkImageView VulkanTexture::GetImageView() const
 {
     return m_imageView;
+}
+
+nvrhi::ITexture* VulkanTexture::GetNvrhiTexture() const
+{
+    return m_texture;
 }
 
 void VulkanTexture::CreateBuffer(
@@ -424,45 +425,40 @@ void VulkanTexture::CreateBuffer(
     }
 }
 
-void VulkanTexture::CreateImage(
-    uint32_t width,
-    uint32_t height,
-    uint32_t mipLevels,
-    VkFormat format,
-    VkImageUsageFlags usage,
-    VkImage& image,
-    VulkanPooledMemory& memory) const
+void VulkanTexture::CreateImage(uint32_t width, uint32_t height, uint32_t mipLevels, VkFormat format)
 {
-    VkImageCreateInfo imageInfo{};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent.width = width;
-    imageInfo.extent.height = height;
-    imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = mipLevels;
-    imageInfo.arrayLayers = 1;
-    imageInfo.format = format;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = usage;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &image), "Failed to create texture image");
+    nvrhi::TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.mipLevels = mipLevels;
+    desc.format = ToNvrhiFormat(format);
+    if (desc.format == nvrhi::Format::UNKNOWN)
+    {
+        throw std::runtime_error("A texture format NVRHI has no name for");
+    }
+    desc.dimension = nvrhi::TextureDimension::Texture2D;
+    desc.isShaderResource = true;
+    desc.isVirtual = true;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    desc.debugName = "Texture";
+    m_texture = m_nvrhiDevice->createTexture(desc);
+    if (!m_texture)
+    {
+        throw std::runtime_error("Failed to create texture image");
+    }
+    m_image = ToNative<VkImage>(m_texture->getNativeObject(nvrhi::ObjectTypes::VK_Image));
 
     VkMemoryRequirements memoryRequirements{};
-    vkGetImageMemoryRequirements(m_device, image, &memoryRequirements);
+    vkGetImageMemoryRequirements(m_device, m_image, &memoryRequirements);
 
-    // The image is the caller's to destroy (it lands in m_image), so only the memory is undone here.
-    memory = VulkanMemoryPool::Allocate(
+    // The image is the caller's to release (DestroyHandles), so only the memory is undone here.
+    m_memory = VulkanMemoryPool::Allocate(
         m_physicalDevice, m_device, memoryRequirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VulkanMemoryPool::Resource::Image);
-    try
+    if (!m_nvrhiDevice->bindTextureMemory(m_texture, m_memory.heap, m_memory.offset))
     {
-        CheckVulkan(vkBindImageMemory(m_device, image, memory.memory, memory.offset), "Failed to bind texture image memory");
-    }
-    catch (...)
-    {
-        VulkanMemoryPool::Free(m_device, memory);
-        throw;
+        VulkanMemoryPool::Free(m_device, m_memory);
+        throw std::runtime_error("Failed to bind texture image memory");
     }
 }
 

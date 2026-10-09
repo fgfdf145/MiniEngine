@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "nvrhi_native.h"
 #include "uniform_buffer.h"
 
 #include <engine/renderer/ddgi_volume.h>
@@ -15,9 +16,9 @@ namespace me
 // The cascaded DDGI probes on the GPU (docs/design/2026-09-27-ddgi-design.md): the irradiance and
 // visibility atlases (one array layer per level), the probe states, the ray buffer and each frame
 // slot's schedule. Each frame the probes the CPU scheduled trace their rays (ddgi_trace.comp) and
-// blend them into their tiles (ddgi_update.comp). Device lifetime like VulkanEnvironmentProbe: the
-// images stay in GENERAL, set 0 binds them for every draw (bindings 21 to 23), and Record orders
-// itself with its own barriers. It records after the ray scene and before the scene passes.
+// blend them into their tiles (ddgi_update.comp). Device lifetime like VulkanEnvironmentProbe: set 0
+// binds the atlases for every draw (bindings 21 to 23), so they rest in SHADER_READ_ONLY_OPTIMAL and
+// are GENERAL only for the update, and Record orders itself with its own barriers. It records after the ray scene and before the scene passes.
 class VulkanDdgi
 {
   public:
@@ -27,6 +28,7 @@ class VulkanDdgi
     VulkanDdgi(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         VkDescriptorSetLayout frameSetLayout,
         VkDescriptorSetLayout raySetLayout,
@@ -63,7 +65,8 @@ class VulkanDdgi
     TextureDescriptorBinding GetIrradianceBinding() const;
     TextureDescriptorBinding GetVisibilityBinding() const;
     VkBuffer GetProbeStateBuffer() const;
-    // The irradiance atlas (RGBA16F, GENERAL), for the reference comparison's readback.
+    nvrhi::IBuffer* GetProbeStateHandle() const;
+    // The irradiance atlas (RGBA16F, SHADER_READ_ONLY_OPTIMAL), for the reference comparison's readback.
     VkImage GetIrradianceImage() const;
     VkImage GetVisibilityImage() const;
 
@@ -71,13 +74,13 @@ class VulkanDdgi
     struct Image
     {
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::TextureHandle texture;
         VkImageView view = VK_NULL_HANDLE;
     };
     struct Buffer
     {
         VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::BufferHandle handle;
         void* mapped = nullptr;
     };
 
@@ -87,10 +90,11 @@ class VulkanDdgi
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     uint32_t m_frameCount = 0;
     Image m_irradiance;
     Image m_visibility;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     Buffer m_states;
     Buffer m_rays;
     std::vector<Buffer> m_schedules;

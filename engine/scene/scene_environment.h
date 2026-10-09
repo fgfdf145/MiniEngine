@@ -217,6 +217,10 @@ struct SceneEnvironment
     CloudSettings clouds;
     TimeOfDaySettings timeOfDay;
     WindSettings wind;
+    // Stops added to the camera's auto exposure compensation while this scene is shown. The meter
+    // brings whatever fills the frame to a middle grey, so a white photo studio or a snowfield
+    // reads grey; a scene made for that look carries the stops it needs. Manual exposure ignores it.
+    float exposureCompensationEv = 0.0f;
 
     bool operator==(const SceneEnvironment&) const = default;
 };

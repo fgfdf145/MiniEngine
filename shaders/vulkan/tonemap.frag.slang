@@ -6,7 +6,9 @@
 #include "gbuffer_common.slang"
 #include "gbuffer_inputs.slang"
 
-[[vk::binding(0, 0)]] Sampler2D hdrTexture;
+// Set 0 is VulkanTonemapPass's NVRHI binding set: the texture's sampler at 64.
+[[vk::binding(0, 0)]] Texture2D hdrTexture;
+[[vk::binding(64, 0)]] SamplerState hdrTextureSampler;
 
 // Must match GBufferDebugView in engine/renderer/render_types.h.
 static const uint GBUFFER_VIEW_OFF = 0u;
@@ -69,28 +71,28 @@ FragmentOutput main(FragmentInput input)
     {
         // Sampled through the _SRGB format, so already linear; the sRGB LDR target re-encodes it.
         // Shows albedo as stored: unshaded, unexposed and not tone mapped.
-        color = gbufferAlbedo.Sample(input.fragTexCoord).rgb;
+        color = gbufferAlbedo.Sample(gbufferSampler, input.fragTexCoord).rgb;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_NORMAL)
     {
         // World-space shading normal mapped to [0, 1]. Unwritten pixels decode to +Z and read as
         // blue.
-        color = DecodeNormalOctahedral(gbufferNormal.Sample(input.fragTexCoord).rg) * 0.5 + 0.5;
+        color = DecodeNormalOctahedral(gbufferNormal.Sample(gbufferSampler, input.fragTexCoord).rg) * 0.5 + 0.5;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_GEOMETRIC_NORMAL)
     {
         // The interpolated, face-flipped vertex normal the shadow lookup offsets along.
-        color = DecodeNormalOctahedral(gbufferNormal.Sample(input.fragTexCoord).ba) * 0.5 + 0.5;
+        color = DecodeNormalOctahedral(gbufferNormal.Sample(gbufferSampler, input.fragTexCoord).ba) * 0.5 + 0.5;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_SURFACE)
     {
         // r = metallic, g = roughness, b = occlusion.
-        color = gbufferSurface.Sample(input.fragTexCoord).rgb;
+        color = gbufferSurface.Sample(gbufferSampler, input.fragTexCoord).rgb;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_EMISSIVE)
     {
         // Emissive is pre-exposed radiance, so it is tone mapped exactly as the shaded image is.
-        float3 emissive = min(gbufferEmissive.Sample(input.fragTexCoord).rgb, float3(65504.0));
+        float3 emissive = min(gbufferEmissive.Sample(gbufferSampler, input.fragTexCoord).rgb, float3(65504.0));
         color = TonemapFrameBufferRec709(emissive);
     }
     else if (constants.gbufferView == GBUFFER_VIEW_MOTION_VECTORS)
@@ -99,46 +101,46 @@ FragmentOutput main(FragmentInput input)
         // saturating at 4 pixels per frame: the editor runs at hundreds of frames per second, where
         // walking the camera moves a surface only a pixel or two per frame. Background pixels hold
         // no vector and read grey.
-        float2 pixels = gbufferVelocity.Sample(input.fragTexCoord).rg * float2(TextureSize(gbufferVelocity, 0));
+        float2 pixels = gbufferVelocity.Sample(gbufferSampler, input.fragTexCoord).rg * float2(TextureSize(gbufferVelocity, 0));
         color = float3(clamp(0.5 + pixels / 8.0, 0.0, 1.0), 0.5);
     }
     else if (constants.gbufferView == GBUFFER_VIEW_AMBIENT_OCCLUSION)
     {
         // The resolved screen-space AO alone, white where nothing occludes.
-        color = float3(sceneAo.Sample(input.fragTexCoord).r);
+        color = float3(sceneAo.Sample(gbufferSampler, input.fragTexCoord).r);
     }
     else if (constants.gbufferView == GBUFFER_VIEW_RAY_TRACED_SHADOW)
     {
         // The traced sun visibility the lighting reads (rt_shadow_filter.comp); its g says whether it
         // ran this frame, so the view is white where it did not.
-        float4 shadow = sceneShadow.Sample(input.fragTexCoord);
+        float4 shadow = sceneShadow.Sample(gbufferSampler, input.fragTexCoord);
         color = float3(shadow.g > 0.5 ? shadow.r : 1.0);
     }
     else if (constants.gbufferView == GBUFFER_VIEW_PROBE_OCCLUSION)
     {
         // The ray traced DDGI probe occlusion beside the AO in SceneAo.
-        color = float3(sceneAo.Sample(input.fragTexCoord).g);
+        color = float3(sceneAo.Sample(gbufferSampler, input.fragTexCoord).g);
     }
     else if (constants.gbufferView == GBUFFER_VIEW_SPECULAR)
     {
         // GB5 as stored: sqrt of the dielectric F0. Pixels with the default specular are black.
-        color = gbufferSpecular.Sample(input.fragTexCoord).rgb;
+        color = gbufferSpecular.Sample(gbufferSampler, input.fragTexCoord).rgb;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_COAT)
     {
         // GB6 as stored: red the coat's factor, green its roughness, blue the anisotropy's angle.
-        color = gbufferCoat.Sample(input.fragTexCoord).rgb;
+        color = gbufferCoat.Sample(gbufferSampler, input.fragTexCoord).rgb;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_SHEEN)
     {
         // GB7 as stored: the sheen's colour (its roughness, in alpha, does not show).
-        color = gbufferSheen.Sample(input.fragTexCoord).rgb;
+        color = gbufferSheen.Sample(gbufferSampler, input.fragTexCoord).rgb;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_REFLECTIONS)
     {
         // What the screen-space trace found, in HDR target units, tone mapped like the image and
         // scaled by its confidence: black where the environment is used instead.
-        float4 reflection = sceneReflections.Sample(input.fragTexCoord);
+        float4 reflection = sceneReflections.Sample(gbufferSampler, input.fragTexCoord);
         color = TonemapFrameBufferRec709(min(reflection.rgb, float3(65504.0))) * reflection.a;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_INDIRECT_DIFFUSE || constants.gbufferView == GBUFFER_VIEW_DDGI_IRRADIANCE ||
@@ -146,26 +148,26 @@ FragmentOutput main(FragmentInput input)
     {
         // The light arriving by one bounce, or from the DDGI probes (ddgi_debug.comp wrote it over
         // SceneGi), in HDR target units, before any surface's albedo, tone mapped like the image.
-        color = TonemapFrameBufferRec709(min(sceneGi.Sample(input.fragTexCoord).rgb, float3(65504.0)));
+        color = TonemapFrameBufferRec709(min(sceneGi.Sample(gbufferSampler, input.fragTexCoord).rgb, float3(65504.0)));
     }
     else if (constants.gbufferView == GBUFFER_VIEW_RAY_TRACED)
     {
         // ddgi_debug.comp wrote it over SceneGi: albedo-like values, shown as they are.
-        color = sceneGi.Sample(input.fragTexCoord).rgb;
+        color = sceneGi.Sample(gbufferSampler, input.fragTexCoord).rgb;
     }
     else if (constants.gbufferView == GBUFFER_VIEW_LIGHT_CLUSTERS)
     {
         // The lighting pass wrote heat colours times kFrameBufferUnitsPerExposed; scaling back shows
         // them as they were meant, without the operator bending their hues. Blend surfaces, shaded
         // on top by the forward pass, are exposed but not tone mapped here.
-        color = min(hdrTexture.Sample(input.fragTexCoord).rgb * kExposedPerFrameBufferUnit, float3(1.0));
+        color = min(hdrTexture.Sample(hdrTextureSampler, input.fragTexCoord).rgb * kExposedPerFrameBufferUnit, float3(1.0));
     }
     else
     {
         // The HDR target already holds pre-exposed values in the operator's unit (see
         // pre_exposure.slang). Clamp below fp16's maximum before the operator: an infinite input
         // would turn into NaN inside it and show a very bright pixel as black.
-        color = min(hdrTexture.Sample(input.fragTexCoord).rgb, float3(65504.0));
+        color = min(hdrTexture.Sample(hdrTextureSampler, input.fragTexCoord).rgb, float3(65504.0));
 
         // Auto white balance, before the operator: a partial chromatic adaptation toward D65 (see
         // engine/renderer/white_balance.h). It can push a saturated colour slightly negative; the

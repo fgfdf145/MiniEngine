@@ -31,7 +31,12 @@ bool VulkanMaterialSetCache::KeyEqual::operator()(const Key& a, const Key& b) co
 
 VulkanMaterialSetCache::VulkanMaterialSetCache(VkDevice device, VkDescriptorSetLayout materialSetLayout)
     : m_device(device),
-      m_pools(device, materialSetLayout, {VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaterialTextureBindingCount}}, kSetsPerPool)
+      m_pools(
+          device,
+          materialSetLayout,
+          {VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kMaterialTextureBindingCount},
+           VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, kMaterialTextureBindingCount}},
+          kSetsPerPool)
 {
 }
 
@@ -88,17 +93,23 @@ VkDescriptorSet VulkanMaterialSetCache::Acquire(const MaterialTextureBinding& bi
     entry.set = allocation.set;
     entry.pool = allocation.pool;
 
+    // Each texture and its sampler from the same image info: Vulkan ignores the sampler of a
+    // SAMPLED_IMAGE write and the view of a SAMPLER one.
     std::array<VkDescriptorImageInfo, kMaterialTextureBindingCount> imageInfos{};
-    std::array<VkWriteDescriptorSet, kMaterialTextureBindingCount> writes{};
+    std::array<VkWriteDescriptorSet, 2 * kMaterialTextureBindingCount> writes{};
     for (uint32_t index = 0; index < kMaterialTextureBindingCount; ++index)
     {
         imageInfos[index] = VkDescriptorImageInfo{key[index].sampler, key[index].imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[index].dstSet = entry.set;
-        writes[index].dstBinding = index;
-        writes[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[index].descriptorCount = 1;
-        writes[index].pImageInfo = &imageInfos[index];
+        for (uint32_t sampler = 0; sampler < 2; ++sampler)
+        {
+            VkWriteDescriptorSet& write = writes[2 * index + sampler];
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = entry.set;
+            write.dstBinding = index + sampler * kMaterialSamplerBindingOffset;
+            write.descriptorType = sampler == 0 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_SAMPLER;
+            write.descriptorCount = 1;
+            write.pImageInfo = &imageInfos[index];
+        }
     }
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     m_entries.emplace(key, entry);

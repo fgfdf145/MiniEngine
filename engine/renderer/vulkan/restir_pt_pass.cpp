@@ -1,6 +1,7 @@
 #include "restir_pt_pass.h"
 
 #include "gpu_timer.h"
+#include "nvrhi_resources.h"
 #include "ray_scene.h"
 
 #include <engine/renderer/restir_pairing.h>
@@ -83,12 +84,14 @@ void Dispatch(VkCommandBuffer commandBuffer, VkExtent2D extent, uint32_t groupSi
 VulkanRestirPtPass::VulkanRestirPtPass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout,
     const VulkanRayScene& rayScene)
     : m_physicalDevice(physicalDevice),
-      m_device(device)
+      m_device(device),
+      m_nvrhiDevice(nvrhiDevice)
 {
     (void)targets;
     if (!rayScene.HasHardwareRayTracing())
@@ -97,7 +100,7 @@ VulkanRestirPtPass::VulkanRestirPtPass(
     }
     try
     {
-        m_nearestSampler = CreateClampSampler(m_device, VK_FILTER_NEAREST);
+        m_nearestSampler = CreateClampSampler(nvrhiDevice, VK_FILTER_NEAREST);
         std::array<VkDescriptorType, kBindingCount> types{};
         for (uint32_t binding = 0; binding < kSampledBindings; ++binding)
         {
@@ -265,36 +268,13 @@ VulkanRestirPtPass::Buffer VulkanRestirPtPass::CreateBuffer(VkDeviceSize size, b
     bufferInfo.size = result.size;
     bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &result.buffer), "Failed to create a ReSTIR PT buffer");
-    VkMemoryRequirements requirements{};
-    vkGetBufferMemoryRequirements(m_device, result.buffer, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(
-        m_physicalDevice,
-        requirements.memoryTypeBits,
-        hostVisible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    const VkResult allocated = vkAllocateMemory(m_device, &allocateInfo, nullptr, &result.memory);
-    if (allocated != VK_SUCCESS)
-    {
-        vkDestroyBuffer(m_device, result.buffer, nullptr);
-        CheckVulkan(allocated, "Failed to allocate a ReSTIR PT buffer");
-    }
-    CheckVulkan(vkBindBufferMemory(m_device, result.buffer, result.memory, 0), "Failed to bind a ReSTIR PT buffer");
+    result.handle = CreateNvrhiBuffer(m_nvrhiDevice, bufferInfo, hostVisible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, result.buffer, "Failed to create a ReSTIR PT buffer");
     return result;
 }
 
 void VulkanRestirPtPass::DestroyBuffer(Buffer& buffer) const
 {
-    if (buffer.buffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, buffer.buffer, nullptr);
-    }
-    if (buffer.memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, buffer.memory, nullptr);
-    }
+    // The buffer and its memory go with the handle, released with the rest below.
     buffer = Buffer{};
 }
 
@@ -330,10 +310,13 @@ void VulkanRestirPtPass::CreateResources(const SceneRenderTargets& targets)
         }
         const VkDeviceSize pairingBytes = texels.size() * sizeof(uint16_t);
         m_pairing = CreateBuffer(pairingBytes, true);
-        void* mapped = nullptr;
-        CheckVulkan(vkMapMemory(m_device, m_pairing.memory, 0, VK_WHOLE_SIZE, 0, &mapped), "Failed to map the ReSTIR PT pairing buffer");
+        void* mapped = m_nvrhiDevice->mapBuffer(m_pairing.handle, nvrhi::CpuAccessMode::Write);
+        if (mapped == nullptr)
+        {
+            throw VulkanError(VK_ERROR_MEMORY_MAP_FAILED, "Failed to map the ReSTIR PT pairing buffer");
+        }
         std::memcpy(mapped, texels.data(), pairingBytes);
-        vkUnmapMemory(m_device, m_pairing.memory);
+        m_nvrhiDevice->unmapBuffer(m_pairing.handle);
 
         const uint32_t copyCount = targets.GetTransientCopyCount();
         const uint32_t setCount = copyCount * 2;
@@ -365,7 +348,7 @@ void VulkanRestirPtPass::CreateResources(const SceneRenderTargets& targets)
                 std::array<VkWriteDescriptorSet, kBindingCount> writes{};
                 for (uint32_t binding = 0; binding < kSampledBindings; ++binding)
                 {
-                    images[binding] = VkDescriptorImageInfo{m_nearestSampler, targets.GetSampledView(kSampled[binding], slot), kReadLayout};
+                    images[binding] = VkDescriptorImageInfo{NativeSampler(m_nearestSampler), targets.GetSampledView(kSampled[binding], slot), kReadLayout};
                     writes[binding] = ImageWrite(set, binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &images[binding]);
                 }
                 images[kSampledBindings] =
@@ -442,10 +425,6 @@ void VulkanRestirPtPass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_nearestSampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_nearestSampler, nullptr);
-        m_nearestSampler = VK_NULL_HANDLE;
-    }
+    m_nearestSampler = nullptr;
 }
 }

@@ -1,0 +1,61 @@
+diff --git a/include/nvrhi/nvrhi.h b/include/nvrhi/nvrhi.h
+index 3eeb325..42522dc 100644
+--- a/include/nvrhi/nvrhi.h
++++ b/include/nvrhi/nvrhi.h
+@@ -301,9 +301,13 @@ namespace nvrhi
+         uint64_t capacity = 0;
+         HeapType type;
+         std::string debugName;
++        // Vulkan: the memory types the heap may come from (VkMemoryRequirements::memoryTypeBits), so
++        // that a heap can be made for the resources it will hold.
++        uint32_t memoryTypeBits = ~0u;
+ 
+         constexpr HeapDesc& setCapacity(uint64_t value) { capacity = value; return *this; }
+         constexpr HeapDesc& setType(HeapType value) { type = value; return *this; }
++        constexpr HeapDesc& setMemoryTypeBits(uint32_t value) { memoryTypeBits = value; return *this; }
+                   HeapDesc& setDebugName(const std::string& value) { debugName = value; return *this; }
+     };
+ 
+diff --git a/src/vulkan/vulkan-backend.h b/src/vulkan/vulkan-backend.h
+index 09ee0c9..d2d253d 100644
+--- a/src/vulkan/vulkan-backend.h
++++ b/src/vulkan/vulkan-backend.h
+@@ -323,6 +323,7 @@ namespace nvrhi::vulkan
+         HeapDesc desc;
+         
+         const HeapDesc& getDesc() override { return desc; }
++        Object getNativeObject(ObjectType objectType) override;
+ 
+     private:
+         VulkanAllocator& m_Allocator;
+diff --git a/src/vulkan/vulkan-device.cpp b/src/vulkan/vulkan-device.cpp
+index edbb5e9..6448f8f 100644
+--- a/src/vulkan/vulkan-device.cpp
++++ b/src/vulkan/vulkan-device.cpp
+@@ -683,7 +683,7 @@ namespace nvrhi::vulkan
+     {
+         vk::MemoryRequirements memoryRequirements;
+         memoryRequirements.alignment = 0;
+-        memoryRequirements.memoryTypeBits = ~0u; // just pick whatever fits the property flags
++        memoryRequirements.memoryTypeBits = d.memoryTypeBits; // whatever fits the property flags unless restricted
+         memoryRequirements.size = d.capacity;
+ 
+         vk::MemoryPropertyFlags memoryPropertyFlags;
+@@ -732,6 +732,17 @@ namespace nvrhi::vulkan
+         return HeapHandle::Create(heap);
+     }
+ 
++    Object Heap::getNativeObject(ObjectType objectType)
++    {
++        switch (objectType)
++        {
++        case ObjectTypes::VK_DeviceMemory:
++            return Object(memory);
++        default:
++            return nullptr;
++        }
++    }
++
+     Heap::~Heap()
+     {
+         if (memory && managed)

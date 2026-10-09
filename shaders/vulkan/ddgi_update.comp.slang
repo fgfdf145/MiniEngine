@@ -29,6 +29,14 @@
 
 #include "shader_helpers.slang"
 #include "scene_common.slang"
+// The update writes one level of the atlases while it samples the next coarser one, so it reads
+// them through its own set, in GENERAL, not set 0's views of every level, which rest in
+// SHADER_READ_ONLY_OPTIMAL.
+#define DDGI_UPDATE_ATLASES
+[[vk::binding(6, 2)]] Texture2DArray ddgiIrradianceAtlas;
+[[vk::binding(7, 2)]] Texture2DArray ddgiVisibilityAtlas;
+[[vk::binding(8, 2)]] SamplerState ddgiIrradianceAtlasSampler;
+[[vk::binding(9, 2)]] SamplerState ddgiVisibilityAtlasSampler;
 #include "ddgi_common.slang"
 
 [[vk::binding(0, 2)]] StructuredBuffer<uint> scheduledProbes;

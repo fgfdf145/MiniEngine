@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nvrhi_native.h"
 #include "scene_pass.h"
 
 #include <cstdint>
@@ -20,11 +21,7 @@ namespace me
 class VulkanExposureHistogramPass : public IScenePass
 {
   public:
-    VulkanExposureHistogramPass(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
-        VkPipelineCache pipelineCache,
-        const SceneRenderTargets& targets);
+    VulkanExposureHistogramPass(nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets);
     ~VulkanExposureHistogramPass() override;
 
     VulkanExposureHistogramPass(const VulkanExposureHistogramPass&) = delete;
@@ -49,27 +46,17 @@ class VulkanExposureHistogramPass : public IScenePass
     struct HistogramBuffer
     {
         VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::BufferHandle handle;
         const uint32_t* mapped = nullptr;
     };
 
-    void CreateDescriptorSetLayout();
-    void CreateSampler();
-    void CreatePipeline(VkPipelineCache pipelineCache);
     void CreateHistogramBuffers(uint32_t count);
-    void CreateDescriptorSets(const SceneRenderTargets& targets);
-    uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
-    // Shared by the destructor and the constructor's unwind path, as in the other passes.
-    void DestroyHandles();
+    void CreateBindingSets(const SceneRenderTargets& targets);
 
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-    VkDevice m_device = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
-    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_descriptorSets;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::BindingLayoutHandle m_setLayout;
+    nvrhi::ComputePipelineHandle m_pipeline;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
     std::vector<HistogramBuffer> m_histograms;
 };
 }

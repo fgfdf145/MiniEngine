@@ -16,7 +16,7 @@ struct SkyConstants
 
 // Set 0 binding 28: the clouds at the scene's extent on the unjittered pixel grid (cloud_resolve.comp),
 // rgb times CLOUD_TARGET_SCALE over the transmittance.
-[[vk::binding(28, 0)]] Sampler2D cloudTarget;
+[[vk::binding(28, 0)]] Texture2D cloudTarget;
 
 [shader("fragment")]
 float4 main([[vk::location(0)]] float2 fragTexCoord, float4 fragCoord : SV_Position) : SV_Target0
@@ -30,7 +30,7 @@ float4 main([[vk::location(0)]] float2 fragTexCoord, float4 fragCoord : SV_Posit
     float3 luminance = mode == ENVIRONMENT_HDRI ? SampleEnvironmentMap(direction) : SampleSky(direction);
     if (mode == ENVIRONMENT_HDRI && skyData.backgroundRadiance.w > 0.0)
     {
-        luminance = prefilteredEnvironment.SampleLevel(direction, skyData.backgroundRadiance.w * (PREFILTER_MIP_COUNT - 1.0)).rgb;
+        luminance = prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, direction, skyData.backgroundRadiance.w * (PREFILTER_MIP_COUNT - 1.0)).rgb;
     }
     if (mode == ENVIRONMENT_ATMOSPHERE)
     {

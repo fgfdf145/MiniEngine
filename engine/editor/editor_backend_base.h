@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer_shared_state.h"
+#include "services/photo_mode.h"
 #include "services/quad_recording.h"
 
 #include <engine/core/video/video_mosaic.h>
@@ -9,9 +10,12 @@
 #include <engine/renderer/scene_capture_view.h>
 
 #include <array>
+#include <filesystem>
 #include <functional>
+#include <future>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -19,6 +23,16 @@ namespace me
 {
 
 class Window;
+
+// Photo Mode's view as the frame drawn last left it: its tone mapped picture (RGBA8, rows from the
+// top) and the exposure it was drawn at.
+struct PhotoViewPicture
+{
+    std::vector<uint8_t> rgba;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    float exposureEv100 = 0.0f;
+};
 
 class EditorRenderBackendBase : public IRenderBackend
 {
@@ -29,6 +43,12 @@ class EditorRenderBackendBase : public IRenderBackend
     void StopVideoRecording() override;
     bool StartQuadRecording(const VideoRecordingRequest& request, std::string& error) override;
     void StopQuadRecording() override;
+    bool TakePhoto(const PhotoRequest& request, std::string& error) override;
+    bool IsTakingPhoto() const override
+    {
+        return m_photo.has_value();
+    }
+    void WaitForPhotoWrite() override;
 
   protected:
     EditorRenderBackendBase(
@@ -67,6 +87,12 @@ class EditorRenderBackendBase : public IRenderBackend
     // As FlushVideoFrames, for the quad recording.
     virtual void FlushQuadVideoFrames()
     {
+    }
+    // The photo view's picture of the frame drawn last (SceneCaptureView::photo), once the render
+    // thread has finished it. Throws when there is none.
+    virtual PhotoViewPicture ReadPhotoView()
+    {
+        throw std::runtime_error("This render backend cannot take photos");
     }
     // This frame's quad cameras, in the canvas's order (UpdateCaptureViews): while a quad recording
     // runs or the Quad Recording window previews them, and there is something to follow; else none.
@@ -121,6 +147,16 @@ class EditorRenderBackendBase : public IRenderBackend
     bool StartQuadRecordingNow(const VideoRecordingRequest& request, std::string& error);
     void StopQuadRecordingNow();
     void UpdateQuadRecording();
+    // Tools > Take Photo: a photo at the Photo Mode window's settings to
+    // captures/photo_<date>_<time>.png.
+    void TakePhotoFromEditor();
+    // Before this frame's views are placed: takes the photo view's picture once it has rendered its
+    // warm-up frames (into the canvas, a tile at a time) and moves to the next tile; once the last is
+    // in, writes the PNG on a worker thread and, when that is done, reports how the photo ended in
+    // State().photoStatus.
+    void AdvancePhoto();
+    // The photo's view for this frame, while it renders.
+    std::optional<SceneCaptureView> PlacePhotoView();
     // What the quad cameras follow this frame: the driven car's body, else the selected model; with
     // its name. Nothing when there is neither.
     struct QuadRecordingTarget
@@ -151,6 +187,26 @@ class EditorRenderBackendBase : public IRenderBackend
     std::unique_ptr<VideoRecorder> m_videoRecorder;
     std::unique_ptr<QuadVideoRecording> m_quadRecording;
     std::vector<SceneCaptureView> m_captureViews;
+    // The photo being made: what was asked; the viewport's camera and aspect when it was, which every
+    // tile keeps; how it is cut into tiles, the tile rendering and how many frames have named its
+    // view; the canvas the tiles go into; and, once they are all in, the PNG being written (its
+    // error, empty when it was written).
+    struct PhotoInProgress
+    {
+        PhotoRequest request;
+        Camera camera;
+        float viewportAspect = 1.0f;
+        PhotoTiling tiling;
+        size_t tile = 0;
+        uint32_t tileFrames = 0;
+        std::vector<uint8_t> canvas;
+        float exposureEv100 = 0.0f;
+        std::optional<std::future<std::string>> writing;
+    };
+    std::optional<PhotoInProgress> m_photo;
+    // The viewport's width over its height as the scene last rendered it (UpdateViewportMatrices),
+    // which the photo frames inside.
+    float m_viewportAspect = 16.0f / 9.0f;
     // The fixed viewport size before the recording fixed it, put back when it stops.
     std::optional<RenderExtent> m_fixedViewportExtentBeforeRecording;
 

@@ -15,6 +15,7 @@ struct RayMaterial
 {
     float4 albedoCoverage;
     float4 emissionFlags;
+    uint4 samplers;
 };
 
 // Every slot's set names its textures; the materials buffer is one set for all of them.
@@ -26,6 +27,7 @@ struct RayMaterialConstants
     float4 baseColorFactor;
     float4 emissiveAndCutoff; // rgb emissive factor, a alpha cutoff
     uint4 params;           // x output index, y alpha mode, z flags, w transmission as float bits
+    uint4 samplers;         // RayMaterial's samplers, passed through
 };
 [[vk::push_constant]] ConstantBuffer<RayMaterialConstants> constants;
 
@@ -83,6 +85,7 @@ void main(uint3 groupThreadId : SV_GroupThreadID, uint groupIndex : SV_GroupInde
         RayMaterial material;
         material.albedoCoverage = float4(clamp(albedo, 0.0, 1.0), meanCoverage);
         material.emissionFlags = float4(sharedEmission[0].rgb / 256.0, asfloat(constants.params.z));
+        material.samplers = constants.samplers;
         rayMaterials[constants.params.x] = material;
     }
 }

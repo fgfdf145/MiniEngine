@@ -5,6 +5,10 @@
 // depth and normal, stored beside it) is the one this pixel sees, so a disocclusion starts afresh
 // rather than smearing what was in front. The specular channel's history is shortened by its
 // roughness while anything moves: a sharp reflection does not move with the surface.
+// Once the offline mode's image has its samples (PT_FLAG_HOLD) nothing is traced, and last frame's
+// accumulation and surfaces carry over as they are, pixel for pixel.
+// The surface history's w keeps the specular path's hit distance for ray reconstruction (the raw
+// specular alpha, PT_FLAG_HIT_DISTANCE), which the filter's last step puts back in the result.
 
 #include "scene_common.slang"
 #include "gbuffer_common.slang"
@@ -24,6 +28,15 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     {
         return;
     }
+    if ((pathTrace.flags & PT_FLAG_HOLD) != 0u)
+    {
+        float4 heldDiffuse = ptPreviousDiffuse.Load(int3(pixel, 0));
+        float4 heldSpecular = ptPreviousSpecular.Load(int3(pixel, 0));
+        ptHistoryDiffuse[pixel] = float4(min(heldDiffuse.rgb * pathTrace.historyScale, float3(65504.0)), heldDiffuse.a);
+        ptHistorySpecular[pixel] = float4(min(heldSpecular.rgb * pathTrace.historyScale, float3(65504.0)), heldSpecular.a);
+        ptHistorySurface[pixel] = ptPreviousSurface.Load(int3(pixel, 0));
+        return;
+    }
     float depth = ptDepth.Load(int3(PtGBufferPixel(pixel), 0)).r;
     float4 rawDiffuse = ptRawDiffuse[pixel];
     float4 rawSpecular = ptRawSpecular[pixel];
@@ -38,7 +51,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float3 worldPosition = PathTraceWorldPosition(pixel, depth);
     float3 N = DecodeNormalOctahedral(ptNormal.Load(int3(PtGBufferPixel(pixel), 0)).rg);
     float viewDepth = mul(mul(ubo.proj, ubo.view), float4(worldPosition, 1.0)).w;
-    ptHistorySurface[pixel] = float4(viewDepth, EncodeNormalOctahedral(N), 0.0);
+    float hitDistance = (pathTrace.flags & PT_FLAG_HIT_DISTANCE) != 0u ? rawSpecular.a : 0.0;
+    ptHistorySurface[pixel] = float4(viewDepth, EncodeNormalOctahedral(N), hitDistance);
 
     float4 previousDiffuse = float4(0.0);
     float4 previousSpecular = float4(0.0);

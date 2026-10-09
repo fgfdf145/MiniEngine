@@ -33,7 +33,9 @@ enum class RenderPipelineMode
 {
     Rasterization,
     Hybrid,
-    PathTracing
+    PathTracing,
+    // The path tracer's offline mode (OfflinePathTracingSettings).
+    PathTracingOffline
 };
 
 enum class AntiAliasingMode
@@ -137,6 +139,7 @@ struct EditorSceneCommands
     std::function<void()> captureViewport;
     std::function<void()> toggleVideoRecording; // Record Viewport: starts or stops
     std::function<void()> toggleQuadRecording;  // Record Quad Cameras: starts or stops
+    std::function<void()> takePhoto;            // Take Photo: Photo Mode's still at its own size
     std::function<void()> stepSimulation; // Step: one fixed physics step while paused
     std::function<void()> reloadShaders;
     std::function<void()> showShaderLog;

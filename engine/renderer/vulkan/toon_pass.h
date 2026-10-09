@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nvrhi_native.h"
 #include "scene_pass.h"
 
 #include <array>
@@ -34,7 +35,7 @@ class VulkanToonMaterials
     // At most this many toon draws a frame; the rest are left undrawn (with a warning).
     static constexpr uint32_t kMaxDraws = 512;
 
-    VulkanToonMaterials(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t frameSlotCount);
+    VulkanToonMaterials(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, uint32_t frameSlotCount);
     ~VulkanToonMaterials();
 
     VulkanToonMaterials(const VulkanToonMaterials&) = delete;
@@ -54,7 +55,7 @@ class VulkanToonMaterials
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_pool = VK_NULL_HANDLE;
     std::vector<VkBuffer> m_buffers;
-    std::vector<VkDeviceMemory> m_memory;
+    std::vector<nvrhi::BufferHandle> m_handles;
     std::vector<void*> m_mapped;
     std::vector<VkDescriptorSet> m_sets;
 };
@@ -115,6 +116,7 @@ class VulkanToonPass : public IScenePass
   public:
     VulkanToonPass(
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
@@ -136,7 +138,7 @@ class VulkanToonPass : public IScenePass
   private:
     void CreateRenderPass(const SceneRenderTargets& targets);
     void CreateTargetSetLayout();
-    void CreateSampler();
+    void CreateSampler(nvrhi::IDevice* nvrhiDevice);
     void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout frameSetLayout, VkDescriptorSetLayout materialSetLayout);
     void CreateTargetSets(const SceneRenderTargets& targets);
     void CreateFramebuffers(const SceneRenderTargets& targets);
@@ -150,7 +152,7 @@ class VulkanToonPass : public IScenePass
     VkDescriptorSetLayout m_targetSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_targetPool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_targetSets;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     // Indexed by ToonPipelineIndex for the surfaces (opaque or transparent, culling back faces or
     // none), then the outline.

@@ -1,12 +1,10 @@
 #include "buffer.h"
 #include "memory_pool.h"
-
-#include <engine/core/log/log.h>
+#include "nvrhi_native.h"
 
 #include <cstddef>
 #include <cstring>
 #include <iterator>
-#include <utility>
 #include <vector>
 
 namespace me
@@ -112,39 +110,13 @@ VkVertexInputAttributeDescription GetPositionAttributeDescription()
 VulkanBuffer::VulkanBuffer(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
-    uint32_t graphicsQueueFamily,
-    VkQueue graphicsQueue)
-    : m_physicalDevice(physicalDevice),
-      m_device(device)
-{
-    const MeshData defaultMesh = CreateDefaultCubeMesh();
-    m_vertexCount = static_cast<uint32_t>(defaultMesh.vertices.size());
-    m_indexCount = static_cast<uint32_t>(defaultMesh.indices.size());
-
-    try
-    {
-        VulkanUploadBatch uploadBatch(device, graphicsQueueFamily, graphicsQueue);
-        UploadVertices(defaultMesh, uploadBatch);
-        UploadIndices(defaultMesh, uploadBatch);
-        UploadPositions(defaultMesh, uploadBatch);
-        uploadBatch.Flush();
-    }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
-    }
-    LOG_INFO("Vertex buffer created successfully");
-}
-
-VulkanBuffer::VulkanBuffer(
-    VkPhysicalDevice physicalDevice,
-    VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     const MeshData& meshData,
     VulkanUploadBatch& uploadBatch,
     bool deviceAddressable)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_vertexCount(static_cast<uint32_t>(meshData.vertices.size())),
       m_indexCount(static_cast<uint32_t>(meshData.indices.size())),
       m_deviceAddressable(deviceAddressable),
@@ -166,8 +138,7 @@ VulkanBuffer::VulkanBuffer(
                 static_cast<VkDeviceSize>(sizeof(Vertex) * meshData.vertices.size()),
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                 uploadBatch,
-                m_bindPoseBuffer,
-                m_bindPoseMemory);
+                m_bindPose);
         }
         if (m_skinned)
         {
@@ -177,8 +148,7 @@ VulkanBuffer::VulkanBuffer(
                 static_cast<VkDeviceSize>(sizeof(VertexSkin) * meshData.skin.size()),
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                 uploadBatch,
-                m_skinBuffer,
-                m_skinMemory);
+                m_skin);
         }
     }
     catch (...)
@@ -195,50 +165,28 @@ VulkanBuffer::~VulkanBuffer()
 
 void VulkanBuffer::DestroyHandles()
 {
-    for (auto [buffer, memory] : {std::pair<VkBuffer*, VulkanPooledMemory*>{&m_bindPoseBuffer, &m_bindPoseMemory},
-                                  std::pair<VkBuffer*, VulkanPooledMemory*>{&m_skinBuffer, &m_skinMemory},
-                                  std::pair<VkBuffer*, VulkanPooledMemory*>{&m_previousPositionBuffer, &m_previousPositionMemory}})
+    // The buffers go before the ranges they are bound to.
+    for (DeviceBuffer* buffer : {&m_bindPose, &m_skin, &m_previousPosition, &m_position, &m_index, &m_vertex})
     {
-        if (*buffer != VK_NULL_HANDLE)
-        {
-            vkDestroyBuffer(m_device, *buffer, nullptr);
-            *buffer = VK_NULL_HANDLE;
-        }
-        VulkanMemoryPool::Free(m_device, *memory);
+        buffer->handle = nullptr;
+        buffer->native = VK_NULL_HANDLE;
+        VulkanMemoryPool::Free(m_device, buffer->memory);
     }
-    if (m_positionBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, m_positionBuffer, nullptr);
-        m_positionBuffer = VK_NULL_HANDLE;
-    }
-    VulkanMemoryPool::Free(m_device, m_positionMemory);
-    if (m_indexBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, m_indexBuffer, nullptr);
-        m_indexBuffer = VK_NULL_HANDLE;
-    }
-    VulkanMemoryPool::Free(m_device, m_indexMemory);
-    if (m_vertexBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(m_device, m_vertexBuffer, nullptr);
-        m_vertexBuffer = VK_NULL_HANDLE;
-    }
-    VulkanMemoryPool::Free(m_device, m_vertexMemory);
 }
 
 VkBuffer VulkanBuffer::GetVertexHandle() const
 {
-    return m_vertexBuffer;
+    return m_vertex.native;
 }
 
 VkBuffer VulkanBuffer::GetIndexHandle() const
 {
-    return m_indexBuffer;
+    return m_index.native;
 }
 
 VkBuffer VulkanBuffer::GetPositionHandle() const
 {
-    return m_positionBuffer;
+    return m_position.native;
 }
 
 uint32_t VulkanBuffer::GetVertexCount() const
@@ -304,47 +252,56 @@ void VulkanBuffer::CreateBuffer(
 void VulkanBuffer::CreateDeviceLocalBuffer(
     VkDeviceSize size,
     VkBufferUsageFlags usage,
-    VkBuffer& buffer,
-    VulkanPooledMemory& memory,
+    DeviceBuffer& buffer,
     VkDeviceAddress* address)
 {
     if (address != nullptr)
     {
-        usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        // Read through its device address by the hit shading; NVRHI gives every buffer an address
+        // when the device has them.
+        usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     }
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = size;
-    bufferInfo.usage = usage;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    nvrhi::BufferDesc desc;
+    desc.byteSize = size;
+    desc.isVertexBuffer = (usage & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) != 0;
+    desc.isIndexBuffer = (usage & VK_BUFFER_USAGE_INDEX_BUFFER_BIT) != 0;
+    desc.canHaveUAVs = (usage & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) != 0;
+    desc.canHaveRawViews = desc.canHaveUAVs;
+    desc.isAccelStructBuildInput = (usage & VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR) != 0;
+    desc.isVirtual = true;
+    desc.debugName = "Mesh buffer";
+    buffer.handle = m_nvrhiDevice->createBuffer(desc);
+    if (!buffer.handle)
+    {
+        throw std::runtime_error("Failed to create Vulkan buffer");
+    }
+    buffer.native = ToNative<VkBuffer>(buffer.handle->getNativeObject(nvrhi::ObjectTypes::VK_Buffer));
 
-    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create Vulkan buffer");
-
-    // As CreateBuffer: both handles come back valid or neither does.
+    // As CreateBuffer: the buffer comes back whole or not at all.
     try
     {
         VkMemoryRequirements memoryRequirements{};
-        vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
-        memory = VulkanMemoryPool::Allocate(
+        vkGetBufferMemoryRequirements(m_device, buffer.native, &memoryRequirements);
+        buffer.memory = VulkanMemoryPool::Allocate(
             m_physicalDevice,
             m_device,
             memoryRequirements,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             address != nullptr ? VulkanMemoryPool::Resource::AddressableBuffer : VulkanMemoryPool::Resource::Buffer);
-        CheckVulkan(vkBindBufferMemory(m_device, buffer, memory.memory, memory.offset), "Failed to bind Vulkan buffer memory");
+        if (!m_nvrhiDevice->bindBufferMemory(buffer.handle, buffer.memory.heap, buffer.memory.offset))
+        {
+            throw std::runtime_error("Failed to bind Vulkan buffer memory");
+        }
         if (address != nullptr)
         {
-            VkBufferDeviceAddressInfo addressInfo{};
-            addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-            addressInfo.buffer = buffer;
-            *address = vkGetBufferDeviceAddress(m_device, &addressInfo);
+            *address = buffer.handle->getGpuVirtualAddress();
         }
     }
     catch (...)
     {
-        VulkanMemoryPool::Free(m_device, memory);
-        vkDestroyBuffer(m_device, buffer, nullptr);
-        buffer = VK_NULL_HANDLE;
+        buffer.handle = nullptr;
+        buffer.native = VK_NULL_HANDLE;
+        VulkanMemoryPool::Free(m_device, buffer.memory);
         throw;
     }
 }
@@ -372,8 +329,7 @@ void VulkanBuffer::UploadDeviceLocal(
     VkDeviceSize size,
     VkBufferUsageFlags usage,
     VulkanUploadBatch& uploadBatch,
-    VkBuffer& buffer,
-    VulkanPooledMemory& memory,
+    DeviceBuffer& buffer,
     VkDeviceAddress* address)
 {
     VkBufferCopy copyRegion{};
@@ -404,8 +360,8 @@ void VulkanBuffer::UploadDeviceLocal(
         vkUnmapMemory(m_device, stagingMemory);
     }
 
-    CreateDeviceLocalBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage, buffer, memory, address);
-    vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, buffer, 1, &copyRegion);
+    CreateDeviceLocalBuffer(size, usage, buffer, address);
+    vkCmdCopyBuffer(uploadBatch.GetCommandBuffer(), stagingBuffer, buffer.native, 1, &copyRegion);
 }
 
 void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch)
@@ -415,8 +371,7 @@ void VulkanBuffer::UploadVertices(const MeshData& meshData, VulkanUploadBatch& u
         static_cast<VkDeviceSize>(sizeof(Vertex) * meshData.vertices.size()),
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | (m_posed ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u),
         uploadBatch,
-        m_vertexBuffer,
-        m_vertexMemory,
+        m_vertex,
         m_deviceAddressable ? &m_vertexAddress : nullptr);
 }
 
@@ -427,8 +382,7 @@ void VulkanBuffer::UploadIndices(const MeshData& meshData, VulkanUploadBatch& up
         static_cast<VkDeviceSize>(sizeof(uint32_t) * meshData.indices.size()),
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
         uploadBatch,
-        m_indexBuffer,
-        m_indexMemory,
+        m_index,
         m_deviceAddressable ? &m_indexAddress : nullptr);
 }
 
@@ -448,8 +402,7 @@ void VulkanBuffer::UploadPositions(const MeshData& meshData, VulkanUploadBatch& 
             static_cast<VkDeviceSize>(sizeof(float) * positions.size()),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             uploadBatch,
-            m_previousPositionBuffer,
-            m_previousPositionMemory);
+            m_previousPosition);
     }
     UploadDeviceLocal(
         positions.data(),
@@ -457,8 +410,7 @@ void VulkanBuffer::UploadPositions(const MeshData& meshData, VulkanUploadBatch& 
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | (m_posed ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0u) |
             (m_posed && m_deviceAddressable ? VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0u),
         uploadBatch,
-        m_positionBuffer,
-        m_positionMemory,
+        m_position,
         m_posed && m_deviceAddressable ? &m_positionAddress : nullptr);
 }
 }

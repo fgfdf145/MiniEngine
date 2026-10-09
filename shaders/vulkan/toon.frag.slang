@@ -159,7 +159,7 @@ FragmentOutput main(FragmentInput input)
     }
 
     float3 toCamera = normalize(ubo.cameraWorldPosition.xyz - input.fragWorldPosition);
-    float4 base = toonBaseMap.SampleBias(input.fragTexCoord, MATERIAL_MIP_BIAS);
+    float4 base = toonBaseMap.SampleBias(toonBaseMapSampler, input.fragTexCoord, MATERIAL_MIP_BIAS);
     float faceMask = ToonFaceMask(material, input.fragTexCoord);
     float skinMask = ToonSkinMask(material, input.fragTexCoord);
     ToonLight light = ToonMainLight(toCamera);
@@ -200,7 +200,7 @@ FragmentOutput main(FragmentInput input)
     if (ToonHas(material, TOON_FEATURE_OCCLUSION))
     {
         float occlusion = clamp(
-            (toonOcclusionMap.SampleBias(input.fragTexCoord, MATERIAL_MIP_BIAS).g - material.occlusion.x) / max(material.occlusion.y - material.occlusion.x, 1e-4),
+            (toonOcclusionMap.SampleBias(toonOcclusionMapSampler, input.fragTexCoord, MATERIAL_MIP_BIAS).g - material.occlusion.x) / max(material.occlusion.y - material.occlusion.x, 1e-4),
             0.0, 1.0);
         ao = 1.0 + material.occlusion.z * (occlusion - 1.0);
     }
@@ -225,11 +225,11 @@ FragmentOutput main(FragmentInput input)
         {
             uv.x = midPoint - (uv.x - midPoint);
         }
-        float distanceField = toonFaceShadowGradientMap.SampleBias(uv, MATERIAL_MIP_BIAS).g + material.faceSdf.z;
+        float distanceField = toonFaceShadowGradientMap.SampleBias(toonFaceShadowGradientMapSampler, uv, MATERIAL_MIP_BIAS).g + material.faceSdf.z;
         float threshold = 1.0 - (lightOnFace.y * 0.5 + 0.5);
         float softness = material.faceSdf.w;
         float faceLit = smoothstep(threshold - softness, threshold + softness, distanceField);
-        float mask = faceMask * toonFaceShadowGradientMask.SampleBias(input.fragTexCoord1, MATERIAL_MIP_BIAS).g * material.faceSdf.y;
+        float mask = faceMask * toonFaceShadowGradientMask.SampleBias(toonFaceShadowGradientMaskSampler, input.fragTexCoord1, MATERIAL_MIP_BIAS).g * material.faceSdf.y;
         float faceShadow = lerp(1.0, faceLit, mask);
         cel = lerp(cel * faceShadow, faceShadow, faceMask * material.faceSdf2.x);
     }

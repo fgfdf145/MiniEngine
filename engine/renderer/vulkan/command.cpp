@@ -91,10 +91,18 @@ VkResult VulkanCommandContext::AcquireNextImage(VkSwapchainKHR swapchain, uint32
     return acquireResult;
 }
 
+nvrhi::ICommandList* VulkanCommandContext::GetCommandList() const
+{
+    return m_commandList;
+}
+
 void VulkanCommandContext::RecordCommandBuffer(uint32_t imageIndex, const std::function<void(VkCommandBuffer)>& recorder)
 {
     (void)imageIndex;
     m_commandList->open();
+    // Native passes change layouts NVRHI does not see; the NVRHI passes set their states themselves
+    // (NvrhiPassScope).
+    m_commandList->setEnableAutomaticBarriers(false);
     if (recorder)
     {
         const VkCommandBuffer commandBuffer = m_commandList->getNativeObject(nvrhi::ObjectTypes::VK_CommandBuffer);

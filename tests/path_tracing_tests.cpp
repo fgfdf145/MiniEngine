@@ -218,6 +218,93 @@ void SwitchesGateTheirTracedEffects()
     settings.rayTracing.sunShadows = false;
     Require(!ResolveRenderFeatures(settings, RayTracingGpu()).rayTracedShadowDenoise, "no traced sun shadow to filter");
 }
+
+void OfflineModeTurnsEverythingOn()
+{
+    PathTracingSettings settings;
+    settings.forwardSurfaces = false;
+    settings.forwardSurfacesHalfResolution = true;
+    settings.rayMedia = false;
+    settings.emissiveLights = false;
+    settings.lightGrid = false;
+    settings.reflectionGuides = false;
+    settings.accumulate = false;
+    settings.denoise = false;
+    settings.restir = true;
+    settings.maxBounces = 2;
+    Require(EffectivePathTracing(settings) == settings, "off: the settings as they are");
+
+    settings.offline.enabled = true;
+    settings.offline.samplesPerPixel = 8;
+    settings.offline.targetSamples = 1000;
+    settings.offline.maxBounces = 12;
+    settings.offline.lightCandidates = 24;
+    settings.offline.fireflyClamp = 0.0f;
+    const PathTracingSettings effective = EffectivePathTracing(settings);
+    Require(effective.forwardSurfaces && !effective.forwardSurfacesHalfResolution && effective.rayMedia && effective.emissiveLights &&
+                effective.lightGrid && effective.reflectionGuides,
+            "offline: every path tracing feature on");
+    Require(!effective.restir, "offline: the plain path tracer's unbiased accumulation");
+    Require(effective.accumulate && effective.denoise && effective.motionFrames == 1, "offline: still frames only");
+    Require(effective.maxBounces == 12 && effective.lightCandidates == 24 && effective.fireflyClamp == 0.0f, "offline: its own bounces and clamp");
+    Require(effective.maxFrames == 125, "offline: as many frames as the target takes (1000 / 8)");
+    Require(settings.maxBounces == 2 && settings.restir, "the real-time settings keep their values");
+
+    settings.offline.targetSamples = 1001;
+    Require(OfflineTargetFrames(settings.offline) == 126, "a target between frames rounds up");
+    settings.offline.targetSamples = 0;
+    Require(OfflineTargetFrames(settings.offline) == 0, "0: no target");
+    Require(EffectivePathTracing(settings).maxFrames == static_cast<int>(kOfflinePathTraceMaxFrames), "no target: the longest history");
+    settings.offline.samplesPerPixel = 0;
+    Require(OfflineSamplesPerPixel(settings.offline) == 1, "at least one sample a frame");
+}
+
+void OfflineHistoryIsFullFloat()
+{
+    PathTracingSettings settings = EffectivePathTracing(PathTracingSettings{.offline = {.enabled = true, .targetSamples = 0}});
+    Require(PathTraceMaxFrames(settings) == kOfflinePathTraceMaxFrames, "offline: full-float counts");
+    Require(PathTraceHistoryCap(settings, 0) == 1, "offline: nothing accumulates while moving");
+    Require(PathTraceHistoryCap(settings, 9999) == 10000, "offline: past the half float's 2048");
+    Require(PathTraceHistoryCap(settings, 1000000) == kOfflinePathTraceMaxFrames, "offline: up to its own limit");
+}
+
+void OfflineProgressCountsSamples()
+{
+    OfflinePathTracingSettings settings;
+    settings.enabled = true;
+    settings.samplesPerPixel = 4;
+    settings.targetSamples = 64;
+    OfflineProgress progress = OfflinePathTraceProgress(settings, 0);
+    Require(progress.samples == 4 && progress.targetSamples == 64 && !progress.done, "the first frame: one frame of samples");
+    progress = OfflinePathTraceProgress(settings, 15);
+    Require(progress.samples == 64 && !progress.done, "the sixteenth frame brings the last samples");
+    progress = OfflinePathTraceProgress(settings, 16);
+    Require(progress.samples == 64 && progress.done, "then the image is held");
+    settings.targetSamples = 0;
+    progress = OfflinePathTraceProgress(settings, 100000);
+    Require(!progress.done && progress.targetSamples == 0, "no target: never done");
+}
+
+void OfflineModeTracesTheDirectLight()
+{
+    RenderDebugSettings settings;
+    settings.pathTracing.enabled = true;
+    settings.pathTracing.restir = true;
+    settings.pathTracing.offline.enabled = true;
+    RenderCapabilities capabilities = RayTracingGpu();
+    const RenderFeatures features = ResolveRenderFeatures(settings, capabilities);
+    Require(features.plainPathTracing && features.offlinePathTracing && !features.restirPt, "offline: the plain path tracer, not ReSTIR");
+    Require(!features.rayTracedSunShadows && !features.rayTracedLocalShadows && !features.rayTracedShadowDenoise, "offline: no traced shadows");
+    Require(features.pathTraceAccumulate && features.pathTraceDenoise, "offline: its own filter without ray reconstruction");
+
+    capabilities.dlss = true;
+    capabilities.dlssRayReconstruction = true;
+    const RenderFeatures rayReconstruction = ResolveRenderFeatures(settings, capabilities);
+    Require(rayReconstruction.pathTraceAccumulate && !rayReconstruction.pathTraceDenoise, "offline + RR: accumulates, RR denoises");
+
+    settings.pathTracing.enabled = false;
+    Require(!ResolveRenderFeatures(settings, capabilities).offlinePathTracing, "the offline mode needs path tracing on");
+}
 }
 
 int main()
@@ -236,6 +323,10 @@ int main()
         ReflectionsNeedTaaHistory();
         RayReconstructionDenoisesItself();
         SwitchesGateTheirTracedEffects();
+        OfflineModeTurnsEverythingOn();
+        OfflineHistoryIsFullFloat();
+        OfflineProgressCountsSamples();
+        OfflineModeTracesTheDirectLight();
     }
     catch (const std::exception& error)
     {

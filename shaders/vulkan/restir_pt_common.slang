@@ -654,7 +654,7 @@ float3 PtSkyRadiance(float3 direction)
     {
         return SceneAmbientAlong(direction);
     }
-    return prefilteredEnvironment.SampleLevel(direction, 0.0).rgb + SceneLightsAmbientAlong(direction);
+    return prefilteredEnvironment.SampleLevel(prefilteredEnvironmentSampler, direction, 0.0).rgb + SceneLightsAmbientAlong(direction);
 }
 
 float3 PtRayOrigin(PtSurface s, float3 direction)

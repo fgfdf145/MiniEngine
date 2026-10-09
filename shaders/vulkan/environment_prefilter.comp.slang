@@ -2,7 +2,8 @@
 
 // One mip of the prefiltered cube: GGX importance sampling with N = V = R (Karis 2013), each
 // sample read from the radiance cube at the mip whose texel solid angle matches its own.
-[[vk::binding(1, 1)]] SamplerCube radianceCube;
+[[vk::binding(1, 1)]] TextureCube radianceCube;
+[[vk::binding(65, 1)]] SamplerState radianceCubeSampler;
 [[vk::binding(2, 1)]] [[vk::image_format("rgba16f")]] RWTexture2DArray<float4> prefilteredOut;
 
 // Must match PrefilterConstants in engine/renderer/vulkan/environment_probe.cpp.
@@ -52,7 +53,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float3 color;
     if (constants.roughness <= 0.0)
     {
-        color = radianceCube.SampleLevel(N, 0.0).rgb;
+        color = radianceCube.SampleLevel(radianceCubeSampler, N, 0.0).rgb;
     }
     else
     {
@@ -74,7 +75,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
                 float pdf = D * 0.25;
                 float sampleSolidAngle = 1.0 / (float(SAMPLE_COUNT) * pdf + 1e-4);
                 float lod = clamp(0.5 * log2(sampleSolidAngle / texelSolidAngle), 0.0, RADIANCE_CUBE_MIP_COUNT - 1.0);
-                sum += radianceCube.SampleLevel(L, lod).rgb * NdL;
+                sum += radianceCube.SampleLevel(radianceCubeSampler, L, lod).rgb * NdL;
                 weight += NdL;
             }
         }

@@ -7,8 +7,22 @@ Runs each case three times: A twice (the noise floor) and B once, then compares 
   AB_MODE=exe: A is a baseline build in out/baseline_src (a git worktree of the commit before the
                change, built with the same preset), B the current build.
 usage: python tools/render_ab/ab.py [case names...]   (all cases when none given)
-env: AB_EXE (default the Debug app), AB_FRAMES (default 90), AB_ASSETS (default the main checkout's
-     assets), AB_OUT (default out/render_ab)
+env: AB_PRESET (default vs2026-x64; a single-config preset such as linux-debug has no Debug folder),
+     AB_BUILD (default out/build/<preset>: the build B runs, its app and its shaders),
+     AB_BASELINE_BUILD (default out/baseline_src/out/build/<preset>: AB_MODE=exe's A build),
+     AB_EXE (default AB_BUILD's Debug app), AB_FRAMES (default 90), AB_SIZE (default 1280x720),
+     AB_ASSETS (default the main checkout's assets), AB_OUT (default out/render_ab),
+     AB_REUSE_A (an earlier run's AB_OUT: its A captures stand in for this run's, so only B runs; for
+     AB_MODE=exe against the same baseline, AB_SIZE and AB_FRAMES), AB_B_RUNS (default 2: B's runs),
+     AB_AUTO_EXPOSURE (1: auto exposure and white balance on)
+How many frames a run draws before --wait-for-scene starts counting depends on when the render thread
+finishes loading, one or two either way, and the temporal passes (TAA's jitter and history, DDGI)
+carry that into the capture: two runs of one exe differ now and then. So A runs twice and B
+AB_B_RUNS times, and "same" reports a pair of an A and a B capture that agree to the pixel, which
+proves the change keeps the image; without one, compare B's best pair against the floor (A against A).
+The fixture_* cases need only the repository's render scenes (tests/fixtures/render_scenes, installed
+into AB_ASSETS by scripts/install-render-scenes.sh), so they run where the R34 and Yuki do not exist,
+for example on lavapipe at a small AB_SIZE.
 Test scenes (tools/render_ab/scenes) have the atmosphere's ground plane off: on the rolling road it
 z-fights the road and the TAA jitter phase moves the patches from run to run.
 """
@@ -25,23 +39,34 @@ from PIL import Image
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 OUT = os.environ.get("AB_OUT") or os.path.join(ROOT, "out", "render_ab")
 SCENES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenes")
-EXE = os.environ.get("AB_EXE", os.path.join(ROOT, "out", "build", "vs2026-x64", "app", "Debug", "miniengine_app.exe"))
+PRESET = os.environ.get("AB_PRESET", "vs2026-x64")
+# The Visual Studio generator puts each configuration in a folder of its own; Ninja presets do not.
+APP = os.path.join("app", "Debug", "miniengine_app.exe") if PRESET.startswith("vs") else os.path.join(
+    "app", "miniengine_app.exe" if os.name == "nt" else "miniengine_app")
+BUILD = os.environ.get("AB_BUILD") or os.path.join(ROOT, "out", "build", PRESET)
+EXE = os.environ.get("AB_EXE", os.path.join(BUILD, APP))
 ASSETS = os.environ.get("AB_ASSETS", "C:/Project/MiniEngine/assets")
 FRAMES = int(os.environ.get("AB_FRAMES", "90"))
+SIZE = [int(v) for v in os.environ.get("AB_SIZE", "1280x720").split("x")]
+FIXTURES = os.path.join(ROOT, "tests", "fixtures", "render_scenes", "scenes")
 SHADERS = {
     "glsl": os.environ.get("AB_REF_SPV") or os.path.join(ROOT, "out", "slang", "ref_spv"),
-    "slang": os.path.join(ROOT, "out", "build", "vs2026-x64", "shaders"),
+    "slang": os.path.join(BUILD, "shaders"),
 }
-# AB_MODE=exe: A is the frozen baseline build (out/baseline_src, the last commit before the NVRHI work)
-# with its own shaders, B the current build.
-BASELINE = os.path.join(ROOT, "out", "baseline_src", "out", "build", "vs2026-x64")
+# AB_MODE=exe: A is the frozen baseline build (out/baseline_src, a worktree of the commit before the
+# change, built with the same preset) with its own shaders, B the current build.
+BASELINE = os.environ.get("AB_BASELINE_BUILD") or os.path.join(ROOT, "out", "baseline_src", "out", "build", PRESET)
 EXES = {
     "glsl": (EXE, SHADERS["glsl"]),
     "slang": (EXE, SHADERS["slang"]),
-    "base": (os.path.join(BASELINE, "app", "Debug", "miniengine_app.exe"), os.path.join(BASELINE, "shaders")),
+    "base": (os.path.join(BASELINE, APP), os.path.join(BASELINE, "shaders")),
     "cur": (EXE, SHADERS["slang"]),
 }
 MODE = os.environ.get("AB_MODE", "shaders")
+# AB_AUTO_EXPOSURE=1: auto exposure and white balance meter the exposure histogram, so the captures
+# test it too (the pinned EV keeps it out of them otherwise).
+AUTO_EXPOSURE = "true" if os.environ.get("AB_AUTO_EXPOSURE") == "1" else "false"
+REUSE_A = os.environ.get("AB_REUSE_A")
 A, B = ("base", "cur") if MODE == "exe" else ("glsl", "slang")
 
 ROLLING_ROAD_CAMERA = {"position": [4.0, 1.4, -4.0], "yaw": -123.7, "pitch": -4.0}
@@ -62,6 +87,8 @@ CASES = {
     # Deferred + forward, RT effects (default), clouds, fog, toon, skinning, TAA, bloom.
     "road_clouds": ("rolling_road_sky.yaml", ROLLING_ROAD_CAMERA, 12.0, RT_ON, []),
     "road_rt": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, RT_ON, []),
+    "road_rt_nogi": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {**RT_ON, "gi": {"enabled": False}}, []),
+    "road_gi_notemporal": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {**RT_ON, "gbuffer_view": 13, "gi": {"temporal_filter": False}}, []),
     "road_ddgi": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, DDGI, []),
     "road_ddgi_view": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {"gbuffer_view": 15}, []),
     "road_ddgi_ray": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {"gbuffer_view": 14}, []),
@@ -78,6 +105,9 @@ CASES = {
     "materials_rt": ("materials.yaml", MATERIALS_CAMERA, 9.0, RT_ON, []),
     "materials_raster": ("materials.yaml", MATERIALS_CAMERA, 9.0, RT_OFF, []),
     "materials_pt": ("materials.yaml", MATERIALS_CAMERA, 9.0, PT_ON, []),
+    # KHR_materials_transmission: a scaled-down GTA water surface in front of the spheres (the
+    # transmission copy, the translucent forward pass).
+    "transmission_rt": ("transmission.yaml", MATERIALS_CAMERA, 9.0, RT_ON, []),
     # DLSS super resolution, and ray reconstruction (dlss_rr_guides.comp, dlss_motion_vectors.comp).
     "road_dlss": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {**RT_ON, "dlss_mode": 2}, []),
     "road_dlss_rr": ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {**RT_ON, "dlss_mode": 2, "dlss_ray_reconstruction": True}, []),
@@ -87,6 +117,22 @@ CASES = {
     "emissive_pt": ("emissive_test.yaml", EMISSIVE_CAMERA, 5.0, PT_ON, []),
     "emissive_restir": ("emissive_test.yaml", EMISSIVE_CAMERA, 5.0, PT_RESTIR, []),
 }
+# The repository's own render scenes (absolute paths: os.path.join keeps them as they are).
+CORNELL_CAMERA = {"position": [0.0, 0.0, -4.0], "yaw": -90.0, "pitch": 0.0}
+SPHERES_CAMERA = {"position": [0.0, 0.6, 3.0], "yaw": -90.0, "pitch": -8.0}
+TRACK_CAMERA = {"position": [0.0, 1.6, 30.0], "yaw": -90.0, "pitch": -3.0}
+CASES.update({
+    "fixture_cornell_rt": (os.path.join(FIXTURES, "cornell_box.yaml"), CORNELL_CAMERA, 9.0, RT_ON, []),
+    "fixture_cornell_raster": (os.path.join(FIXTURES, "cornell_box.yaml"), CORNELL_CAMERA, 9.0, RT_OFF, []),
+    "fixture_cornell_ddgi": (os.path.join(FIXTURES, "cornell_box.yaml"), CORNELL_CAMERA, 9.0, DDGI, []),
+    "fixture_spheres_sun": (os.path.join(FIXTURES, "smooth_spheres_sun.yaml"), SPHERES_CAMERA, 12.0, RT_ON, []),
+    "fixture_spheres_lamp": (os.path.join(FIXTURES, "smooth_spheres_lamp_sized.yaml"), SPHERES_CAMERA, 6.0, RT_OFF, []),
+    "fixture_area_light": (os.path.join(FIXTURES, "area_light_floor.yaml"), MATERIALS_CAMERA, 6.0, RT_OFF, []),
+    "fixture_iridescence": (os.path.join(FIXTURES, "iridescence.yaml"), SPHERES_CAMERA, 12.0, RT_OFF, []),
+    "fixture_texture_transforms": (os.path.join(FIXTURES, "texture_transforms_unlit.yaml"), SPHERES_CAMERA, 12.0, RT_OFF, []),
+    "fixture_track_rt": (os.path.join(FIXTURES, "ddgi_track.yaml"), TRACK_CAMERA, 12.0, RT_ON, []),
+    "fixture_track_pt": (os.path.join(FIXTURES, "ddgi_track.yaml"), TRACK_CAMERA, 12.0, PT_ON, []),
+})
 for _view in (1, 2, 4, 5, 7, 13, 14, 15, 17, 18):
     CASES[f"road_view{_view}"] = ("rolling_road_fog.yaml", ROLLING_ROAD_CAMERA, 12.0, {"gbuffer_view": _view, **NO_DDGI}, [])
 
@@ -95,7 +141,7 @@ def write_state(case, scene, camera, ev, render, path):
     lines = [
         "version: 1",
         f"scene: {os.path.join(SCENES, scene).replace(os.sep, '/')}",
-        "viewport_size: [1280, 720]",
+        f"viewport_size: [{SIZE[0]}, {SIZE[1]}]",
         "camera:",
         f"  position: [{camera['position'][0]}, {camera['position'][1]}, {camera['position'][2]}]",
         f"  yaw_degrees: {camera['yaw']}",
@@ -103,9 +149,9 @@ def write_state(case, scene, camera, ev, render, path):
         "  fov_degrees: 60",
         f"  exposure_ev100: {ev}",
         "  auto_exposure:",
-        "    enabled: false",
+        f"    enabled: {AUTO_EXPOSURE}",
         "  auto_white_balance:",
-        "    enabled: false",
+        f"    enabled: {AUTO_EXPOSURE}",
         "render_debug:",
     ]
     for key, value in render.items():
@@ -143,6 +189,14 @@ def run(case, variant, tag):
     return capture
 
 
+def run_a(case, tag):
+    if REUSE_A:
+        earlier = os.path.join(REUSE_A, f"{case}_{tag}.png")
+        if os.path.exists(earlier):
+            return earlier
+    return run(case, A, tag)
+
+
 def diff(a, b):
     x = np.asarray(Image.open(a).convert("RGB"), dtype=np.int16)
     y = np.asarray(Image.open(b).convert("RGB"), dtype=np.int16)
@@ -156,19 +210,29 @@ def diff(a, b):
     }, d
 
 
+B_RUNS = int(os.environ.get("AB_B_RUNS", "2"))
+
+
 def main():
     cases = sys.argv[1:] or list(CASES)
     results = {}
     for case in cases:
-        a = run(case, A, A)
-        a2 = run(case, A, A + "2")
-        b = run(case, B, B)
-        floor, _ = diff(a, a2)
-        delta, d = diff(a, b)
+        a_runs = [run_a(case, A), run_a(case, A + "2")]
+        b_runs = [run(case, B, B if index == 0 else f"{B}{index + 1}") for index in range(B_RUNS)]
+        floor, _ = diff(a_runs[0], a_runs[1])
+        # The closest A and B captures: identical ones say the change keeps the image.
+        best = None
+        for a in a_runs:
+            for b in b_runs:
+                delta, d = diff(a, b)
+                if best is None or delta["mean"] < best[0]["mean"]:
+                    best = (delta, d)
+        delta, d = best
         heat = np.clip(d.max(axis=2) * 8, 0, 255).astype(np.uint8)
         Image.fromarray(heat).save(os.path.join(OUT, f"{case}_diff.png"))
-        results[case] = {"floor": floor, "slang": delta}
-        print(f"{case:18s} floor mean {floor['mean']:.3f} max {floor['max']:3d} >2 {floor['over2']:.2f}%   "
+        same = delta["max"] == 0
+        results[case] = {"floor": floor, B: delta, "same": same}
+        print(f"{case:20s} {'same' if same else 'DIFF'}  floor mean {floor['mean']:.3f} max {floor['max']:3d} >2 {floor['over2']:.2f}%   "
               f"{B} mean {delta['mean']:.3f} max {delta['max']:3d} >2 {delta['over2']:.2f}% >8 {delta['over8']:.2f}%",
               flush=True)
     json.dump(results, open(os.path.join(OUT, "results.json"), "w"), indent=1)

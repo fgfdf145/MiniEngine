@@ -175,6 +175,10 @@ struct RendererSharedState
     VideoRecordingIndicator quadRecordingIndicator;
     // What the quad cameras follow, by name: the driven car, else the selected model; empty for none.
     std::string quadRecordingTarget;
+    // The Photo Mode window's settings (copied from the editor every frame) and the photo as the
+    // backend last saw it.
+    PhotoModeSettings photoMode;
+    PhotoStatus photoStatus;
     std::deque<PendingModelLoad> pendingModelLoads;
     std::optional<std::string> pendingScenePath;
     std::filesystem::path engineSettingsPath;
@@ -190,6 +194,10 @@ struct RendererSharedState
     // whose ray-traced scene (DDGI's) is still building. --wait-for-scene counts no frames until it
     // is done.
     bool rayScenePending = false;
+    // Bumped by a --wait-for-scene run when its frames start to count: the render thread starts every
+    // temporal effect over from that frame (VulkanRenderer::RestartTemporalEffects), so the frames
+    // drawn while loading, as many as the loading's timing makes, leave nothing in the capture.
+    uint32_t temporalRestart = 0;
     // The render thread's last measurement of GPU memory, which world streaming fits the scene in.
     GpuMemoryReport gpuMemory;
     RenderExtent requestedViewportExtent{};

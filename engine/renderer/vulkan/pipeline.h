@@ -3,9 +3,13 @@
 #include "common.h"
 
 #include <filesystem>
+#include <vector>
 
 namespace me
 {
+
+// A SPIR-V file's bytes; throws when it cannot be opened.
+std::vector<char> ReadSpirvFile(const std::filesystem::path& path);
 
 // RAII wrapper around a VkShaderModule loaded from a SPIR-V file. Modules are only needed while
 // vkCreateGraphicsPipelines runs, so VulkanPipelineSet loads each stage once, builds every

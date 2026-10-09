@@ -2,6 +2,7 @@
 
 #include "buffer.h"
 #include "compute_pass_util.h"
+#include "sampler_settings.h"
 
 #include <engine/core/log/log.h>
 
@@ -27,7 +28,10 @@ struct RayMaterialConstants
     glm::vec4 emissiveAndCutoff{0.0f};
     // x output index, y alpha mode, z flags (RAY_MATERIAL_*), w transmission as float bits.
     glm::uvec4 params{0u};
+    // RayMaterial::samplers: the slot's textures' indices in the sampler table.
+    glm::uvec4 samplers{0u};
 };
+static_assert(sizeof(RayMaterialConstants) <= 128, "push constants");
 
 // Must match the RAY_MATERIAL_* flags in shaders/vulkan/ray_tracing_common.glsl.
 constexpr uint32_t kRayMaterialDoubleSided = 1u;
@@ -55,8 +59,9 @@ static_assert(offsetof(Vertex, color) == 3 * sizeof(float) && offsetof(Vertex, t
                   offsetof(Vertex, texCoord1) == 15 * sizeof(float),
               "RAY_VERTEX_* offsets in ray_hit_common.glsl must match Vertex");
 
-// Matches RayMaterial in ray_tracing_common.glsl: albedo and coverage, emission and flags.
-constexpr VkDeviceSize kRayMaterialBytes = 32;
+// Matches RayMaterial in ray_tracing_common.slang: albedo and coverage, emission and flags, the
+// textures' samplers.
+constexpr VkDeviceSize kRayMaterialBytes = 48;
 
 // Every buffer holds at least one element of the largest kind (an instance), so a descriptor always
 // names something and the empty scene's dummy instance fits.
@@ -87,11 +92,13 @@ VulkanRayScene::VulkanRayScene(
     uint32_t frameCount,
     bool hardwareRayTracing,
     TextureDescriptorBinding defaultTexture,
+    std::vector<VkSampler> samplerTable,
     bool updateUnusedWhilePending)
     : m_physicalDevice(physicalDevice),
       m_device(device),
       m_frameCount(frameCount),
       m_defaultTexture(defaultTexture),
+      m_samplerTable(std::move(samplerTable)),
       m_updateUnusedWhilePending(hardwareRayTracing && updateUnusedWhilePending)
 {
     try
@@ -113,30 +120,45 @@ VulkanRayScene::VulkanRayScene(
         m_setLayout = CreateComputeSetLayout(m_device, types, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
         if (m_acceleration)
         {
+            if (m_samplerTable.size() != VulkanSamplerCache::kSamplerCount)
+            {
+                throw std::runtime_error("The ray texture table needs every material sampler");
+            }
+            for (uint32_t index = 0; index < m_samplerTable.size(); ++index)
+            {
+                m_samplerIndices.emplace(m_samplerTable[index], index);
+            }
             // The texture table: as many entries as the device lets one stage see, less a margin for
             // the frame set's own samplers; each content allocates what its slots need.
             VkPhysicalDeviceProperties properties{};
             vkGetPhysicalDeviceProperties(m_physicalDevice, &properties);
             const uint32_t limit = std::min(properties.limits.maxPerStageDescriptorSampledImages, properties.limits.maxDescriptorSetSampledImages);
             m_textureLimit = std::min<uint32_t>(limit > 256u ? limit - 256u : limit / 2u, 1u << 20);
-            // A new draw's textures go into slots no frame in flight reads, while the frames read others.
-            const VkDescriptorBindingFlags bindingFlags =
+            // Binding 0 the sampler table, written once per set; binding 1 the textures (variable
+            // count, so the last binding). A new draw's textures go into slots no frame in flight
+            // reads, while the frames read others.
+            const std::array<VkDescriptorBindingFlags, 2> bindingFlags = {
+                0u,
                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
-                (m_updateUnusedWhilePending ? VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT : 0u);
+                    (m_updateUnusedWhilePending ? VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT : 0u)};
             VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{};
             flagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-            flagsInfo.bindingCount = 1;
-            flagsInfo.pBindingFlags = &bindingFlags;
-            VkDescriptorSetLayoutBinding binding{};
-            binding.binding = 0;
-            binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            binding.descriptorCount = m_textureLimit;
-            binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            flagsInfo.bindingCount = static_cast<uint32_t>(bindingFlags.size());
+            flagsInfo.pBindingFlags = bindingFlags.data();
+            std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+            bindings[0].binding = 0;
+            bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+            bindings[0].descriptorCount = static_cast<uint32_t>(m_samplerTable.size());
+            bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            bindings[1].binding = 1;
+            bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            bindings[1].descriptorCount = m_textureLimit;
+            bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
             VkDescriptorSetLayoutCreateInfo layoutInfo{};
             layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
             layoutInfo.pNext = &flagsInfo;
-            layoutInfo.bindingCount = 1;
-            layoutInfo.pBindings = &binding;
+            layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+            layoutInfo.pBindings = bindings.data();
             CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_textureSetLayout), "Failed to create the ray texture table layout");
         }
 
@@ -295,6 +317,7 @@ void VulkanRayScene::SetContent(
             slot.pool = allocation.pool;
         }
         slot.source = source;
+        slot.samplers = SamplerIndices(source);
         rewrite.push_back(source.slot);
     }
     for (const uint32_t index : rewrite)
@@ -332,12 +355,14 @@ void VulkanRayScene::SetContent(
             // every slot again, which took tens of milliseconds of a frame while a map streamed in.
             m_textureCapacity = std::min<uint32_t>(std::max(capacity + capacity / 4u, 65536u), m_textureLimit / kRayTexturesPerSlot);
             const uint32_t count = m_textureCapacity * kRayTexturesPerSlot;
-            const VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, count};
+            const std::array<VkDescriptorPoolSize, 2> poolSizes = {
+                VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, static_cast<uint32_t>(m_samplerTable.size())},
+                VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, count}};
             VkDescriptorPoolCreateInfo poolInfo{};
             poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
             poolInfo.maxSets = 1;
-            poolInfo.poolSizeCount = 1;
-            poolInfo.pPoolSizes = &poolSize;
+            poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+            poolInfo.pPoolSizes = poolSizes.data();
             CheckVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_texturePool), "Failed to create the ray texture table pool");
             VkDescriptorSetVariableDescriptorCountAllocateInfo variableInfo{};
             variableInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
@@ -350,7 +375,13 @@ void VulkanRayScene::SetContent(
             allocateInfo.descriptorSetCount = 1;
             allocateInfo.pSetLayouts = &m_textureSetLayout;
             CheckVulkan(vkAllocateDescriptorSets(m_device, &allocateInfo, &m_textureSet), "Failed to allocate the ray texture table");
-            infos.reserve(static_cast<size_t>(count));
+            infos.reserve(m_samplerTable.size() + static_cast<size_t>(count));
+            for (const VkSampler sampler : m_samplerTable)
+            {
+                infos.push_back(VkDescriptorImageInfo{sampler, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED});
+            }
+            writes.push_back(ImageWrite(m_textureSet, 0, VK_DESCRIPTOR_TYPE_SAMPLER, infos.data()));
+            writes.back().descriptorCount = static_cast<uint32_t>(m_samplerTable.size());
             for (uint32_t index = 0; index < m_textureCapacity; ++index)
             {
                 const bool held = index < m_materialSlots.size() && m_materialSlots[index].set != VK_NULL_HANDLE;
@@ -904,6 +935,7 @@ void VulkanRayScene::Record(VkCommandBuffer commandBuffer, uint32_t frameSlot, b
                     (submesh.alphaMode == MaterialAlphaMode::Blend ? kRayMaterialAlphaBlend : 0u) | (transmission > 0.0f ? kRayMaterialTransmission : 0u) |
                     (submesh.normal.imageView != VK_NULL_HANDLE ? kRayMaterialNormalMap : 0u),
                 transmissionBits);
+            constants.samplers = glm::uvec4(m_materialSlots[index].samplers, 0u, 0u);
             const std::array<VkDescriptorSet, 2> materialSets = {m_materialSlots[index].set, m_materialOutputSet};
             vkCmdBindDescriptorSets(
                 commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_materialPipelineLayout, 0, static_cast<uint32_t>(materialSets.size()),
@@ -1011,7 +1043,8 @@ void VulkanRayScene::WriteTextureSlot(
     std::vector<VkDescriptorImageInfo>& infos,
     std::vector<VkWriteDescriptorSet>& writes) const
 {
-    // The order of kRayTexturesPerSlot (RAY_TEXTURE_* in ray_hit_common.glsl).
+    // The order of kRayTexturesPerSlot (RAY_TEXTURE_* in ray_hit_common.slang); the samplers are the
+    // slot's RayMaterial's (SamplerIndices).
     using Bindings = std::array<TextureDescriptorBinding, kRayTexturesPerSlot>;
     const Bindings bindings = source != nullptr
                                   ? Bindings{source->baseColor, source->metallic, source->roughness, source->emissive, source->normal}
@@ -1021,17 +1054,39 @@ void VulkanRayScene::WriteTextureSlot(
     for (uint32_t index = 0; index < kRayTexturesPerSlot; ++index)
     {
         const TextureDescriptorBinding& binding = bindings[index].imageView != VK_NULL_HANDLE ? bindings[index] : m_defaultTexture;
-        infos.push_back(VkDescriptorImageInfo{binding.sampler, binding.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        infos.push_back(VkDescriptorImageInfo{VK_NULL_HANDLE, binding.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
     }
     VkWriteDescriptorSet write{};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet = m_textureSet;
-    write.dstBinding = 0;
+    write.dstBinding = 1;
     write.dstArrayElement = slot * kRayTexturesPerSlot;
     write.descriptorCount = kRayTexturesPerSlot;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     write.pImageInfo = &infos[first];
     writes.push_back(write);
+}
+
+glm::uvec2 VulkanRayScene::SamplerIndices(const RayMaterialSource& source) const
+{
+    if (m_samplerTable.empty())
+    {
+        return glm::uvec2(0u);
+    }
+    // WriteTextureSlot's textures: the default one where the source has none.
+    const auto indexOf = [this](const TextureDescriptorBinding& binding)
+    {
+        const VkSampler sampler = binding.imageView != VK_NULL_HANDLE ? binding.sampler : m_defaultTexture.sampler;
+        const auto found = m_samplerIndices.find(sampler);
+        if (found == m_samplerIndices.end())
+        {
+            throw std::runtime_error("A ray texture's sampler is not in the sampler table");
+        }
+        return found->second;
+    };
+    return glm::uvec2(
+        indexOf(source.baseColor) | (indexOf(source.metallic) << 8u) | (indexOf(source.roughness) << 16u) | (indexOf(source.emissive) << 24u),
+        indexOf(source.normal));
 }
 
 size_t VulkanRayScene::GetSubmeshCount() const
@@ -1085,11 +1140,12 @@ std::vector<ReferenceMaterial> VulkanRayScene::ReadMaterials() const
         return materials;
     }
     const auto* values = static_cast<const glm::vec4*>(m_materials.mapped);
+    constexpr size_t kStride = kRayMaterialBytes / sizeof(glm::vec4);
     materials.resize(m_materialCapacity);
     for (size_t index = 0; index < materials.size(); ++index)
     {
-        const glm::vec4 albedoCoverage = values[index * 2];
-        const glm::vec4 emissionFlags = values[index * 2 + 1];
+        const glm::vec4 albedoCoverage = values[index * kStride];
+        const glm::vec4 emissionFlags = values[index * kStride + 1];
         uint32_t flags = 0;
         std::memcpy(&flags, &emissionFlags.w, sizeof(flags));
         materials[index].albedo = glm::vec3(albedoCoverage);

@@ -28,17 +28,11 @@ VkVertexInputAttributeDescription GetPreviousPositionAttributeDescription();
 VkVertexInputBindingDescription GetPositionBindingDescription();
 VkVertexInputAttributeDescription GetPositionAttributeDescription();
 
+// A mesh's device-local buffers, made by NVRHI and bound to ranges of VulkanMemoryPool's heaps. The
+// recording code is still Vulkan's, so the getters hand out the native handles.
 class VulkanBuffer
 {
   public:
-    // Self-contained: builds a one-shot internal upload batch and flushes it immediately.
-    // Use for one-off buffers outside of bulk model loading.
-    VulkanBuffer(
-        VkPhysicalDevice physicalDevice,
-        VkDevice device,
-        uint32_t graphicsQueueFamily,
-        VkQueue graphicsQueue);
-
     // Records this buffer's vertex/index upload into a caller-supplied batch instead of
     // submitting and waiting on its own. The caller must call uploadBatch.Flush() (directly or
     // via destruction) before the buffers are used, and keep the batch alive until then.
@@ -48,6 +42,7 @@ class VulkanBuffer
     VulkanBuffer(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         const MeshData& meshData,
         VulkanUploadBatch& uploadBatch,
         bool deviceAddressable = false);
@@ -79,17 +74,38 @@ class VulkanBuffer
     }
     VkBuffer GetBindPoseHandle() const
     {
-        return m_bindPoseBuffer;
+        return m_bindPose.native;
     }
     VkBuffer GetSkinHandle() const
     {
-        return m_skinBuffer;
+        return m_skin.native;
     }
     // Where each vertex was last frame, before the entity's own motion: a posed mesh's last pose (the
     // skinning pass keeps it), anyone else's position stream.
     VkBuffer GetPreviousPositionHandle() const
     {
-        return m_posed ? m_previousPositionBuffer : m_positionBuffer;
+        return m_posed ? m_previousPosition.native : m_position.native;
+    }
+    // The same buffers as NVRHI's, for the passes that bind them through NVRHI (the skinning pass).
+    nvrhi::IBuffer* GetVertexBuffer() const
+    {
+        return m_vertex.handle;
+    }
+    nvrhi::IBuffer* GetPositionBuffer() const
+    {
+        return m_position.handle;
+    }
+    nvrhi::IBuffer* GetBindPoseBuffer() const
+    {
+        return m_bindPose.handle;
+    }
+    nvrhi::IBuffer* GetSkinBuffer() const
+    {
+        return m_skin.handle;
+    }
+    nvrhi::IBuffer* GetPreviousPositionBuffer() const
+    {
+        return m_posed ? m_previousPosition.handle : m_position.handle;
     }
     // A posed, device-addressable mesh's position stream, which its ray tracing bottom level is
     // built and refitted from (VulkanRayAcceleration); 0 otherwise.
@@ -99,11 +115,21 @@ class VulkanBuffer
     }
 
   private:
-    // Shared by the destructor and the constructors' unwind path. Skips null handles.
+    // One device-local buffer: NVRHI's, created virtual and bound to a pooled range.
+    struct DeviceBuffer
+    {
+        nvrhi::BufferHandle handle;
+        VkBuffer native = VK_NULL_HANDLE;
+        VulkanPooledMemory memory;
+    };
+
+    // Shared by the destructor and the constructors' unwind path. Skips empty buffers.
     void DestroyHandles();
+    // A host-visible staging buffer of its own, for a batch that cannot stage (native until the
+    // upload batch moves to NVRHI).
     void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory);
-    // A device-local buffer bound to a range of VulkanMemoryPool's shared memory.
-    void CreateDeviceLocalBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VulkanPooledMemory& memory, VkDeviceAddress* address = nullptr);
+    // usage is the buffer's Vulkan usage beyond the transfers, which NVRHI gives every buffer.
+    void CreateDeviceLocalBuffer(VkDeviceSize size, VkBufferUsageFlags usage, DeviceBuffer& buffer, VkDeviceAddress* address = nullptr);
     uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
     void UploadVertices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
     void UploadIndices(const MeshData& meshData, VulkanUploadBatch& uploadBatch);
@@ -114,12 +140,12 @@ class VulkanBuffer
         VkDeviceSize size,
         VkBufferUsageFlags usage,
         VulkanUploadBatch& uploadBatch,
-        VkBuffer& buffer,
-        VulkanPooledMemory& memory,
+        DeviceBuffer& buffer,
         VkDeviceAddress* address = nullptr);
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     // Only the counts outlive the upload. The mesh itself is owned by the model cache and
     // staged straight from there, so the GPU buffers don't shadow a second host-side copy.
     uint32_t m_vertexCount = 0;
@@ -127,22 +153,16 @@ class VulkanBuffer
     bool m_deviceAddressable = false;
     VkDeviceAddress m_vertexAddress = 0;
     VkDeviceAddress m_indexAddress = 0;
-    VkBuffer m_vertexBuffer = VK_NULL_HANDLE;
-    VulkanPooledMemory m_vertexMemory;
-    VkBuffer m_indexBuffer = VK_NULL_HANDLE;
-    VulkanPooledMemory m_indexMemory;
-    VkBuffer m_positionBuffer = VK_NULL_HANDLE;
-    VulkanPooledMemory m_positionMemory;
+    DeviceBuffer m_vertex;
+    DeviceBuffer m_index;
+    DeviceBuffer m_position;
     // A posed mesh's bind pose vertices and a skinned one's skin, which the skinning pass reads to
     // write the vertex and position buffers above (storage buffers too, then).
     bool m_skinned = false;
     bool m_posed = false;
     VkDeviceAddress m_positionAddress = 0;
-    VkBuffer m_bindPoseBuffer = VK_NULL_HANDLE;
-    VulkanPooledMemory m_bindPoseMemory;
-    VkBuffer m_skinBuffer = VK_NULL_HANDLE;
-    VulkanPooledMemory m_skinMemory;
-    VkBuffer m_previousPositionBuffer = VK_NULL_HANDLE;
-    VulkanPooledMemory m_previousPositionMemory;
+    DeviceBuffer m_bindPose;
+    DeviceBuffer m_skin;
+    DeviceBuffer m_previousPosition;
 };
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "nvrhi_native.h"
 #include "shadow_pass.h"
 #include "uniform_buffer.h"
 
@@ -25,6 +26,7 @@ class VulkanLocalShadowPass
     VulkanLocalShadowPass(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         VkDescriptorSetLayout materialSetLayout);
     ~VulkanLocalShadowPass();
@@ -43,19 +45,20 @@ class VulkanLocalShadowPass
 
   private:
     void CreateImage(VkPhysicalDevice physicalDevice);
-    void CreateSampler(VkPhysicalDevice physicalDevice);
+    void CreateSampler(VkPhysicalDevice physicalDevice, nvrhi::IDevice* nvrhiDevice);
     void CreateRenderPass();
     void CreateFramebuffer();
     void CreatePipelines(VkPipelineCache pipelineCache, VkDescriptorSetLayout materialSetLayout);
     void DestroyHandles();
 
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     VkFormat m_format = VK_FORMAT_UNDEFINED;
     VkImage m_image = VK_NULL_HANDLE;
-    VkDeviceMemory m_memory = VK_NULL_HANDLE;
+    nvrhi::TextureHandle m_texture;
     VkImageView m_view = VK_NULL_HANDLE;
     VkFramebuffer m_framebuffer = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_opaquePipeline = VK_NULL_HANDLE;

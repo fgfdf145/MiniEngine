@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nvrhi_native.h"
 #include "scene_pass.h"
 
 #include <vector>
@@ -17,6 +18,7 @@ class VulkanDdgiDebugPass : public IScenePass
   public:
     VulkanDdgiDebugPass(
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
@@ -40,7 +42,7 @@ class VulkanDdgiDebugPass : public IScenePass
 
     VkDevice m_device = VK_NULL_HANDLE;
     const VulkanRayScene& m_rayScene;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;

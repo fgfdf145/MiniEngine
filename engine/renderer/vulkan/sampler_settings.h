@@ -20,6 +20,11 @@ namespace me
 // sampler every texture had before glTF samplers were read.
 nvrhi::SamplerDesc BuildTextureSamplerDesc(const TextureSampler& sampler, float maxAnisotropy);
 
+// The sampler the passes read their full-screen inputs and history with: clamped to the edge,
+// nearest or bilinear, base level only (maxLod 0, which the zeroed VkSamplerCreateInfo these passes
+// used before gave).
+nvrhi::SamplerDesc BuildClampSamplerDesc(bool linear);
+
 // One sampler per distinct TextureSampler, created on first use and kept with the cache. Material
 // descriptors pair a texture with the sampler its slot asks for, since one texture file is shared by
 // every material that names it.
@@ -33,6 +38,11 @@ class VulkanSamplerCache
     nvrhi::ISampler* Get(const TextureSampler& sampler);
     // The same, as the native sampler the descriptor writes that are still Vulkan's take.
     VkSampler GetNative(const TextureSampler& sampler);
+
+    // Every distinct TextureSampler, numbered 0 to kSamplerCount - 1: the ray texture table's sampler
+    // array holds them all in this order (ray_hit_common.slang's raySamplers).
+    static constexpr uint32_t kSamplerCount = 3 * 3 * 2 * 2 * 3;
+    static TextureSampler SamplerAt(uint32_t index);
 
   private:
     using Key = std::tuple<TextureWrap, TextureWrap, TextureFilter, TextureFilter, TextureMipFilter>;

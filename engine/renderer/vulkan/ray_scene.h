@@ -99,6 +99,7 @@ class VulkanRayScene
         uint32_t frameCount,
         bool hardwareRayTracing,
         TextureDescriptorBinding defaultTexture = {},
+        std::vector<VkSampler> samplerTable = {},
         bool updateUnusedWhilePending = false);
     ~VulkanRayScene();
 
@@ -161,8 +162,10 @@ class VulkanRayScene
     bool IsBuilding() const;
     VkDescriptorSetLayout GetSetLayout() const;
     VkDescriptorSet GetSet(uint32_t frameSlot) const;
-    // The texture table, with hardware ray tracing only (null handles without): one combined image
-    // sampler array, binding 0, kRayTexturesPerSlot entries per draw slot.
+    // The texture table, with hardware ray tracing only (null handles without): binding 0 the sampler
+    // table (the constructor's samplerTable, every VulkanSamplerCache sampler in SamplerAt's order),
+    // binding 1 the sampled images, kRayTexturesPerSlot entries per draw slot. Each slot's ray
+    // material says which sampler each of its textures takes.
     VkDescriptorSetLayout GetTextureSetLayout() const;
     VkDescriptorSet GetTextureSet() const;
     // Submeshes of the installed content, in the order SetContent gave them.
@@ -300,6 +303,8 @@ class VulkanRayScene
         uint32_t pool = 0;
         // What was averaged into the slot.
         RayMaterialSource source;
+        // Its textures' indices in the sampler table, packed as RayMaterial::samplers.
+        glm::uvec2 samplers{0u};
     };
     VkDescriptorSetLayout m_materialSetLayout = VK_NULL_HANDLE;
     std::unique_ptr<VulkanDescriptorPoolList> m_materialPools;
@@ -366,6 +371,11 @@ class VulkanRayScene
     // an installed content still tracing a slot another content released reads something valid.
     void WriteTextureSlot(uint32_t slot, const RayMaterialSource* source, std::vector<VkDescriptorImageInfo>& infos, std::vector<VkWriteDescriptorSet>& writes) const;
     TextureDescriptorBinding m_defaultTexture;
+    // RayMaterial::samplers for a slot's textures (WriteTextureSlot's, with the default's sampler where
+    // the source has no texture); throws for a sampler not in the table.
+    glm::uvec2 SamplerIndices(const RayMaterialSource& source) const;
+    std::vector<VkSampler> m_samplerTable;
+    std::unordered_map<VkSampler, uint32_t> m_samplerIndices;
     VkDescriptorSetLayout m_textureSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_texturePool = VK_NULL_HANDLE;
     VkDescriptorSet m_textureSet = VK_NULL_HANDLE;

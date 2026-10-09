@@ -79,19 +79,32 @@ struct DrawConstants
 
 // The toon maps, each in the PBR slot of the material set (set 1) that ReadToonMaterial
 // (gltf_model_loader.cpp) puts it in, so each is decoded in its colour space.
-[[vk::binding(0, 1)]] Sampler2D toonBaseMap;                 // _BaseMap (sRGB)
-[[vk::binding(2, 1)]] Sampler2D toonShadingGradeMap;         // _ShadingGradeMap, r
-[[vk::binding(3, 1)]] Sampler2D toonAdditiveMatCapMask;      // _AdditiveMatCapMask, g
-[[vk::binding(4, 1)]] Sampler2D toonOcclusionMap;            // _OcclusionMap, g
-[[vk::binding(5, 1)]] Sampler2D toonAdditiveMatCap;          // _AdditiveMatCap (sRGB)
-[[vk::binding(13, 1)]] Sampler2D toonAlphaBlendMatCapMask;   // _AlphaBlendMatCapMask, g
-[[vk::binding(14, 1)]] Sampler2D toonFaceMaskMap;            // _FaceMaskMap, g
-[[vk::binding(15, 1)]] Sampler2D toonAlphaBlendMatCap;       // _AlphaBlendMatCap (sRGB)
-[[vk::binding(16, 1)]] Sampler2D toonSkinMaskMap;            // _SkinMaskMap, g
-[[vk::binding(18, 1)]] Sampler2D toonFaceShadowGradientMap;  // _FaceShadowGradientMap, g (UV 1)
-[[vk::binding(21, 1)]] Sampler2D toonFaceShadowGradientMask; // _FaceShadowGradientMaskMap, g (UV 1)
-[[vk::binding(22, 1)]] Sampler2D toonOutlineWidthMap;        // _OutlineWidthTexture, g
-[[vk::binding(23, 1)]] Sampler2D toonAlphaOverrideMap;       // _AlphaOverrideMap, g
+[[vk::binding(0, 1)]] Texture2D toonBaseMap;                 // _BaseMap (sRGB)
+[[vk::binding(MATERIAL_SAMPLER(0), 1)]] SamplerState toonBaseMapSampler;
+[[vk::binding(2, 1)]] Texture2D toonShadingGradeMap;         // _ShadingGradeMap, r
+[[vk::binding(MATERIAL_SAMPLER(2), 1)]] SamplerState toonShadingGradeMapSampler;
+[[vk::binding(3, 1)]] Texture2D toonAdditiveMatCapMask;      // _AdditiveMatCapMask, g
+[[vk::binding(MATERIAL_SAMPLER(3), 1)]] SamplerState toonAdditiveMatCapMaskSampler;
+[[vk::binding(4, 1)]] Texture2D toonOcclusionMap;            // _OcclusionMap, g
+[[vk::binding(MATERIAL_SAMPLER(4), 1)]] SamplerState toonOcclusionMapSampler;
+[[vk::binding(5, 1)]] Texture2D toonAdditiveMatCap;          // _AdditiveMatCap (sRGB)
+[[vk::binding(MATERIAL_SAMPLER(5), 1)]] SamplerState toonAdditiveMatCapSampler;
+[[vk::binding(13, 1)]] Texture2D toonAlphaBlendMatCapMask;   // _AlphaBlendMatCapMask, g
+[[vk::binding(MATERIAL_SAMPLER(13), 1)]] SamplerState toonAlphaBlendMatCapMaskSampler;
+[[vk::binding(14, 1)]] Texture2D toonFaceMaskMap;            // _FaceMaskMap, g
+[[vk::binding(MATERIAL_SAMPLER(14), 1)]] SamplerState toonFaceMaskMapSampler;
+[[vk::binding(15, 1)]] Texture2D toonAlphaBlendMatCap;       // _AlphaBlendMatCap (sRGB)
+[[vk::binding(MATERIAL_SAMPLER(15), 1)]] SamplerState toonAlphaBlendMatCapSampler;
+[[vk::binding(16, 1)]] Texture2D toonSkinMaskMap;            // _SkinMaskMap, g
+[[vk::binding(MATERIAL_SAMPLER(16), 1)]] SamplerState toonSkinMaskMapSampler;
+[[vk::binding(18, 1)]] Texture2D toonFaceShadowGradientMap;  // _FaceShadowGradientMap, g (UV 1)
+[[vk::binding(MATERIAL_SAMPLER(18), 1)]] SamplerState toonFaceShadowGradientMapSampler;
+[[vk::binding(21, 1)]] Texture2D toonFaceShadowGradientMask; // _FaceShadowGradientMaskMap, g (UV 1)
+[[vk::binding(MATERIAL_SAMPLER(21), 1)]] SamplerState toonFaceShadowGradientMaskSampler;
+[[vk::binding(22, 1)]] Texture2D toonOutlineWidthMap;        // _OutlineWidthTexture, g
+[[vk::binding(MATERIAL_SAMPLER(22), 1)]] SamplerState toonOutlineWidthMapSampler;
+[[vk::binding(23, 1)]] Texture2D toonAlphaOverrideMap;       // _AlphaOverrideMap, g
+[[vk::binding(MATERIAL_SAMPLER(23), 1)]] SamplerState toonAlphaOverrideMapSampler;
 
 bool ToonHas(ToonMaterial material, uint feature)
 {
@@ -110,7 +123,7 @@ float ToonFaceMask(ToonMaterial material, float2 uv)
     {
         return 1.0;
     }
-    float mask = toonFaceMaskMap.SampleLevel(uv, 0.0).g;
+    float mask = toonFaceMaskMap.SampleLevel(toonFaceMaskMapSampler, uv, 0.0).g;
     return material.shadingGrade2.z != 0.0 ? 1.0 - mask : mask;
 }
 
@@ -150,7 +163,7 @@ float ToonAlpha(ToonMaterial material, float baseAlpha, float2 uv, float3 toCame
             facing *= facing;
             strength *= lerp(1.0, facing * facing, material.alphaOverride.x);
         }
-        alpha = lerp(alpha, toonAlphaOverrideMap.SampleBias(uv, MATERIAL_MIP_BIAS).g, strength);
+        alpha = lerp(alpha, toonAlphaOverrideMap.SampleBias(toonAlphaOverrideMapSampler, uv, MATERIAL_MIP_BIAS).g, strength);
     }
     if (alphaTest && alpha < material.mainLight.w)
     {
@@ -182,9 +195,9 @@ float3 ToonAlbedo(ToonMaterial material, float3 baseColor, float2 uv, float3 N, 
     float3 albedo = baseColor * material.baseColor.rgb;
     if (ToonHas(material, TOON_FEATURE_ALPHA_BLEND_MATCAP))
     {
-        float mask = toonAlphaBlendMatCapMask.SampleBias(uv, MATERIAL_MIP_BIAS).g;
+        float mask = toonAlphaBlendMatCapMask.SampleBias(toonAlphaBlendMatCapMaskSampler, uv, MATERIAL_MIP_BIAS).g;
         mask = material.shadingGrade2.w != 0.0 ? 1.0 - mask : mask;
-        float3 matcap = toonAlphaBlendMatCap.SampleBias(ToonMatCapUv(N, toCamera), MATERIAL_MIP_BIAS).rgb * material.alphaBlendMatCapTint.rgb;
+        float3 matcap = toonAlphaBlendMatCap.SampleBias(toonAlphaBlendMatCapSampler, ToonMatCapUv(N, toCamera), MATERIAL_MIP_BIAS).rgb * material.alphaBlendMatCapTint.rgb;
         albedo = lerp(albedo, matcap, mask * material.alphaOverride.w);
     }
     return albedo;
@@ -197,10 +210,10 @@ float3 ToonAdditiveMatCap(ToonMaterial material, float3 albedo, float2 uv, float
     {
         return float3(0.0);
     }
-    float3 matcap = pow(abs(toonAdditiveMatCap.SampleBias(ToonMatCapUv(N, toCamera), MATERIAL_MIP_BIAS).rgb), float3(1.0 + material.additiveMatCap2.z));
+    float3 matcap = pow(abs(toonAdditiveMatCap.SampleBias(toonAdditiveMatCapSampler, ToonMatCapUv(N, toCamera), MATERIAL_MIP_BIAS).rgb), float3(1.0 + material.additiveMatCap2.z));
     matcap *= material.additiveMatCap.rgb * lerp(float3(1.0), albedo, material.additiveMatCap2.w);
     float mask = clamp(
-        (toonAdditiveMatCapMask.SampleBias(uv, MATERIAL_MIP_BIAS).g - material.additiveMatCap2.x) /
+        (toonAdditiveMatCapMask.SampleBias(toonAdditiveMatCapMaskSampler, uv, MATERIAL_MIP_BIAS).g - material.additiveMatCap2.x) /
             max(material.additiveMatCap2.y - material.additiveMatCap2.x, 1e-4),
         0.0, 1.0);
     return matcap * mask * material.additiveMatCap.a;
@@ -212,7 +225,7 @@ float ToonCelShade(ToonMaterial material, float NdotL, float2 uv)
     float offset = 0.0;
     if (ToonHas(material, TOON_FEATURE_SHADING_GRADE))
     {
-        float grade = toonShadingGradeMap.SampleBias(uv, MATERIAL_MIP_BIAS).r;
+        float grade = toonShadingGradeMap.SampleBias(toonShadingGradeMapSampler, uv, MATERIAL_MIP_BIAS).r;
         grade = material.shadingGrade2.y != 0.0 ? 1.0 - grade : grade;
         grade = clamp((grade - material.shadingGrade.x) / max(material.shadingGrade.y - material.shadingGrade.x, 1e-4), 0.0, 1.0);
         offset = (grade - 0.5) * material.shadingGrade.z * material.shadingGrade.w + material.shadingGrade2.x;
@@ -270,7 +283,7 @@ float ToonSkinMask(ToonMaterial material, float2 uv)
     {
         return 0.0;
     }
-    return ToonHas(material, TOON_FEATURE_SKIN_MASK) ? toonSkinMaskMap.SampleLevel(uv, 0.0).g : 1.0;
+    return ToonHas(material, TOON_FEATURE_SKIN_MASK) ? toonSkinMaskMap.SampleLevel(toonSkinMaskMapSampler, uv, 0.0).g : 1.0;
 }
 
 #endif

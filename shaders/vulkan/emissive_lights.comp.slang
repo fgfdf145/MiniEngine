@@ -136,7 +136,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
             // The power: the emission at the centre, at the mip where the triangle is about one texel.
             float lod = max(0.5 * log2(max(texels, 1e-12)), 0.0);
-            float3 emission = rayTextures[NonUniformResourceIndex(textureIndex)].SampleLevel((uvA + uvB + uvC) / 3.0, lod).rgb * material.emissiveFactor;
+            float3 emission = RayTextureSampleLevel(entry.x, RAY_TEXTURE_EMISSIVE, (uvA + uvB + uvC) / 3.0, lod).rgb * material.emissiveFactor;
             power = dot(max(emission, float3(0.0)), float3(0.2126, 0.7152, 0.0722)) * area * (doubleSided ? 2.0 : 1.0);
             if (isnan(power) || isinf(power))
             {

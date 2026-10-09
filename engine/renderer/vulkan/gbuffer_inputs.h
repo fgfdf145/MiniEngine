@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "nvrhi_native.h"
 #include "render_target_layout.h"
 #include "scene_render_targets.h"
 
@@ -11,8 +12,10 @@ namespace me
 {
 
 // Set 2 of every pipeline that samples the G-buffer: GB0-GB3, depth, the motion vectors, the
-// resolved AO and GB5 as combined image samplers, one set per frame slot because all eight are transient
-// targets. The lighting pass and
+// resolved AO and the rest of kInputs, and the one sampler they are read with, one set per frame slot
+// because all of them are transient targets. The layout and the sets are NVRHI's
+// (docs/design/2026-10-08-nvrhi-backend-design.md, stage B3); the native pipelines take their
+// Vulkan handles. The lighting pass and
 // the tone mapping debug views both bind it, which is why the renderer owns it and not either
 // pass.
 //
@@ -42,7 +45,10 @@ class VulkanGBufferDescriptors
         // ReSTIR PT's shading, which the lighting pass adds in place of its lights while it runs.
         RenderTargetId::ScenePathTrace};
 
-    VulkanGBufferDescriptors(VkDevice device, const SceneRenderTargets& targets);
+    // The sampler's binding: one for every input, past them (shaders/vulkan/gbuffer_inputs.slang).
+    static constexpr uint32_t kSamplerBinding = 64;
+
+    VulkanGBufferDescriptors(VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets);
     ~VulkanGBufferDescriptors();
 
     VulkanGBufferDescriptors(const VulkanGBufferDescriptors&) = delete;
@@ -54,22 +60,26 @@ class VulkanGBufferDescriptors
     // Routed through ResolveIndex like every other per-copy lookup, so the frame slot rule lives in
     // SceneRenderTargets alone.
     VkDescriptorSet GetSet(const SceneRenderTargets& targets, uint32_t imageIndex, uint32_t frameSlot) const;
+    // The same layout and sets as NVRHI's, for the passes on NVRHI pipelines.
+    nvrhi::IBindingLayout* GetBindingLayout() const;
+    nvrhi::IBindingSet* GetBindingSet(const SceneRenderTargets& targets, uint32_t imageIndex, uint32_t frameSlot) const;
 
     // Rewrites every set against the rebuilt views. Must run with in-flight frames waited on.
     void OnTargetsRebuilt(const SceneRenderTargets& targets);
 
   private:
     void CreateSetLayouts();
-    void CreateSampler();
+    void CreateSampler(nvrhi::IDevice* nvrhiDevice);
     void CreateDescriptorSets(const SceneRenderTargets& targets);
     // Shared by the destructor and the constructor's unwind path, as in every pass.
     void DestroyHandles();
 
     VkDevice m_device = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::BindingLayoutHandle m_setLayout;
     VkDescriptorSetLayout m_emptySetLayout = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
+    std::vector<nvrhi::BindingSetHandle> m_bindingSets;
     std::vector<VkDescriptorSet> m_descriptorSets;
 };
 }

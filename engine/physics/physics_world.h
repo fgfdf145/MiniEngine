@@ -148,6 +148,10 @@ struct VehicleTelemetry
     // positive), and the rear wheels' steer angle (degrees, right positive) for a car with rear steering.
     float centreCouplingTorque = 0.0f;
     float rearSteerDegrees = 0.0f;
+    // The power the drivetrain lost in the last step (VehicleSettings::drivetrainLosses; kW): in the gears'
+    // meshes, and to churning and the bearings.
+    float drivetrainMeshLossKw = 0.0f;
+    float drivetrainSpinLossKw = 0.0f;
     // The turbos' boost together now (the torque is the engine's times one plus it); 0 without turbos.
     float turboBoost = 0.0f;
     // The most any wheel on the ground turns slower than the road under it (the slip ratio's braking

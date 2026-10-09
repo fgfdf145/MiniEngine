@@ -3,8 +3,11 @@
 #include "atmosphere_integrate.slang"
 
 [[vk::binding(3, 1)]] [[vk::image_format("rgba16f")]] RWTexture3D<float4> aerialPerspectiveOut;
-[[vk::binding(4, 1)]] Sampler2D transmittanceLut;
-[[vk::binding(5, 1)]] Sampler2D multiScatteringLut;
+// Set 1 is VulkanAtmosphere's NVRHI binding set: each sampled LUT's sampler at its binding + 64.
+[[vk::binding(4, 1)]] Texture2D transmittanceLut;
+[[vk::binding(68, 1)]] SamplerState transmittanceLutSampler;
+[[vk::binding(5, 1)]] Texture2D multiScatteringLut;
+[[vk::binding(69, 1)]] SamplerState multiScatteringLutSampler;
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
@@ -33,7 +36,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     ScatteringResult result = IntegrateScatteredLuminance(
         camera, direction, ubo.sunDirectionAndMode.xyz, ubo.sunIlluminance.rgb,
-        transmittanceLut, multiScatteringLut, false, max(1.0, float(texel.z + 1) * 2.0), tMax, true, true);
+        AtmosphereLut(transmittanceLut, transmittanceLutSampler), AtmosphereLut(multiScatteringLut, multiScatteringLutSampler), false, max(1.0, float(texel.z + 1) * 2.0), tMax, true, true);
     float meanTransmittance = dot(result.transmittance, float3(1.0 / 3.0));
     aerialPerspectiveOut[texel] = float4(result.luminance, meanTransmittance);
 }

@@ -105,7 +105,7 @@ bool FindProbe(uint level, float3 origin, float3 direction, float maxT, inout fl
             {
                 float3 normal = normalize(origin + direction * t - center);
                 float2 size = float2(TextureSize(ddgiIrradianceAtlas, 0).xy);
-                float3 irradiance = ddgiIrradianceAtlas.SampleLevel(float3(DdgiAtlasUv(slot, normal, DDGI_IRRADIANCE_TEXELS, size), float(level)), 0.0).rgb;
+                float3 irradiance = ddgiIrradianceAtlas.SampleLevel(ddgiIrradianceAtlasSampler, float3(DdgiAtlasUv(slot, normal, DDGI_IRRADIANCE_TEXELS, size), float(level)), 0.0).rgb;
                 // Pre-exposed and scaled back to the display's unit, as the tone mapping pass shows SceneGi.
                 color = irradiance * ubo.exposure.x;
             }

@@ -2,8 +2,10 @@
 
 #include "buffer.h"
 #include "compute_pass_util.h"
+#include "nvrhi_resources.h"
 #include "pipeline.h"
 #include "reverse_depth.h"
+#include "sampler_settings.h"
 
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
@@ -240,7 +242,7 @@ void DestroyPipelines(VkDevice device, std::array<VkPipeline, Count>& pipelines)
 // ---------------------------------------------------------------------------------------------
 // VulkanToonMaterials
 
-VulkanToonMaterials::VulkanToonMaterials(VkPhysicalDevice physicalDevice, VkDevice device, uint32_t frameSlotCount)
+VulkanToonMaterials::VulkanToonMaterials(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, uint32_t frameSlotCount)
     : m_device(device)
 {
     try
@@ -275,22 +277,15 @@ VulkanToonMaterials::VulkanToonMaterials(VkPhysicalDevice physicalDevice, VkDevi
             bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
             bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             VkBuffer buffer = VK_NULL_HANDLE;
-            CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer), "Failed to create toon material buffer");
-            m_buffers.push_back(buffer);
-
-            VkMemoryRequirements requirements{};
-            vkGetBufferMemoryRequirements(m_device, buffer, &requirements);
-            VkMemoryAllocateInfo allocateInfo{};
-            allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            allocateInfo.allocationSize = requirements.size;
-            allocateInfo.memoryTypeIndex = FindMemoryType(
-                physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            VkDeviceMemory memory = VK_NULL_HANDLE;
-            CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &memory), "Failed to allocate toon material memory");
-            m_memory.push_back(memory);
-            CheckVulkan(vkBindBufferMemory(m_device, buffer, memory, 0), "Failed to bind toon material memory");
             void* mapped = nullptr;
-            CheckVulkan(vkMapMemory(m_device, memory, 0, bytes, 0, &mapped), "Failed to map toon material memory");
+            m_handles.push_back(CreateNvrhiBuffer(
+                nvrhiDevice,
+                bufferInfo,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                buffer,
+                "Failed to create toon material buffer",
+                &mapped));
+            m_buffers.push_back(buffer);
             m_mapped.push_back(mapped);
         }
 
@@ -361,18 +356,10 @@ VkDescriptorSet VulkanToonMaterials::GetSet(uint32_t frameSlot) const
 
 void VulkanToonMaterials::DestroyHandles()
 {
-    for (size_t index = 0; index < m_memory.size(); ++index)
-    {
-        vkUnmapMemory(m_device, m_memory[index]);
-        vkFreeMemory(m_device, m_memory[index], nullptr);
-    }
-    m_memory.clear();
+    // The buffers and their memory (unmapped as it is freed) go with the handles.
     m_mapped.clear();
-    for (VkBuffer buffer : m_buffers)
-    {
-        vkDestroyBuffer(m_device, buffer, nullptr);
-    }
     m_buffers.clear();
+    m_handles.clear();
     if (m_pool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(m_device, m_pool, nullptr);
@@ -601,6 +588,7 @@ void VulkanToonPrepass::DestroyHandles()
 
 VulkanToonPass::VulkanToonPass(
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets,
     VkDescriptorSetLayout frameSetLayout,
@@ -613,7 +601,7 @@ VulkanToonPass::VulkanToonPass(
     {
         CreateRenderPass(targets);
         CreateTargetSetLayout();
-        CreateSampler();
+        CreateSampler(nvrhiDevice);
         CreatePipelines(pipelineCache, frameSetLayout, materialSetLayout);
         CreateTargetSets(targets);
         CreateFramebuffers(targets);
@@ -772,19 +760,10 @@ void VulkanToonPass::CreateTargetSetLayout()
     CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_targetSetLayout), "Failed to create toon target set layout");
 }
 
-void VulkanToonPass::CreateSampler()
+void VulkanToonPass::CreateSampler(nvrhi::IDevice* nvrhiDevice)
 {
     // The shader fetches texels by index; the sampler is only what a combined image sampler needs.
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_NEAREST;
-    samplerInfo.minFilter = VK_FILTER_NEAREST;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create toon sampler");
+    m_sampler = CreateNvrhiSampler(nvrhiDevice, BuildClampSamplerDesc(false), "Failed to create toon sampler");
 }
 
 void VulkanToonPass::CreatePipelines(
@@ -859,10 +838,10 @@ void VulkanToonPass::CreateTargetSets(const SceneRenderTargets& targets)
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
         std::array<VkDescriptorImageInfo, 2> imageInfos{};
-        imageInfos[0].sampler = m_sampler;
+        imageInfos[0].sampler = NativeSampler(m_sampler);
         imageInfos[0].imageView = targets.GetSampledView(RenderTargetId::ToonLinearDepth, slot);
         imageInfos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        imageInfos[1].sampler = m_sampler;
+        imageInfos[1].sampler = NativeSampler(m_sampler);
         imageInfos[1].imageView = targets.GetSampledView(RenderTargetId::ToonMask, slot);
         imageInfos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         std::array<VkWriteDescriptorSet, 2> writes{};
@@ -928,11 +907,7 @@ void VulkanToonPass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_targetSetLayout, nullptr);
         m_targetSetLayout = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     DestroyFramebuffers();
     if (m_renderPass != VK_NULL_HANDLE)
     {

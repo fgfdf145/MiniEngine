@@ -105,12 +105,17 @@ struct EditorSharedState
     bool quadRecordingPreview = false;
     VideoRecordingIndicator quadRecordingStatus;
     std::string quadRecordingTarget;
+    // The Photo Mode window: the photo's size and how it is made (kept in the engine settings), and,
+    // from the backend, the photo being made or how the last one ended.
+    PhotoModeSettings photoMode;
+    PhotoStatus photoStatus;
     ImTextureID minimapTexture = ImTextureID{};
     ImTextureID selectionOutlineTexture = ImTextureID{};
     bool dlssAvailable = false;
     bool dlssRayReconstructionAvailable = false;
     std::string dlssStatus;
     std::string gpuMemoryStatus;
+    GpuMemoryReport gpuMemory;
     // The size the backend renders the scene at whatever the editor asks (--viewport-size, or a
     // recording's size while it runs); unset when the viewport's own settings decide.
     std::optional<RenderExtent> forcedViewportExtent;
@@ -120,6 +125,9 @@ struct EditorSharedState
     // Whether the backend can path trace (hardware ray tracing), and what it says of path tracing.
     bool pathTracingAvailable = false;
     std::string pathTracingStatus;
+    // The offline mode's image: the share of its target samples it has, negative where it is not
+    // running (or has no target).
+    float pathTracingProgress = -1.0f;
 
     // DLSS resolves the viewport (see ResolveSceneExtents in the Vulkan renderer): it picks the render
     // size itself, so the viewport asks for every display pixel whatever the render scale says.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nvrhi_native.h"
 #include "scene_pass.h"
 #include "uniform_buffer.h"
 
@@ -25,7 +26,7 @@ class VulkanScatterPass : public IScenePass
     static constexpr VkFormat kLightFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
-    VulkanScatterPass(VkPhysicalDevice physicalDevice, VkDevice device, const SceneRenderTargets& targets);
+    VulkanScatterPass(VkPhysicalDevice physicalDevice, VkDevice device, nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets);
     ~VulkanScatterPass() override;
 
     VulkanScatterPass(const VulkanScatterPass&) = delete;
@@ -49,7 +50,7 @@ class VulkanScatterPass : public IScenePass
     struct Image
     {
         VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        nvrhi::TextureHandle texture;
         VkImageView view = VK_NULL_HANDLE;
     };
 
@@ -64,8 +65,9 @@ class VulkanScatterPass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkExtent2D m_extent{};
     Image m_light;
     Image m_depth;

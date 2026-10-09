@@ -3,6 +3,7 @@
 #include "buffer.h"
 #include "pipeline.h"
 #include "reverse_depth.h"
+#include "sampler_settings.h"
 
 #include <engine/core/paths/engine_paths.h>
 
@@ -384,6 +385,7 @@ void VulkanSelectionMaskPass::DestroyHandles()
 
 VulkanSelectionOutlinePass::VulkanSelectionOutlinePass(
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     const SceneRenderTargets& targets)
     : m_device(device)
@@ -391,7 +393,7 @@ VulkanSelectionOutlinePass::VulkanSelectionOutlinePass(
     try
     {
         CreateDescriptorSetLayout();
-        CreateSampler();
+        CreateSampler(nvrhiDevice);
         CreatePipeline(pipelineCache, targets);
         CreateDescriptorSets(targets);
         CreateFramebuffers(targets);
@@ -487,19 +489,10 @@ void VulkanSelectionOutlinePass::CreateDescriptorSetLayout()
     CheckVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_setLayout), "Failed to create selection outline descriptor set layout");
 }
 
-void VulkanSelectionOutlinePass::CreateSampler()
+void VulkanSelectionOutlinePass::CreateSampler(nvrhi::IDevice* nvrhiDevice)
 {
     // The shader fetches texels by index; the sampler is only what a combined image sampler needs.
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_NEAREST;
-    samplerInfo.minFilter = VK_FILTER_NEAREST;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create selection outline sampler");
+    m_sampler = CreateNvrhiSampler(nvrhiDevice, BuildClampSamplerDesc(false), "Failed to create selection outline sampler");
 }
 
 void VulkanSelectionOutlinePass::CreatePipeline(VkPipelineCache pipelineCache, const SceneRenderTargets& targets)
@@ -563,10 +556,10 @@ void VulkanSelectionOutlinePass::CreateDescriptorSets(const SceneRenderTargets& 
     for (uint32_t slot = 0; slot < copyCount; ++slot)
     {
         std::array<VkDescriptorImageInfo, 2> imageInfos{};
-        imageInfos[0].sampler = m_sampler;
+        imageInfos[0].sampler = NativeSampler(m_sampler);
         imageInfos[0].imageView = targets.GetSampledView(RenderTargetId::SelectionDepth, slot);
         imageInfos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        imageInfos[1].sampler = m_sampler;
+        imageInfos[1].sampler = NativeSampler(m_sampler);
         imageInfos[1].imageView = targets.GetSampledView(RenderTargetId::SceneDepth, slot);
         imageInfos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
@@ -644,11 +637,7 @@ void VulkanSelectionOutlinePass::DestroyHandles()
         vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
         m_setLayout = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     DestroyFramebuffers();
     if (m_renderPass != VK_NULL_HANDLE)
     {

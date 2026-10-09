@@ -1,6 +1,7 @@
 #include "ddgi.h"
 
 #include "compute_pass_util.h"
+#include "nvrhi_resources.h"
 
 #include <algorithm>
 #include <array>
@@ -29,24 +30,28 @@ struct DdgiConstants
     uint32_t padding = 0;
 };
 
+// A memory barrier, and with it any image barriers (layout transitions) in the same command.
 void GlobalBarrier(
     VkCommandBuffer commandBuffer,
     VkPipelineStageFlags srcStage,
     VkAccessFlags srcAccess,
     VkPipelineStageFlags dstStage,
-    VkAccessFlags dstAccess)
+    VkAccessFlags dstAccess,
+    std::span<const VkImageMemoryBarrier> images = {})
 {
     VkMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     barrier.srcAccessMask = srcAccess;
     barrier.dstAccessMask = dstAccess;
-    vkCmdPipelineBarrier(commandBuffer, srcStage, dstStage, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+    vkCmdPipelineBarrier(
+        commandBuffer, srcStage, dstStage, 0, 1, &barrier, 0, nullptr, static_cast<uint32_t>(images.size()), images.data());
 }
 }
 
 VulkanDdgi::VulkanDdgi(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     VkDescriptorSetLayout frameSetLayout,
     VkDescriptorSetLayout raySetLayout,
@@ -54,13 +59,14 @@ VulkanDdgi::VulkanDdgi(
     bool rayQuery)
     : m_physicalDevice(physicalDevice),
       m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_frameCount(frameCount)
 {
     try
     {
         m_irradiance = CreateAtlas(kDdgiIrradianceTexels, kIrradianceFormat);
         m_visibility = CreateAtlas(kDdgiVisibilityTexels, kVisibilityFormat);
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
+        m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
         m_states = CreateBuffer(
             static_cast<VkDeviceSize>(kDdgiProbeStateBytes) * kDdgiProbesPerLevel * kDdgiMaxLevels,
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -75,17 +81,25 @@ VulkanDdgi::VulkanDdgi(
         m_recordedSchedules.resize(m_frameCount);
         m_feedbackPending.assign(m_frameCount, 0u);
 
-        constexpr std::array<VkDescriptorType, 6> kTypes = {
+        // The update's sampled views of the atlases and their samplers (6 to 9): it writes one level
+        // while it samples the next coarser one, so it reads them in GENERAL, not through set 0.
+        constexpr std::array<VkDescriptorType, 10> kTypes = {
             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER};
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VK_DESCRIPTOR_TYPE_SAMPLER,
+            VK_DESCRIPTOR_TYPE_SAMPLER};
         m_setLayout = CreateComputeSetLayout(m_device, kTypes);
-        const std::array<VkDescriptorPoolSize, 2> poolSizes = {
+        const std::array<VkDescriptorPoolSize, 4> poolSizes = {
             VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * m_frameCount},
-            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * m_frameCount}};
+            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * m_frameCount},
+            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 2 * m_frameCount},
+            VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_SAMPLER, 2 * m_frameCount}};
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         poolInfo.maxSets = m_frameCount;
@@ -101,7 +115,10 @@ VulkanDdgi::VulkanDdgi(
             const VkDescriptorImageInfo visibilityInfo{VK_NULL_HANDLE, m_visibility.view, VK_IMAGE_LAYOUT_GENERAL};
             const VkDescriptorBufferInfo statesInfo{m_states.buffer, 0, VK_WHOLE_SIZE};
             const VkDescriptorBufferInfo feedbackInfo{m_feedback[slot].buffer, 0, VK_WHOLE_SIZE};
-            std::array<VkWriteDescriptorSet, 6> writes{};
+            const VkDescriptorImageInfo sampledIrradianceInfo{VK_NULL_HANDLE, m_irradiance.view, VK_IMAGE_LAYOUT_GENERAL};
+            const VkDescriptorImageInfo sampledVisibilityInfo{VK_NULL_HANDLE, m_visibility.view, VK_IMAGE_LAYOUT_GENERAL};
+            const VkDescriptorImageInfo samplerInfo{NativeSampler(m_sampler), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED};
+            std::array<VkWriteDescriptorSet, 10> writes{};
             for (uint32_t binding = 0; binding < writes.size(); ++binding)
             {
                 writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -116,6 +133,10 @@ VulkanDdgi::VulkanDdgi(
             writes[3].pImageInfo = &visibilityInfo;
             writes[4].pBufferInfo = &statesInfo;
             writes[5].pBufferInfo = &feedbackInfo;
+            writes[6].pImageInfo = &sampledIrradianceInfo;
+            writes[7].pImageInfo = &sampledVisibilityInfo;
+            writes[8].pImageInfo = &samplerInfo;
+            writes[9].pImageInfo = &samplerInfo;
             vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         }
 
@@ -218,6 +239,8 @@ void VulkanDdgi::Record(
             VK_ACCESS_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        // Where set 0 samples them.
+        EndFrameImageWrites(commandBuffer, images, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         m_cleared = true;
     }
 
@@ -253,7 +276,18 @@ void VulkanDdgi::Record(
     vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
     vkCmdDispatch(commandBuffer, count, 1, 1);
 
-    GlobalBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+    // The trace's rays before the update reads them, and the atlases, which the trace sampled
+    // through set 0 (its infinite bounce) and earlier frames' shading too, to GENERAL for the update.
+    const std::array<VkImageMemoryBarrier, 2> toGeneral = {
+        ColorImageTransition(m_irradiance.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT),
+        ColorImageTransition(m_visibility.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT)};
+    GlobalBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT,
+        toGeneral);
 
     std::memcpy(&constants.frameIndexOrHysteresis, &hysteresis, sizeof(hysteresis));
     constants.epochs = (lightingEpoch & 0xffu) | ((geometryEpoch & 0xfu) << 8);
@@ -262,29 +296,38 @@ void VulkanDdgi::Record(
     vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(constants), &constants);
     vkCmdDispatch(commandBuffer, count, 1, 1);
 
-    // The new atlases and states before any shading samples them, and the feedback before the CPU
-    // reads it once the frame's fence signals.
+    // The new atlases, back where set 0 samples them, and states before any shading reads them, and
+    // the feedback before the CPU reads it once the frame's fence signals.
+    const std::array<VkImageMemoryBarrier, 2> toSampled = {
+        ColorImageTransition(m_irradiance.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT),
+        ColorImageTransition(m_visibility.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT)};
     GlobalBarrier(
         commandBuffer,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_ACCESS_SHADER_WRITE_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT,
-        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_HOST_READ_BIT);
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_HOST_READ_BIT,
+        toSampled);
 }
 
 TextureDescriptorBinding VulkanDdgi::GetIrradianceBinding() const
 {
-    return TextureDescriptorBinding{m_irradiance.view, m_sampler};
+    return BindTexture(m_irradiance.view, m_irradiance.texture, m_sampler);
 }
 
 TextureDescriptorBinding VulkanDdgi::GetVisibilityBinding() const
 {
-    return TextureDescriptorBinding{m_visibility.view, m_sampler};
+    return BindTexture(m_visibility.view, m_visibility.texture, m_sampler);
 }
 
 VkBuffer VulkanDdgi::GetProbeStateBuffer() const
 {
     return m_states.buffer;
+}
+
+nvrhi::IBuffer* VulkanDdgi::GetProbeStateHandle() const
+{
+    return m_states.handle;
 }
 
 VkImage VulkanDdgi::GetIrradianceImage() const
@@ -314,19 +357,10 @@ VulkanDdgi::Image VulkanDdgi::CreateAtlas(uint32_t texelsPerProbe, VkFormat form
     imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &atlas.image), "Failed to create a DDGI atlas");
+    atlas.texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, atlas.image, "Failed to create a DDGI atlas");
     // Assigned as each handle exists, so DestroyHandles releases a partial atlas.
     Image& target = texelsPerProbe == kDdgiIrradianceTexels ? m_irradiance : m_visibility;
     target = atlas;
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, atlas.image, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(m_physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &target.memory), "Failed to allocate a DDGI atlas");
-    CheckVulkan(vkBindImageMemory(m_device, target.image, target.memory, 0), "Failed to bind a DDGI atlas");
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -346,27 +380,7 @@ VulkanDdgi::Buffer VulkanDdgi::CreateBuffer(VkDeviceSize size, VkBufferUsageFlag
     bufferInfo.size = size;
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateBuffer(m_device, &bufferInfo, nullptr, &result.buffer), "Failed to create a DDGI buffer");
-    VkMemoryRequirements requirements{};
-    vkGetBufferMemoryRequirements(m_device, result.buffer, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(
-        m_physicalDevice,
-        requirements.memoryTypeBits,
-        hostVisible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    const VkResult allocated = vkAllocateMemory(m_device, &allocateInfo, nullptr, &result.memory);
-    if (allocated != VK_SUCCESS)
-    {
-        vkDestroyBuffer(m_device, result.buffer, nullptr);
-        CheckVulkan(allocated, "Failed to allocate a DDGI buffer");
-    }
-    CheckVulkan(vkBindBufferMemory(m_device, result.buffer, result.memory, 0), "Failed to bind a DDGI buffer");
-    if (hostVisible)
-    {
-        CheckVulkan(vkMapMemory(m_device, result.memory, 0, VK_WHOLE_SIZE, 0, &result.mapped), "Failed to map a DDGI buffer");
-    }
+    result.handle = CreateNvrhiBuffer(m_nvrhiDevice, bufferInfo, hostVisible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, result.buffer, "Failed to create a DDGI buffer", hostVisible ? &result.mapped : nullptr);
     return result;
 }
 
@@ -406,35 +420,17 @@ void VulkanDdgi::DestroyHandles()
     }
     for (Buffer* buffer : buffers)
     {
-        if (buffer->buffer != VK_NULL_HANDLE)
-        {
-            vkDestroyBuffer(m_device, buffer->buffer, nullptr);
-        }
-        if (buffer->memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, buffer->memory, nullptr);
-        }
+        // The buffer and its memory go with the handle, released with the rest below.
         *buffer = Buffer{};
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     for (Image* image : {&m_irradiance, &m_visibility})
     {
         if (image->view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(m_device, image->view, nullptr);
         }
-        if (image->image != VK_NULL_HANDLE)
-        {
-            vkDestroyImage(m_device, image->image, nullptr);
-        }
-        if (image->memory != VK_NULL_HANDLE)
-        {
-            vkFreeMemory(m_device, image->memory, nullptr);
-        }
+        // The image and its memory go with the texture, released with the rest below.
         *image = Image{};
     }
 }

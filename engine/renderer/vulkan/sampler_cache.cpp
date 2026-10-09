@@ -1,6 +1,7 @@
 #include "sampler_settings.h"
 
 #include "common.h"
+#include "nvrhi_native.h"
 
 namespace me
 {
@@ -27,6 +28,6 @@ nvrhi::ISampler* VulkanSamplerCache::Get(const TextureSampler& sampler)
 
 VkSampler VulkanSamplerCache::GetNative(const TextureSampler& sampler)
 {
-    return Get(sampler)->getNativeObject(nvrhi::ObjectTypes::VK_Sampler);
+    return NativeSampler(Get(sampler));
 }
 }

@@ -76,6 +76,10 @@ class VulkanCommandContext
     // The last submit known to have finished: polls the frame slots' event queries.
     uint64_t CompletedSubmits();
 
+    // The frame's NVRHI command list, open while RecordCommandBuffer's recorder runs: the recorder's
+    // command buffer is its native one.
+    nvrhi::ICommandList* GetCommandList() const;
+
     // The slot the frame being recorded belongs to. Advances in Present, so it is stable for the
     // whole of one AcquireNextImage / Submit / Present cycle.
     uint32_t GetCurrentFrame() const;

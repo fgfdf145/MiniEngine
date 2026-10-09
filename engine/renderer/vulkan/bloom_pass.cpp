@@ -1,9 +1,12 @@
 #include "bloom_pass.h"
 
+#include "nvrhi_pass.h"
+
 #include <engine/renderer/bloom_chain.h>
 
 #include <algorithm>
 #include <array>
+#include <stdexcept>
 
 namespace me
 {
@@ -32,76 +35,34 @@ constexpr uint32_t kModeDownsample = 1u;
 constexpr uint32_t kModeUpsample = 2u;
 constexpr uint32_t kModeComposite = 3u;
 
-// Everything one bloom dispatch wrote is visible to the next one's reads and ordered before its
-// writes. The chain and SceneTaa are the only things written, both by this pass's compute.
-void ComputeToComputeBarrier(VkCommandBuffer commandBuffer)
+// One level of the chain.
+nvrhi::TextureSubresourceSet Level(size_t level)
 {
-    VkMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0,
-        1,
-        &barrier,
-        0,
-        nullptr,
-        0,
-        nullptr);
-}
-
-VkExtent2D ToExtent(glm::uvec2 size)
-{
-    return VkExtent2D{size.x, size.y};
+    return nvrhi::TextureSubresourceSet(static_cast<nvrhi::MipLevel>(level), 1, 0, 1);
 }
 }
 
-VulkanBloomPass::VulkanBloomPass(
-    VkPhysicalDevice physicalDevice,
-    VkDevice device,
-    VkPipelineCache pipelineCache,
-    const SceneRenderTargets& targets,
-    VkDescriptorSetLayout frameSetLayout)
-    : m_physicalDevice(physicalDevice),
-      m_device(device)
+VulkanBloomPass::VulkanBloomPass(nvrhi::IDevice* nvrhiDevice, const SceneRenderTargets& targets, nvrhi::IBindingLayout* frameSetLayout)
+    : m_nvrhiDevice(nvrhiDevice)
 {
-    try
-    {
-        m_sampler = CreateClampSampler(m_device, VK_FILTER_LINEAR);
-        static constexpr std::array<VkDescriptorType, 2> kTypes = {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE};
-        m_setLayout = CreateComputeSetLayout(m_device, kTypes);
-        CreateComputePipeline(
-            m_device,
-            pipelineCache,
-            frameSetLayout,
-            m_setLayout,
-            "bloom.comp.spv",
-            sizeof(BloomPushConstants),
-            m_pipelineLayout,
-            m_pipeline);
-        // Two sets per frame slot plus two per level at most; the pool is sized once for the
-        // deepest chain so a resize never needs a new one.
-        const uint32_t setCount = targets.GetTransientCopyCount() * 2 + kMaxBloomLevels * 2;
-        m_descriptorPool = CreateImageDescriptorPool(m_device, setCount, 1, 1);
-        CreateChain(targets.GetOutputExtent());
-        CreateDescriptorSets(targets);
-    }
-    catch (...)
-    {
-        DestroyHandles();
-        throw;
-    }
+    m_sampler = CreateClampSampler(nvrhiDevice, VK_FILTER_LINEAR);
+    nvrhi::BindingLayoutDesc layoutDesc;
+    layoutDesc.visibility = nvrhi::ShaderType::Compute;
+    layoutDesc.registerSpace = 1;
+    layoutDesc.registerSpaceIsDescriptorSet = true;
+    layoutDesc.bindingOffsets = ShaderBindingOffsets();
+    layoutDesc.bindings = {
+        nvrhi::BindingLayoutItem::Texture_SRV(0),
+        nvrhi::BindingLayoutItem::Sampler(64),
+        nvrhi::BindingLayoutItem::Texture_UAV(1),
+        nvrhi::BindingLayoutItem::PushConstants(0, sizeof(BloomPushConstants))};
+    m_setLayout = CreateNvrhiBindingLayout(m_nvrhiDevice, layoutDesc, "Failed to create the bloom binding layout");
+    m_pipeline = CreateNvrhiComputePipeline(m_nvrhiDevice, "bloom.comp.spv", {frameSetLayout, m_setLayout});
+    CreateChain(targets.GetOutputExtent());
+    CreateBindingSets(targets);
 }
 
-VulkanBloomPass::~VulkanBloomPass()
-{
-    DestroyHandles();
-}
+VulkanBloomPass::~VulkanBloomPass() = default;
 
 ScenePassId VulkanBloomPass::Id() const
 {
@@ -110,8 +71,8 @@ ScenePassId VulkanBloomPass::Id() const
 
 RenderPassIo VulkanBloomPass::Io() const
 {
-    // SceneTaa is sampled and stored in place, both in GENERAL, which a write declaration puts it in
-    // and orders after TAA's store.
+    // SceneTaa is read and written in place, in GENERAL, which a write declaration puts it in and
+    // orders after TAA's store.
     static constexpr std::array<RenderTargetId, 1> kWrites = {RenderTargetId::SceneTaa};
     RenderPassIo io{};
     io.writes = kWrites;
@@ -123,230 +84,174 @@ void VulkanBloomPass::Record(
     const SceneRenderTargets& targets,
     const ScenePassFrameContext& frame) const
 {
+    (void)commandBuffer;
     if (!frame.bloom.enabled)
     {
         return;
     }
 
-    // Last frame's chain is discarded: UNDEFINED to GENERAL, after every earlier use on the queue.
-    VkImageMemoryBarrier discard{};
-    discard.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    discard.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    discard.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-    discard.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    discard.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    discard.image = m_chainImage;
-    discard.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, static_cast<uint32_t>(m_levelExtents.size()), 0, 1};
-    discard.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    discard.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    vkCmdPipelineBarrier(
-        commandBuffer,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0,
-        0,
-        nullptr,
-        0,
-        nullptr,
-        1,
-        &discard);
-
     const uint32_t slot = targets.ResolveIndex(RenderTargetId::SceneTaa, frame.imageIndex, frame.frameSlot);
+    nvrhi::ITexture* scene = targets.GetTexture(RenderTargetId::SceneTaa, slot);
+    nvrhi::ICommandList* commandList = frame.commandList;
+    const NvrhiPassScope scope(commandList, {{scene, nvrhi::ResourceStates::UnorderedAccess}});
+
     const glm::uvec2 sceneExtent(frame.outputExtent.width, frame.outputExtent.height);
     // Each level's share of every pixel's energy (see ComputeGlareBands). The upsample chain sums
     // band_k * blur_k into level 0, and the composite keeps 1 - total where it was.
     const size_t levelCount = m_levelExtents.size();
     const std::vector<glm::vec3> bands =
-        ComputeGlareBands(frame.glareFNumber, frame.outputExtent.height, levelCount, std::max(frame.bloom.strength, 0.0f));
+        ComputeGlareBands(
+            frame.glareFNumber,
+            frame.glareImageHeight != 0 ? frame.glareImageHeight : frame.outputExtent.height,
+            levelCount,
+            std::max(frame.bloom.strength, 0.0f));
     glm::vec3 total(0.0f);
     for (const glm::vec3& band : bands)
     {
         total += band;
     }
 
+    // Each dispatch reads one image (a level, or SceneTaa) and writes another; the states set before
+    // it order it after the dispatch that wrote what it reads, and its writes after earlier reads.
     BloomPushConstants constants{};
-    const auto dispatch = [&](VkDescriptorSet set,
+    const auto dispatch = [&](nvrhi::IBindingSet* set,
                               uint32_t mode,
+                              nvrhi::ITexture* sourceTexture,
+                              nvrhi::TextureSubresourceSet sourceLevel,
+                              nvrhi::ITexture* destinationTexture,
+                              nvrhi::TextureSubresourceSet destinationLevel,
                               glm::uvec2 source,
                               glm::uvec2 destination,
                               glm::vec3 destinationWeight,
                               glm::vec3 sourceWeight)
     {
+        commandList->setTextureState(sourceTexture, sourceLevel, nvrhi::ResourceStates::ShaderResource);
+        commandList->setTextureState(destinationTexture, destinationLevel, nvrhi::ResourceStates::UnorderedAccess);
+        commandList->commitBarriers();
+        nvrhi::ComputeState state;
+        state.pipeline = m_pipeline;
+        state.bindings = {frame.frameBindingSet, set};
+        commandList->setComputeState(state);
         constants.mode = mode;
         constants.destinationWeight = glm::vec4(destinationWeight, 0.0f);
         constants.sourceWeight = glm::vec4(sourceWeight, 0.0f);
         constants.sourceTexelSize = 1.0f / glm::vec2(source);
         constants.destinationExtent = destination;
-        DispatchCompute(
-            commandBuffer,
-            m_pipeline,
-            m_pipelineLayout,
-            frame.frameDescriptorSet,
-            set,
-            &constants,
-            sizeof(constants),
-            ToExtent(destination));
-        ComputeToComputeBarrier(commandBuffer);
+        commandList->setPushConstants(&constants, sizeof(constants));
+        commandList->dispatch(
+            (destination.x + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize,
+            (destination.y + kComputeWorkgroupSize - 1) / kComputeWorkgroupSize);
     };
 
     const glm::vec3 one(1.0f);
-    dispatch(m_firstDownsampleSets.at(slot), kModeFirstDownsample, sceneExtent, m_levelExtents[0], one, one);
+    nvrhi::ITexture* chain = m_chainTexture;
+    const nvrhi::TextureSubresourceSet whole = nvrhi::AllSubresources;
+    dispatch(m_firstDownsampleSets.at(slot), kModeFirstDownsample, scene, whole, chain, Level(0), sceneExtent, m_levelExtents[0], one, one);
     for (size_t level = 1; level < levelCount; ++level)
     {
-        dispatch(m_downsampleSets[level - 1], kModeDownsample, m_levelExtents[level - 1], m_levelExtents[level], one, one);
+        dispatch(
+            m_downsampleSets[level - 1],
+            kModeDownsample,
+            chain,
+            Level(level - 1),
+            chain,
+            Level(level),
+            m_levelExtents[level - 1],
+            m_levelExtents[level],
+            one,
+            one);
     }
     // The bottom level is weighted as the first upsample reads it; every level above it is already
     // a weighted sum when the next one up reads it.
     for (size_t level = levelCount - 1; level-- > 0;)
     {
         const glm::vec3 sourceWeight = level + 2 == levelCount ? bands[level + 1] : one;
-        dispatch(m_upsampleSets[level], kModeUpsample, m_levelExtents[level + 1], m_levelExtents[level], bands[level], sourceWeight);
+        dispatch(
+            m_upsampleSets[level],
+            kModeUpsample,
+            chain,
+            Level(level + 1),
+            chain,
+            Level(level),
+            m_levelExtents[level + 1],
+            m_levelExtents[level],
+            bands[level],
+            sourceWeight);
     }
     // With a single level no upsample ran, so level 0 is still unweighted.
     const glm::vec3 levelZeroWeight = levelCount == 1 ? bands[0] : one;
-    dispatch(m_compositeSets.at(slot), kModeComposite, m_levelExtents[0], sceneExtent, one - total, levelZeroWeight);
+    dispatch(m_compositeSets.at(slot), kModeComposite, chain, Level(0), scene, whole, m_levelExtents[0], sceneExtent, one - total, levelZeroWeight);
 }
 
 void VulkanBloomPass::OnTargetsRebuilt(const SceneRenderTargets& targets)
 {
     CreateChain(targets.GetOutputExtent());
-    CreateDescriptorSets(targets);
+    CreateBindingSets(targets);
 }
 
 void VulkanBloomPass::CreateChain(VkExtent2D extent)
 {
-    DestroyChain();
-    m_levelExtents = BuildBloomMipChain(glm::uvec2(extent.width, extent.height));
-
-    VkImageCreateInfo imageInfo{};
-    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent = {m_levelExtents[0].x, m_levelExtents[0].y, 1};
-    imageInfo.mipLevels = static_cast<uint32_t>(m_levelExtents.size());
-    imageInfo.arrayLayers = 1;
-    imageInfo.format = kChainFormat;
-    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &m_chainImage), "Failed to create the bloom chain");
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, m_chainImage, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(m_physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_chainMemory), "Failed to allocate the bloom chain");
-    CheckVulkan(vkBindImageMemory(m_device, m_chainImage, m_chainMemory, 0), "Failed to bind the bloom chain");
-
-    // One view per level: a storage view may name only one level, and sampling one level through
-    // its own view keeps the downsample from reading a level it is writing.
-    for (uint32_t level = 0; level < static_cast<uint32_t>(m_levelExtents.size()); ++level)
-    {
-        VkImageViewCreateInfo viewInfo{};
-        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = m_chainImage;
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = kChainFormat;
-        viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, 1};
-        VkImageView view = VK_NULL_HANDLE;
-        CheckVulkan(vkCreateImageView(m_device, &viewInfo, nullptr, &view), "Failed to create a bloom level view");
-        m_levelViews.push_back(view);
-    }
-}
-
-void VulkanBloomPass::DestroyChain()
-{
-    for (VkImageView view : m_levelViews)
-    {
-        vkDestroyImageView(m_device, view, nullptr);
-    }
-    m_levelViews.clear();
-    if (m_chainImage != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(m_device, m_chainImage, nullptr);
-        m_chainImage = VK_NULL_HANDLE;
-    }
-    if (m_chainMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_chainMemory, nullptr);
-        m_chainMemory = VK_NULL_HANDLE;
-    }
-    m_levelExtents.clear();
-}
-
-void VulkanBloomPass::CreateDescriptorSets(const SceneRenderTargets& targets)
-{
-    const uint32_t copyCount = targets.GetTransientCopyCount();
-    const uint32_t levelCount = static_cast<uint32_t>(m_levelViews.size());
-    const uint32_t setCount = copyCount * 2 + (levelCount - 1) * 2;
-    const std::vector<VkDescriptorSet> sets = AllocateDescriptorSets(m_device, m_descriptorPool, m_setLayout, setCount);
-
-    const auto write = [&](VkDescriptorSet set, VkImageView source, VkImageView destination)
-    {
-        const VkDescriptorImageInfo sourceInfo{m_sampler, source, VK_IMAGE_LAYOUT_GENERAL};
-        const VkDescriptorImageInfo destinationInfo{VK_NULL_HANDLE, destination, VK_IMAGE_LAYOUT_GENERAL};
-        const std::array<VkWriteDescriptorSet, 2> writes = {
-            ImageWrite(set, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &sourceInfo),
-            ImageWrite(set, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &destinationInfo)};
-        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    };
-
-    size_t next = 0;
-    m_firstDownsampleSets.assign(sets.begin(), sets.begin() + copyCount);
-    m_compositeSets.assign(sets.begin() + copyCount, sets.begin() + copyCount * 2);
-    next = copyCount * 2;
-    m_downsampleSets.assign(sets.begin() + next, sets.begin() + next + (levelCount - 1));
-    next += levelCount - 1;
-    m_upsampleSets.assign(sets.begin() + next, sets.begin() + next + (levelCount - 1));
-
-    for (uint32_t slot = 0; slot < copyCount; ++slot)
-    {
-        // SceneTaa is sampled and stored through its storage view: the pass holds it in GENERAL.
-        const VkImageView scene = targets.GetView(RenderTargetId::SceneTaa, slot);
-        write(m_firstDownsampleSets[slot], scene, m_levelViews[0]);
-        write(m_compositeSets[slot], m_levelViews[0], scene);
-    }
-    for (uint32_t level = 1; level < levelCount; ++level)
-    {
-        write(m_downsampleSets[level - 1], m_levelViews[level - 1], m_levelViews[level]);
-        write(m_upsampleSets[level - 1], m_levelViews[level], m_levelViews[level - 1]);
-    }
-}
-
-void VulkanBloomPass::DestroyHandles()
-{
-    if (m_pipeline != VK_NULL_HANDLE)
-    {
-        vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        m_pipeline = VK_NULL_HANDLE;
-    }
-    if (m_pipelineLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-        m_pipelineLayout = VK_NULL_HANDLE;
-    }
-    if (m_descriptorPool != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-        m_descriptorPool = VK_NULL_HANDLE;
-    }
+    // The binding sets name the old chain: they go with it.
     m_firstDownsampleSets.clear();
     m_compositeSets.clear();
     m_downsampleSets.clear();
     m_upsampleSets.clear();
-    DestroyChain();
-    if (m_setLayout != VK_NULL_HANDLE)
+    m_chainTexture = nullptr;
+    m_levelExtents = BuildBloomMipChain(glm::uvec2(extent.width, extent.height));
+
+    nvrhi::TextureDesc desc;
+    desc.dimension = nvrhi::TextureDimension::Texture2D;
+    desc.width = m_levelExtents[0].x;
+    desc.height = m_levelExtents[0].y;
+    desc.mipLevels = static_cast<uint32_t>(m_levelExtents.size());
+    desc.format = ToNvrhiFormat(kChainFormat);
+    desc.isShaderResource = true;
+    desc.isUAV = true;
+    desc.debugName = "Bloom chain";
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    m_chainTexture = m_nvrhiDevice->createTexture(desc);
+    if (!m_chainTexture)
     {
-        vkDestroyDescriptorSetLayout(m_device, m_setLayout, nullptr);
-        m_setLayout = VK_NULL_HANDLE;
+        throw std::runtime_error("Failed to create the bloom chain");
     }
-    if (m_sampler != VK_NULL_HANDLE)
+}
+
+void VulkanBloomPass::CreateBindingSets(const SceneRenderTargets& targets)
+{
+    // Each read and each write names one level: a storage view may name only one level, and sampling
+    // one level through its own view keeps the downsample from reading a level it is writing.
+    const auto bindingSet = [&](nvrhi::ITexture* source,
+                                nvrhi::TextureSubresourceSet sourceLevel,
+                                nvrhi::ITexture* destination,
+                                nvrhi::TextureSubresourceSet destinationLevel)
     {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
+        nvrhi::BindingSetDesc desc;
+        desc.bindings = {
+            nvrhi::BindingSetItem::Texture_SRV(0, source, nvrhi::Format::UNKNOWN, sourceLevel),
+            nvrhi::BindingSetItem::Sampler(64, m_sampler),
+            nvrhi::BindingSetItem::Texture_UAV(1, destination, nvrhi::Format::UNKNOWN, destinationLevel),
+            nvrhi::BindingSetItem::PushConstants(0, sizeof(BloomPushConstants))};
+        return CreateNvrhiBindingSet(m_nvrhiDevice, desc, m_setLayout, "Failed to create a bloom binding set");
+    };
+
+    const uint32_t copyCount = targets.GetTransientCopyCount();
+    const size_t levelCount = m_levelExtents.size();
+    const nvrhi::TextureSubresourceSet whole = nvrhi::AllSubresources;
+    m_firstDownsampleSets.clear();
+    m_compositeSets.clear();
+    m_downsampleSets.clear();
+    m_upsampleSets.clear();
+    for (uint32_t slot = 0; slot < copyCount; ++slot)
+    {
+        nvrhi::ITexture* scene = targets.GetTexture(RenderTargetId::SceneTaa, slot);
+        m_firstDownsampleSets.push_back(bindingSet(scene, whole, m_chainTexture, Level(0)));
+        m_compositeSets.push_back(bindingSet(m_chainTexture, Level(0), scene, whole));
+    }
+    for (size_t level = 1; level < levelCount; ++level)
+    {
+        m_downsampleSets.push_back(bindingSet(m_chainTexture, Level(level - 1), m_chainTexture, Level(level)));
+        m_upsampleSets.push_back(bindingSet(m_chainTexture, Level(level), m_chainTexture, Level(level - 1)));
     }
 }
 }

@@ -2,8 +2,10 @@
 
 #include "buffer.h"
 #include "format_support.h"
+#include "nvrhi_resources.h"
 #include "parallel_recorder.h"
 #include "pipeline.h"
+#include "sampler_settings.h"
 
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
@@ -21,24 +23,6 @@ namespace
 constexpr float kDepthBiasConstant = 1.0f;
 constexpr float kDepthBiasSlope = 2.0f;
 
-uint32_t FindMemoryType(
-    VkPhysicalDevice physicalDevice,
-    uint32_t typeFilter,
-    VkMemoryPropertyFlags properties)
-{
-    VkPhysicalDeviceMemoryProperties memoryProperties{};
-    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
-    for (uint32_t index = 0; index < memoryProperties.memoryTypeCount; ++index)
-    {
-        if ((typeFilter & (1u << index)) != 0 &&
-            (memoryProperties.memoryTypes[index].propertyFlags & properties) == properties)
-        {
-            return index;
-        }
-    }
-    throw std::runtime_error("Failed to find a memory type for the shadow map");
-}
-
 VkFormatFeatureFlags QueryOptimalFeatures(VkPhysicalDevice physicalDevice, VkFormat format)
 {
     VkFormatProperties properties{};
@@ -50,10 +34,12 @@ VkFormatFeatureFlags QueryOptimalFeatures(VkPhysicalDevice physicalDevice, VkFor
 VulkanShadowPass::VulkanShadowPass(
     VkPhysicalDevice physicalDevice,
     VkDevice device,
+    nvrhi::IDevice* nvrhiDevice,
     VkPipelineCache pipelineCache,
     VkDescriptorSetLayout materialSetLayout,
     uint32_t resolution)
     : m_device(device),
+      m_nvrhiDevice(nvrhiDevice),
       m_resolution(resolution)
 {
     // A throw out of a constructor skips the destructor; DestroyHandles skips null handles, so the
@@ -61,7 +47,7 @@ VulkanShadowPass::VulkanShadowPass(
     try
     {
         CreateImage(physicalDevice);
-        CreateSampler(physicalDevice);
+        CreateSampler(physicalDevice, nvrhiDevice);
         CreateRenderPass();
         CreateFramebuffers();
         CreatePipelines(pipelineCache, materialSetLayout);
@@ -86,7 +72,7 @@ uint32_t VulkanShadowPass::GetResolution() const
 
 TextureDescriptorBinding VulkanShadowPass::GetSampledBinding() const
 {
-    return TextureDescriptorBinding{m_arrayView, m_sampler};
+    return BindTexture(m_arrayView, m_texture, m_sampler);
 }
 
 std::optional<ShadowCascadePlan> VulkanShadowPass::Plan(const ShadowCascades* cascades, uint64_t casterKey)
@@ -266,16 +252,7 @@ void VulkanShadowPass::CreateImage(VkPhysicalDevice physicalDevice)
     imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    CheckVulkan(vkCreateImage(m_device, &imageInfo, nullptr, &m_image), "Failed to create shadow map image");
-
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(m_device, m_image, &requirements);
-    VkMemoryAllocateInfo allocateInfo{};
-    allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocateInfo.allocationSize = requirements.size;
-    allocateInfo.memoryTypeIndex = FindMemoryType(physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CheckVulkan(vkAllocateMemory(m_device, &allocateInfo, nullptr, &m_memory), "Failed to allocate shadow map memory");
-    CheckVulkan(vkBindImageMemory(m_device, m_image, m_memory, 0), "Failed to bind shadow map memory");
+    m_texture = CreateNvrhiImage(m_nvrhiDevice, imageInfo, m_image, "Failed to create shadow map image");
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -297,7 +274,7 @@ void VulkanShadowPass::CreateImage(VkPhysicalDevice physicalDevice)
     }
 }
 
-void VulkanShadowPass::CreateSampler(VkPhysicalDevice physicalDevice)
+void VulkanShadowPass::CreateSampler(VkPhysicalDevice physicalDevice, nvrhi::IDevice* nvrhiDevice)
 {
     // With linear filtering a comparison sampler returns the bilinear blend of four comparisons,
     // which is what turns the shader's 3x3 taps into a smooth 4x4 texel filter. Not every depth
@@ -305,21 +282,15 @@ void VulkanShadowPass::CreateSampler(VkPhysicalDevice physicalDevice)
     const bool linear =
         (QueryOptimalFeatures(physicalDevice, m_format) & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
 
-    VkSamplerCreateInfo samplerInfo{};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
-    samplerInfo.minFilter = samplerInfo.magFilter;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    nvrhi::SamplerDesc samplerDesc = BuildClampSamplerDesc(linear);
     // Outside the map counts as lit: the border is the far plane, and every receiver passes a
     // LESS_OR_EQUAL comparison against it.
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-    samplerInfo.compareEnable = VK_TRUE;
-    samplerInfo.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    samplerInfo.maxLod = 0.0f;
-    CheckVulkan(vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler), "Failed to create shadow map sampler");
+    samplerDesc.addressU = nvrhi::SamplerAddressMode::Border;
+    samplerDesc.addressV = nvrhi::SamplerAddressMode::Border;
+    samplerDesc.borderColor = nvrhi::Color(1.0f, 1.0f, 1.0f, 1.0f);
+    samplerDesc.reductionType = nvrhi::SamplerReductionType::Comparison;
+    samplerDesc.comparisonFunc = nvrhi::ComparisonFunc::LessOrEqual;
+    m_sampler = CreateNvrhiSampler(nvrhiDevice, samplerDesc, "Failed to create shadow map sampler");
 }
 
 void VulkanShadowPass::CreateRenderPass()
@@ -552,11 +523,7 @@ void VulkanShadowPass::DestroyHandles()
         vkDestroyRenderPass(m_device, m_renderPass, nullptr);
         m_renderPass = VK_NULL_HANDLE;
     }
-    if (m_sampler != VK_NULL_HANDLE)
-    {
-        vkDestroySampler(m_device, m_sampler, nullptr);
-        m_sampler = VK_NULL_HANDLE;
-    }
+    m_sampler = nullptr;
     for (VkImageView& view : m_layerViews)
     {
         if (view != VK_NULL_HANDLE)
@@ -570,15 +537,8 @@ void VulkanShadowPass::DestroyHandles()
         vkDestroyImageView(m_device, m_arrayView, nullptr);
         m_arrayView = VK_NULL_HANDLE;
     }
-    if (m_image != VK_NULL_HANDLE)
-    {
-        vkDestroyImage(m_device, m_image, nullptr);
-        m_image = VK_NULL_HANDLE;
-    }
-    if (m_memory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(m_device, m_memory, nullptr);
-        m_memory = VK_NULL_HANDLE;
-    }
+    // The image and its memory go with the texture.
+    m_texture = nullptr;
+    m_image = VK_NULL_HANDLE;
 }
 }

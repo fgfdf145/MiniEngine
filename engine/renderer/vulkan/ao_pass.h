@@ -24,6 +24,7 @@ class VulkanAoTracePass : public IScenePass
     // rayScene's set layouts make the traced variant's pipeline when it has hardware ray tracing.
     VulkanAoTracePass(
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout,
@@ -46,7 +47,7 @@ class VulkanAoTracePass : public IScenePass
     void DestroyHandles();
 
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_sampler = VK_NULL_HANDLE;
+    nvrhi::SamplerHandle m_sampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
@@ -70,6 +71,7 @@ class VulkanAoResolvePass : public IScenePass
     VulkanAoResolvePass(
         VkPhysicalDevice physicalDevice,
         VkDevice device,
+        nvrhi::IDevice* nvrhiDevice,
         VkPipelineCache pipelineCache,
         const SceneRenderTargets& targets,
         VkDescriptorSetLayout frameSetLayout);
@@ -92,8 +94,9 @@ class VulkanAoResolvePass : public IScenePass
 
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkSampler m_nearestSampler = VK_NULL_HANDLE;
-    VkSampler m_linearSampler = VK_NULL_HANDLE;
+    nvrhi::IDevice* m_nvrhiDevice = nullptr;
+    nvrhi::SamplerHandle m_nearestSampler;
+    nvrhi::SamplerHandle m_linearSampler;
     VkDescriptorSetLayout m_setLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
     VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;

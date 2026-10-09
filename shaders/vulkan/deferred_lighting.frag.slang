@@ -28,7 +28,8 @@ struct LightingConstants
     // ray traced one (SceneShadow) instead of the cascades; z = 1 to trace the local lights' shadows
     // (the ray query variant only); w = 1 for path tracing mode: the path traced light (SceneGi and
     // SceneReflections, path_trace_pass.h) in place of every ambient term; w = 2 for ReSTIR PT: its light
-    // (scenePathTrace, restir_pt_pass.h) in place of all the shading.
+    // (scenePathTrace, restir_pt_pass.h) in place of all the shading; w = 3 for the path tracer's offline
+    // mode: the two targets in place of the ambient terms and the direct lights.
     float4 debug;
 };
 [[vk::push_constant]] ConstantBuffer<LightingConstants> lightingData;
@@ -113,37 +114,37 @@ FragmentOutput main(FragmentInput input)
 {
     FragmentOutput output;
     shadedPixel = input.fragCoord.xy;
-    float depth = gbufferDepth.Sample(input.fragTexCoord).r;
+    float depth = gbufferDepth.Sample(gbufferSampler, input.fragTexCoord).r;
     if (IsFarDepth(depth))
     {
         output.outColor = float4(lightingData.backgroundRadiance.rgb, 1.0);
         return output;
     }
 
-    float3 albedo = gbufferAlbedo.Sample(input.fragTexCoord).rgb;
-    float4 normals = gbufferNormal.Sample(input.fragTexCoord);
+    float3 albedo = gbufferAlbedo.Sample(gbufferSampler, input.fragTexCoord).rgb;
+    float4 normals = gbufferNormal.Sample(gbufferSampler, input.fragTexCoord);
     float3 N = DecodeNormalOctahedral(normals.rg);
     // Already face-flipped by gbuffer.frag; the shadow lookup offsets along it.
     float3 geoNormal = DecodeNormalOctahedral(normals.ba);
-    float4 surface = gbufferSurface.Sample(input.fragTexCoord);
+    float4 surface = gbufferSurface.Sample(gbufferSampler, input.fragTexCoord);
     float metallic = surface.r;
     // Re-clamped: 8-bit storage can round the geometry pass's 0.04 floor down to 10/255, and the
     // GGX terms assume the floor holds.
     float roughness = clamp(surface.g, 0.04, 1.0);
     // Material occlusion times the screen-space (or ray traced) result. Only the ambient term uses it;
     // the resolve writes 1.0 when AO is off. g is the ray traced DDGI probe occlusion, 1 without it.
-    float2 aoSample = sceneAo.Sample(input.fragTexCoord).rg;
+    float2 aoSample = sceneAo.Sample(gbufferSampler, input.fragTexCoord).rg;
     float ao = surface.b * aoSample.r;
     ddgiProbeOcclusion = aoSample.g;
     if (lightingData.debug.y > 0.5)
     {
-        tracedSunShadow = sceneShadow.Sample(input.fragTexCoord).r;
+        tracedSunShadow = sceneShadow.Sample(gbufferSampler, input.fragTexCoord).r;
     }
 #ifdef RAY_QUERY
     tracedLocalShadows = lightingData.debug.z > 0.5;
 #endif
     // GB3 is pre-exposed; shading runs in physical units, so it is divided back here.
-    float3 emissive = gbufferEmissive.Sample(input.fragTexCoord).rgb * ubo.exposure.y;
+    float3 emissive = gbufferEmissive.Sample(gbufferSampler, input.fragTexCoord).rgb * ubo.exposure.y;
 
     // input.fragTexCoord has its origin at the top left, and the image's top row is ndc.y == -1 (see
     // fullscreen.vert). The projection's Y flip is inside invViewProj, so no flip belongs here.
@@ -178,11 +179,11 @@ FragmentOutput main(FragmentInput input)
         output.outColor = float4(0.0, 0.0, 0.0, 1.0);
         return output;
     }
-    if (lightingData.debug.w > 1.5)
+    if (lightingData.debug.w > 1.5 && lightingData.debug.w < 2.5)
     {
         // ReSTIR PT (restir_pt_spatial.comp) carries all the light the surface reflects, direct and
         // indirect; only the surface's own emission is added here. Its debug views (a = 1) show as they are.
-        float4 traced = scenePathTrace.Sample(input.fragTexCoord);
+        float4 traced = scenePathTrace.Sample(gbufferSampler, input.fragTexCoord);
         if (traced.a > 0.5)
         {
             output.outColor = float4(traced.rgb, 1.0);
@@ -198,13 +199,13 @@ FragmentOutput main(FragmentInput input)
     SpecularParams specular = NoSpecularOverride();
     if ((flags & (SHADING_FLAG_CLEARCOAT | SHADING_FLAG_ANISOTROPY)) != 0u)
     {
-        float4 coatData = gbufferCoat.Sample(input.fragTexCoord);
+        float4 coatData = gbufferCoat.Sample(gbufferSampler, input.fragTexCoord);
         if ((flags & SHADING_FLAG_CLEARCOAT) != 0u)
         {
             coat.factor = coatData.r;
             coat.roughness = clamp(coatData.g, 0.04, 1.0);
             coat.normal = (flags & SHADING_FLAG_COAT_NORMAL) != 0u
-                              ? DecodeNormalOctahedral(gbufferVelocity.Sample(input.fragTexCoord).ba)
+                              ? DecodeNormalOctahedral(gbufferVelocity.Sample(gbufferSampler, input.fragTexCoord).ba)
                               : geoNormal;
         }
         if ((flags & SHADING_FLAG_ANISOTROPY) != 0u)
@@ -215,24 +216,25 @@ FragmentOutput main(FragmentInput input)
     }
     if ((flags & SHADING_FLAG_SHEEN) != 0u)
     {
-        float4 sheenData = gbufferSheen.Sample(input.fragTexCoord);
+        float4 sheenData = gbufferSheen.Sample(gbufferSampler, input.fragTexCoord);
         sheen.color = sheenData.rgb;
         sheen.roughness = clamp(sheenData.a, 0.04, 1.0);
     }
     if ((flags & SHADING_FLAG_SPECULAR) != 0u)
     {
-        float4 specularData = gbufferSpecular.Sample(input.fragTexCoord);
+        float4 specularData = gbufferSpecular.Sample(gbufferSampler, input.fragTexCoord);
         specular.dielectricF0 = specularData.rgb * specularData.rgb;
         specular.dielectricF90 = specularData.a;
     }
     // Screen-space reflection in HDR target units; ShadeSurface wants physical radiance.
-    float4 reflection = sceneReflections.Sample(input.fragTexCoord);
+    float4 reflection = sceneReflections.Sample(gbufferSampler, input.fragTexCoord);
     reflection.rgb *= ubo.exposure.y;
     if (lightingData.debug.w > 0.5)
     {
         // Path tracing mode: the two targets hold the demodulated traced light, pre-exposed.
         pathTracedIndirect = true;
-        pathTracedDiffuse = sceneGi.Sample(input.fragTexCoord).rgb * ubo.exposure.y;
+        pathTracedDirect = lightingData.debug.w > 2.5;
+        pathTracedDiffuse = sceneGi.Sample(gbufferSampler, input.fragTexCoord).rgb * ubo.exposure.y;
         pathTracedSpecular = reflection.rgb;
         reflection = float4(0.0);
     }

@@ -85,6 +85,35 @@ class IRenderBackend
     virtual void StopQuadRecording()
     {
     }
+    // Photo Mode (docs/design/2026-10-09-photo-mode-design.md): a still from the viewport's camera at
+    // width x height, rendered by a view of its own beside the viewport's for warmupFrames frames and
+    // then written to path as a PNG. The viewport keeps its size. Fails while another photo renders.
+    struct PhotoRequest
+    {
+        std::filesystem::path path;
+        uint32_t width = 3840;
+        uint32_t height = 2160;
+        uint32_t warmupFrames = 32;
+        // The most pixels one view may have before the photo is tiled; 0 decides from the free GPU
+        // memory (PhotoMaxViewPixels). For comparing tiled photos with whole ones.
+        uint64_t maxViewPixels = 0;
+    };
+    virtual bool TakePhoto(const PhotoRequest& request, std::string& error)
+    {
+        (void)request;
+        error = "This render backend cannot take photos";
+        return false;
+    }
+    // Whether a photo is still rendering or being written.
+    virtual bool IsTakingPhoto() const
+    {
+        return false;
+    }
+    // Waits for a photo whose tiles are all rendered to be written, and reports it. A photo still
+    // rendering is left as it is.
+    virtual void WaitForPhotoWrite()
+    {
+    }
     // Logs the recent frames' average CPU and per-pass GPU times. For verification runs (--frames).
     virtual void LogFrameTimings() const
     {
