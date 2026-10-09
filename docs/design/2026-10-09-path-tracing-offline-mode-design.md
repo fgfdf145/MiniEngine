@@ -110,6 +110,9 @@ RTX 4070 笔记本，Debug 构建（着色器与 Release 相同），1280×720�
   256 → 0.990（仍有细颗粒）。默认取 64。路径正则化打开后亮点变小但不消失，所以两者都要。
 - **RR**：R34 道路，离线 + RR、实时 + RR、离线自带滤波三者在地面、阴影、车身、引擎盖、天空的均值相差 < 2%；
   相机以 0.02 m/帧移动时（离线模式不累积，RR 拿每帧 4 spp）画面干净。
+- **实时模式不变**：`AB_MODE=exe tools/render_ab/ab.py` 对比 main（4370fd9）：`road_rt`、`materials_rt`、`road_dlss_rr`、
+  `fixture_track_pt` 逐像素相同；`road_pt`、`materials_pt`、`emissive_pt` 最大差 1–2 级（< 0.001% 的像素 > 2）：选中的
+  局部光现在一律经 `LayeredLight`，权重的乘法顺序变了，只是舍入。
 - **单元测试**：`miniengine.path_tracing` 新增四组（展开的设置、32 位历史上限、进度、特性规则），
   `miniengine.graphics_debug_panel` 新增离线模式两张快照（有无 RR）；整套 125 项通过（两个长的车辆物理测试另算）。
 
