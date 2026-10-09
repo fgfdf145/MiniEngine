@@ -19,6 +19,8 @@
     gltf_compression.h
     gltf_model_loader.cpp
     gltf_model_loader.h
+    png_file.cpp
+    png_file.h
     gta5_game_data.cpp
     gta5_game_data.h
     gta5_importer.cpp

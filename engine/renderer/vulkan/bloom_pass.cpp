@@ -100,7 +100,11 @@ void VulkanBloomPass::Record(
     // band_k * blur_k into level 0, and the composite keeps 1 - total where it was.
     const size_t levelCount = m_levelExtents.size();
     const std::vector<glm::vec3> bands =
-        ComputeGlareBands(frame.glareFNumber, frame.outputExtent.height, levelCount, std::max(frame.bloom.strength, 0.0f));
+        ComputeGlareBands(
+            frame.glareFNumber,
+            frame.glareImageHeight != 0 ? frame.glareImageHeight : frame.outputExtent.height,
+            levelCount,
+            std::max(frame.bloom.strength, 0.0f));
     glm::vec3 total(0.0f);
     for (const glm::vec3& band : bands)
     {

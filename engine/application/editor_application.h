@@ -52,6 +52,12 @@ struct EditorApplicationOptions
     std::optional<std::filesystem::path> photoPath;
     std::optional<RenderExtent> photoSize;
     std::optional<uint32_t> photoWarmupFrames;
+    // --photo-max-view-pixels N: tiles the photo when it has more pixels than N, whatever the GPU
+    // has free (for comparing tiled photos with whole ones).
+    std::optional<uint64_t> photoMaxViewPixels;
+    // --photo-at N: presses the shutter on the Nth frame --frames counts rather than the first, so the
+    // viewport's auto exposure, which the photo keeps, has adapted.
+    uint32_t photoAtFrame = 1;
     // Starts with the Khronos reference view on (Graphics Debug), for comparing captures against the
     // Khronos glTF Sample Viewer.
     bool khronosReference = false;

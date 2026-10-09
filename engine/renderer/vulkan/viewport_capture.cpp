@@ -217,6 +217,21 @@ std::vector<glm::vec4> ReadImageHalfFloats(const ImageCaptureRequest& request)
 
 void CaptureImageToPng(const ImageCaptureRequest& request, const std::filesystem::path& path)
 {
+    const std::vector<uint8_t> pixels = ReadImageRgba8(request);
+    if (stbi_write_png(
+            path.string().c_str(),
+            static_cast<int>(request.extent.width),
+            static_cast<int>(request.extent.height),
+            4,
+            pixels.data(),
+            static_cast<int>(request.extent.width) * 4) == 0)
+    {
+        throw std::runtime_error("Failed to write '" + path.string() + "'");
+    }
+}
+
+std::vector<uint8_t> ReadImageRgba8(const ImageCaptureRequest& request)
+{
     const std::vector<uint8_t> bytes = ReadImageBytes(request);
     std::vector<uint8_t> pixels(static_cast<size_t>(request.extent.width) * request.extent.height * 4);
     if (IsHalfFloat(request.format))
@@ -244,16 +259,6 @@ void CaptureImageToPng(const ImageCaptureRequest& request, const std::filesystem
     {
         pixels[texel] = 255;
     }
-
-    if (stbi_write_png(
-            path.string().c_str(),
-            static_cast<int>(request.extent.width),
-            static_cast<int>(request.extent.height),
-            4,
-            pixels.data(),
-            static_cast<int>(request.extent.width) * 4) == 0)
-    {
-        throw std::runtime_error("Failed to write '" + path.string() + "'");
-    }
+    return pixels;
 }
 }

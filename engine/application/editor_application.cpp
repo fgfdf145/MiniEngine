@@ -271,6 +271,18 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--photo-at")
+        {
+            options.photoAtFrame = ParsePositiveFrameCount(ReadRequiredArgument(i, argc, argv, argument));
+            continue;
+        }
+
+        if (argument == "--photo-max-view-pixels")
+        {
+            options.photoMaxViewPixels = ParsePositiveFrameCount(ReadRequiredArgument(i, argc, argv, argument));
+            continue;
+        }
+
         if (argument == "--photo-warmup")
         {
             options.photoWarmupFrames = ParsePositiveFrameCount(ReadRequiredArgument(i, argc, argv, argument));
@@ -871,7 +883,7 @@ int EditorApplication::Run()
                 throw std::runtime_error("Cannot record to '" + m_options.quadRecordPath->string() + "': " + error);
             }
         }
-        if (m_options.photoPath.has_value() && !waiting && !photoStarted)
+        if (m_options.photoPath.has_value() && !waiting && !photoStarted && renderedFrameCount + 1 >= m_options.photoAtFrame)
         {
             photoStarted = true;
             const PhotoModeSettings saved = ClampPhotoModeSettings(sharedState->engineSettings.photoMode);
@@ -880,6 +892,7 @@ int EditorApplication::Run()
             request.width = m_options.photoSize.has_value() ? m_options.photoSize->width : saved.width;
             request.height = m_options.photoSize.has_value() ? m_options.photoSize->height : saved.height;
             request.warmupFrames = m_options.photoWarmupFrames.value_or(saved.warmupFrames);
+            request.maxViewPixels = m_options.photoMaxViewPixels.value_or(0);
             std::string error;
             if (!renderer->TakePhoto(request, error))
             {
@@ -928,6 +941,7 @@ int EditorApplication::Run()
     // Also when the window was closed before the last frame: the file is finished either way.
     renderer->StopVideoRecording();
     renderer->StopQuadRecording();
+    renderer->WaitForPhotoWrite();
     if (m_options.photoPath.has_value() && (!photoStarted || renderer->IsTakingPhoto()))
     {
         LOG_ERROR("--photo: the run ended before the photo was saved; give --frames more than its warm-up frames");

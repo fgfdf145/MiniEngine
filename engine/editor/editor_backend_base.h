@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer_shared_state.h"
+#include "services/photo_mode.h"
 #include "services/quad_recording.h"
 
 #include <engine/core/video/video_mosaic.h>
@@ -11,6 +12,7 @@
 #include <array>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -21,6 +23,16 @@ namespace me
 {
 
 class Window;
+
+// Photo Mode's view as the frame drawn last left it: its tone mapped picture (RGBA8, rows from the
+// top) and the exposure it was drawn at.
+struct PhotoViewPicture
+{
+    std::vector<uint8_t> rgba;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    float exposureEv100 = 0.0f;
+};
 
 class EditorRenderBackendBase : public IRenderBackend
 {
@@ -36,6 +48,7 @@ class EditorRenderBackendBase : public IRenderBackend
     {
         return m_photo.has_value();
     }
+    void WaitForPhotoWrite() override;
 
   protected:
     EditorRenderBackendBase(
@@ -75,11 +88,10 @@ class EditorRenderBackendBase : public IRenderBackend
     virtual void FlushQuadVideoFrames()
     {
     }
-    // Writes the photo view's picture of the frame drawn last (SceneCaptureView::photo) to path as a
-    // PNG, once the render thread has finished it. Throws when there is none.
-    virtual void CapturePhotoView(const std::filesystem::path& path)
+    // The photo view's picture of the frame drawn last (SceneCaptureView::photo), once the render
+    // thread has finished it. Throws when there is none.
+    virtual PhotoViewPicture ReadPhotoView()
     {
-        (void)path;
         throw std::runtime_error("This render backend cannot take photos");
     }
     // This frame's quad cameras, in the canvas's order (UpdateCaptureViews): while a quad recording
@@ -138,9 +150,13 @@ class EditorRenderBackendBase : public IRenderBackend
     // Tools > Take Photo: a photo at the Photo Mode window's settings to
     // captures/photo_<date>_<time>.png.
     void TakePhotoFromEditor();
-    // Saves the photo once its view has rendered its warm-up frames, before this frame's views are
-    // placed; reports how it ended in State().photoStatus.
-    void FinishPhoto();
+    // Before this frame's views are placed: takes the photo view's picture once it has rendered its
+    // warm-up frames (into the canvas, a tile at a time) and moves to the next tile; once the last is
+    // in, writes the PNG on a worker thread and, when that is done, reports how the photo ended in
+    // State().photoStatus.
+    void AdvancePhoto();
+    // The photo's view for this frame, while it renders.
+    std::optional<SceneCaptureView> PlacePhotoView();
     // What the quad cameras follow this frame: the driven car's body, else the selected model; with
     // its name. Nothing when there is neither.
     struct QuadRecordingTarget
@@ -171,11 +187,21 @@ class EditorRenderBackendBase : public IRenderBackend
     std::unique_ptr<VideoRecorder> m_videoRecorder;
     std::unique_ptr<QuadVideoRecording> m_quadRecording;
     std::vector<SceneCaptureView> m_captureViews;
-    // The photo being made: what was asked, and how many frames have named its view.
+    // The photo being made: what was asked; the viewport's camera and aspect when it was, which every
+    // tile keeps; how it is cut into tiles, the tile rendering and how many frames have named its
+    // view; the canvas the tiles go into; and, once they are all in, the PNG being written (its
+    // error, empty when it was written).
     struct PhotoInProgress
     {
         PhotoRequest request;
-        uint32_t framesQueued = 0;
+        Camera camera;
+        float viewportAspect = 1.0f;
+        PhotoTiling tiling;
+        size_t tile = 0;
+        uint32_t tileFrames = 0;
+        std::vector<uint8_t> canvas;
+        float exposureEv100 = 0.0f;
+        std::optional<std::future<std::string>> writing;
     };
     std::optional<PhotoInProgress> m_photo;
     // The viewport's width over its height as the scene last rendered it (UpdateViewportMatrices),

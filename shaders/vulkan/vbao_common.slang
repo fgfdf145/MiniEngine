@@ -38,12 +38,17 @@ float ViewZFromDepth(float depth)
 }
 
 // View-space position of a pixel centre. uv has its origin at the top left; the Y flip lives in
-// proj[1][1], so it falls out of the division without a sign here.
+// proj[1][1], so it falls out of the division without a sign here. clip.x = P00 * x + P02 * z with
+// clip.w = -z, so the off-centre terms P02 and P12 (TAA's jitter, a Photo Mode tile's part of a
+// larger frustum) shift the NDC before it scales back.
 float3 ViewPositionFromDepth(float2 uv, float depth)
 {
     float viewZ = ViewZFromDepth(depth);
     float2 ndc = uv * 2.0 - 1.0;
-    return float3(ndc.x * -viewZ / ubo.proj[0][0], ndc.y * -viewZ / ubo.proj[1][1], viewZ);
+    return float3(
+        (ndc.x + ubo.proj[0][2]) * -viewZ / ubo.proj[0][0],
+        (ndc.y + ubo.proj[1][2]) * -viewZ / ubo.proj[1][1],
+        viewZ);
 }
 
 // The half-resolution traces (vbao_trace.comp, gi_trace.comp) trace one full-resolution pixel of

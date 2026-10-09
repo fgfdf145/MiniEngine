@@ -1307,9 +1307,14 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     for (size_t index = 0; index < m_captureViews.size(); ++index)
     {
         VulkanSceneView& view = *m_captureViews[index];
-        Camera camera = packet.captureViews[index].camera;
+        const SceneCaptureView& capture = packet.captureViews[index];
+        if (capture.resetHistory)
+        {
+            view.ResetHistories();
+        }
+        Camera camera = capture.camera;
         UpdateAutoExposure(view, camera, packet, shared.frameSlot);
-        capturePrepared.push_back(PrepareView(view, camera, packet.captureViews[index].matrices, false, shared, packet));
+        capturePrepared.push_back(PrepareView(view, camera, capture.matrices, false, shared, packet, capture.wholeExtent));
     }
     m_cpuStages.Mark("CaptureViews");
     const std::unique_ptr<PreparedView> mainPrepared = PrepareView(m_view, packet.camera, packet.viewportMatrices, true, shared, packet);
@@ -1650,7 +1655,8 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     const ViewportMatrices& viewportMatrices,
     bool viewport,
     const SharedFrameState& shared,
-    RenderFramePacket& packet)
+    RenderFramePacket& packet,
+    RenderExtent wholeExtent)
 {
     auto prepared = std::make_unique<PreparedView>();
     prepared->view = &view;
@@ -1689,7 +1695,11 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
         ShadowCameraInput shadowCamera{};
         shadowCamera.view = viewportMatrices.view;
         shadowCamera.verticalFovRadians = glm::radians(camera.fovDegrees);
-        shadowCamera.aspect = static_cast<float>(extent.width) / static_cast<float>(std::max(extent.height, 1u));
+        // A tile's camera keeps the whole photo's lens; its cascades cover the whole photo's frustum,
+        // the same for every tile.
+        shadowCamera.aspect = wholeExtent.IsValid()
+                                  ? static_cast<float>(wholeExtent.width) / static_cast<float>(wholeExtent.height)
+                                  : static_cast<float>(extent.width) / static_cast<float>(std::max(extent.height, 1u));
         shadowCamera.nearPlane = camera.nearPlane;
         shadowCamera.farPlane = camera.farPlane;
         ShadowCascadeSettings shadowSettings{};
@@ -2039,6 +2049,7 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.hdrOutput = m_swapchain->IsHdr();
     frame.hdrPeakNits = std::clamp(renderDebug.hdrPeakNits, 250.0f, 10000.0f);
     // HDR output shows more of the highlight's brightness directly, so it needs less glare.
+    frame.glareImageHeight = wholeExtent.IsValid() ? wholeExtent.height : outputExtent.height;
     frame.glareFNumber = GlareFNumberFromEv100(
         camera.exposureEv100,
         frame.hdrOutput ? frame.hdrPeakNits : kGlareSdrPeakNits);
@@ -2470,15 +2481,15 @@ void VulkanRenderer::CaptureViewport(const std::filesystem::path& path)
                                  });
 }
 
-void VulkanRenderer::CapturePhotoView(const std::filesystem::path& path)
+PhotoViewPicture VulkanRenderer::ReadPhotoView()
 {
-    m_renderThread->RunExclusive([&]()
-                                 {
-                                     CapturePhotoViewNow(path);
-                                 });
+    return m_renderThread->RunExclusive([&]()
+                                        {
+                                            return ReadPhotoViewNow();
+                                        });
 }
 
-void VulkanRenderer::CapturePhotoViewNow(const std::filesystem::path& path)
+PhotoViewPicture VulkanRenderer::ReadPhotoViewNow()
 {
     if (!m_photoViewIndex.has_value() || *m_photoViewIndex >= m_captureViews.size())
     {
@@ -2503,13 +2514,12 @@ void VulkanRenderer::CapturePhotoViewNow(const std::filesystem::path& path)
     request.extent = view.targets->GetOutputExtent();
     // The capture views end their frame with SceneLdr shader-read (kCaptureReads).
     request.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    CaptureImageToPng(request, path);
-    LOG_INFO(
-        "Photo: saved {}x{} to '{}' at EV100 {:.2f}",
-        request.extent.width,
-        request.extent.height,
-        path.string(),
-        view.exposureEv100.value_or(State().camera.exposureEv100));
+    PhotoViewPicture picture;
+    picture.rgba = ReadImageRgba8(request);
+    picture.width = request.extent.width;
+    picture.height = request.extent.height;
+    picture.exposureEv100 = view.exposureEv100.value_or(State().camera.exposureEv100);
+    return picture;
 }
 
 void VulkanRenderer::CaptureDdgiReference(const DdgiReferenceRequest& reference)
