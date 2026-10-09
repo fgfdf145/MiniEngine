@@ -16,6 +16,7 @@
 #include <engine/asset/kn5_importer.h>
 #include <engine/asset/model_cache.h>
 #include <engine/asset/model_loader.h>
+#include <engine/asset/png_file.h>
 #include <engine/core/log/log.h>
 #include <engine/core/paths/engine_paths.h>
 #include <engine/core/threading/render_thread.h>
@@ -688,15 +689,38 @@ bool EditorRenderBackendBase::TakePhoto(const PhotoRequest& request, std::string
     photo.request.width = clamped.width;
     photo.request.height = clamped.height;
     photo.request.warmupFrames = clamped.warmupFrames;
-    m_photo = photo;
+    // The moment the shutter is pressed: every tile is of this view, wherever the camera goes next.
+    photo.camera = State().camera;
+    photo.viewportAspect = m_viewportAspect;
+    photo.tiling = PlanPhotoTiles(
+        photo.request.width,
+        photo.request.height,
+        request.maxViewPixels != 0 ? request.maxViewPixels : PhotoMaxViewPixels(State().gpuMemory));
+    if (photo.tiling.Tiled())
+    {
+        photo.canvas.assign(static_cast<size_t>(photo.request.width) * photo.request.height * 4, 0);
+    }
     PhotoStatus& status = State().photoStatus;
     status = PhotoStatus{};
     status.rendering = true;
-    status.framesTotal = photo.request.warmupFrames;
+    status.framesTotal = photo.request.warmupFrames * static_cast<uint32_t>(photo.tiling.tiles.size());
+    status.tile = 1;
+    status.tileCount = static_cast<uint32_t>(photo.tiling.tiles.size());
     status.width = photo.request.width;
     status.height = photo.request.height;
+    const RenderExtent viewExtent = photo.tiling.ViewExtent();
+    status.viewWidth = viewExtent.width;
+    status.viewHeight = viewExtent.height;
     LOG_INFO(
-        "Photo: {}x{} after {} frames to '{}'", photo.request.width, photo.request.height, photo.request.warmupFrames, request.path.string());
+        "Photo: {}x{} in {} tile(s) ({}x{} views), {} frames each, to '{}'",
+        photo.request.width,
+        photo.request.height,
+        photo.tiling.tiles.size(),
+        viewExtent.width,
+        viewExtent.height,
+        photo.request.warmupFrames,
+        request.path.string());
+    m_photo = std::move(photo);
     return true;
 }
 
@@ -719,33 +743,153 @@ void EditorRenderBackendBase::TakePhotoFromEditor()
     }
 }
 
-void EditorRenderBackendBase::FinishPhoto()
+void EditorRenderBackendBase::AdvancePhoto()
 {
-    if (!m_photo.has_value() || m_photo->framesQueued < m_photo->request.warmupFrames)
+    if (!m_photo.has_value())
     {
         return;
     }
-    const PhotoRequest request = m_photo->request;
-    m_photo.reset();
+    PhotoInProgress& photo = *m_photo;
     PhotoStatus& status = State().photoStatus;
-    status.rendering = false;
-    status.messageTime = std::chrono::steady_clock::now();
+    const auto finish = [&](std::string error)
+    {
+        const PhotoRequest request = photo.request;
+        const size_t tiles = photo.tiling.tiles.size();
+        const float exposure = photo.exposureEv100;
+        m_photo.reset();
+        status.rendering = false;
+        status.saving = false;
+        status.messageTime = std::chrono::steady_clock::now();
+        status.messageIsError = !error.empty();
+        if (error.empty())
+        {
+            status.message = fmt::format("Saved {} x {} to {}", request.width, request.height, request.path.string());
+            LOG_INFO(
+                "Photo: saved {}x{} ({} tile(s)) to '{}' at EV100 {:.2f}", request.width, request.height, tiles, request.path.string(), exposure);
+        }
+        else
+        {
+            status.message = fmt::format("The photo was not saved: {}", error);
+            LOG_ERROR("Photo: could not write '{}': {}", request.path.string(), error);
+        }
+    };
+
+    // Written: report it.
+    if (photo.writing.has_value())
+    {
+        if (photo.writing->wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+        {
+            finish(photo.writing->get());
+        }
+        return;
+    }
+    if (photo.tileFrames < photo.request.warmupFrames)
+    {
+        return;
+    }
+
+    // The tile's view has rendered its frames: its picture into the canvas.
     try
     {
-        if (request.path.has_parent_path())
+        PhotoViewPicture picture = ReadPhotoView();
+        const RenderExtent expected = photo.tiling.ViewExtent();
+        if (picture.width != expected.width || picture.height != expected.height)
         {
-            std::filesystem::create_directories(request.path.parent_path());
+            throw std::runtime_error(fmt::format(
+                "the photo's view was {}x{}, not the {}x{} it was asked for", picture.width, picture.height, expected.width, expected.height));
         }
-        CapturePhotoView(request.path);
-        status.message = fmt::format("Saved {} x {} to {}", request.width, request.height, request.path.string());
-        status.messageIsError = false;
+        photo.exposureEv100 = picture.exposureEv100;
+        if (photo.tiling.Tiled())
+        {
+            CopyTileIntoCanvas(photo.tiling, photo.tiling.tiles[photo.tile], picture.rgba, photo.canvas);
+        }
+        else
+        {
+            photo.canvas = std::move(picture.rgba);
+        }
     }
     catch (const std::exception& error)
     {
-        status.message = fmt::format("The photo was not saved: {}", error.what());
-        status.messageIsError = true;
-        LOG_ERROR("Photo: could not write '{}': {}", request.path.string(), error.what());
+        finish(error.what());
+        return;
     }
+    ++photo.tile;
+    photo.tileFrames = 0;
+    if (photo.tile < photo.tiling.tiles.size())
+    {
+        return;
+    }
+
+    // Every tile is in: the PNG is written on a worker, which an 8K one keeps busy for seconds.
+    status.rendering = false;
+    status.saving = true;
+    photo.writing = std::async(
+        std::launch::async,
+        [path = photo.request.path, width = photo.request.width, height = photo.request.height, canvas = std::move(photo.canvas)]() -> std::string
+        {
+            try
+            {
+                if (path.has_parent_path())
+                {
+                    std::filesystem::create_directories(path.parent_path());
+                }
+                WriteRgba8Png(path, width, height, canvas);
+                return {};
+            }
+            catch (const std::exception& error)
+            {
+                return error.what();
+            }
+        });
+}
+
+void EditorRenderBackendBase::WaitForPhotoWrite()
+{
+    if (m_photo.has_value() && m_photo->writing.has_value())
+    {
+        m_photo->writing->wait();
+        AdvancePhoto();
+    }
+}
+
+std::optional<SceneCaptureView> EditorRenderBackendBase::PlacePhotoView()
+{
+    if (!m_photo.has_value() || m_photo->writing.has_value() || m_photo->tile >= m_photo->tiling.tiles.size())
+    {
+        return std::nullopt;
+    }
+    PhotoInProgress& photo = *m_photo;
+    const PhotoTiling& tiling = photo.tiling;
+    const RenderExtent whole{photo.request.width, photo.request.height};
+    const bool useZeroToOneDepth = UsesZeroToOneDepth(m_backendType);
+    const bool invertRenderYAxis = UsesInvertedRenderYAxis(m_backendType);
+
+    // The viewport's camera when the shutter was pressed, framed inside the viewport at the photo's
+    // aspect, at the exposure the viewport showed; a tile sees its part of that frustum.
+    SceneCaptureView view;
+    view.photo = true;
+    view.extent = tiling.ViewExtent();
+    view.camera = PlacePhotoCamera(photo.camera, photo.viewportAspect, static_cast<float>(whole.width) / static_cast<float>(whole.height));
+    view.matrices.view = view.camera.GetViewMatrix();
+    view.matrices.projection = view.camera.GetProjectionMatrix(whole, false, useZeroToOneDepth);
+    view.matrices.renderProjection =
+        view.camera.GetProjectionMatrix(whole, invertRenderYAxis, useZeroToOneDepth, UsesReverseRenderDepth(m_backendType));
+    if (tiling.Tiled())
+    {
+        const PhotoTile& tile = tiling.tiles[photo.tile];
+        view.matrices.projection = TileProjection(view.matrices.projection, tiling, tile, false);
+        view.matrices.renderProjection = TileProjection(view.matrices.renderProjection, tiling, tile, invertRenderYAxis);
+        view.wholeExtent = whole;
+        // A new tile is a cut: what the view's histories hold is of the last one.
+        view.resetHistory = photo.tileFrames == 0 && photo.tile > 0;
+    }
+    ++photo.tileFrames;
+
+    PhotoStatus& status = State().photoStatus;
+    status.rendering = true;
+    status.framesRendered = static_cast<uint32_t>(photo.tile) * photo.request.warmupFrames + photo.tileFrames;
+    status.tile = static_cast<uint32_t>(photo.tile) + 1;
+    return view;
 }
 
 bool EditorRenderBackendBase::StartVideoRecording(const VideoRecordingRequest& request, std::string& error)
@@ -1069,8 +1213,9 @@ std::optional<EditorRenderBackendBase::QuadRecordingTarget> EditorRenderBackendB
 
 void EditorRenderBackendBase::UpdateCaptureViews()
 {
-    // The frame before this one was the photo's last: save it before the views are placed again.
-    FinishPhoto();
+    // The frame before this one may have been a photo tile's last: take it before the views are
+    // placed again.
+    AdvancePhoto();
     m_captureViews.clear();
     State().quadRecordingTarget.clear();
     const std::optional<QuadRecordingTarget> target = FindQuadRecordingTarget();
@@ -1106,24 +1251,10 @@ void EditorRenderBackendBase::UpdateCaptureViews()
         m_captureViews.push_back(view);
     }
 
-    // The photo's view, last: the viewport's camera, framed inside the viewport at the photo's
-    // aspect, at the exposure the viewport shows.
-    if (m_photo.has_value())
+    // The photo's view, last.
+    if (std::optional<SceneCaptureView> photo = PlacePhotoView())
     {
-        SceneCaptureView view;
-        view.photo = true;
-        view.extent = RenderExtent{m_photo->request.width, m_photo->request.height};
-        const float photoAspect = static_cast<float>(view.extent.width) / static_cast<float>(view.extent.height);
-        view.camera = PlacePhotoCamera(State().camera, m_viewportAspect, photoAspect);
-        setMatrices(view);
-        m_captureViews.push_back(view);
-        ++m_photo->framesQueued;
-        PhotoStatus& status = State().photoStatus;
-        status.rendering = true;
-        status.framesRendered = m_photo->framesQueued;
-        status.framesTotal = m_photo->request.warmupFrames;
-        status.width = m_photo->request.width;
-        status.height = m_photo->request.height;
+        m_captureViews.push_back(*photo);
     }
 }
 
