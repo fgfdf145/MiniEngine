@@ -1,0 +1,196 @@
+diff --git a/src/d3d12/d3d12-backend.h b/src/d3d12/d3d12-backend.h
+index 2b140f0..de935fa 100644
+--- a/src/d3d12/d3d12-backend.h
++++ b/src/d3d12/d3d12-backend.h
+@@ -82,6 +82,7 @@
+ #include <queue>
+ #include <list>
+ #include <mutex>
++#include <string>
+ #include <unordered_map>
+ #include <utility>
+ 
+@@ -208,6 +209,18 @@ namespace nvrhi::d3d12
+         // The cache does not own the RS objects, so store weak references
+         std::unordered_map<size_t, RootSignature*> rootsigCache;
+ 
++        // Binding sets whose sampler tables hold the same samplers share one table: the shader-visible
++        // sampler heap holds at most 2048 descriptors, and identical tables (a frame set per frame slot
++        // and scene view, all naming the same material samplers) would otherwise each take their own.
++        // Keyed by the table's D3D12_SAMPLER_DESCs, bytewise.
++        struct SharedSamplerTable
++        {
++            DescriptorIndex baseIndex = 0;
++            uint32_t refCount = 0;
++        };
++        std::mutex samplerTableMutex;
++        std::unordered_map<std::string, SharedSamplerTable> samplerTables;
++
+         explicit DeviceResources(const Context& context, const DeviceDesc& desc);
+ 
+         uint8_t getFormatPlaneCount(DXGI_FORMAT format);
+@@ -434,6 +447,7 @@ namespace nvrhi::d3d12
+         void createDescriptor(size_t descriptor) const;
+ 
+         const SamplerDesc& getDesc() const override { return m_Desc; }
++        const D3D12_SAMPLER_DESC& getD3D12Desc() const { return m_d3d12desc; }
+ 
+     private:
+         const Context& m_Context;
+@@ -634,6 +648,8 @@ namespace nvrhi::d3d12
+         bool descriptorTableValidSRVetc = false;
+         bool descriptorTableValidSamplers = false;
+         bool hasUavBindings = false;
++        // The key of the shared sampler table this set holds a reference to (DeviceResources::samplerTables).
++        std::string samplerTableKey;
+ 
+         static_vector<std::pair<RootParameterIndex, IBuffer*>, c_MaxVolatileConstantBuffersPerLayout> rootParametersVolatileCB;
+         
+@@ -648,7 +664,8 @@ namespace nvrhi::d3d12
+ 
+         ~BindingSet() override;
+ 
+-        void createDescriptors();
++        // False when a descriptor heap is out of space (the set is unusable).
++        bool createDescriptors();
+ 
+         const BindingSetDesc* getDesc() const override { return &desc; }
+         IBindingLayout* getLayout() const override { return layout; }
+diff --git a/src/d3d12/d3d12-resource-bindings.cpp b/src/d3d12/d3d12-resource-bindings.cpp
+index c4d2ede..3cd4903 100644
+--- a/src/d3d12/d3d12-resource-bindings.cpp
++++ b/src/d3d12/d3d12-resource-bindings.cpp
+@@ -66,7 +66,7 @@ namespace nvrhi::d3d12
+         return false;
+     }
+     
+-    void BindingSet::createDescriptors()
++    bool BindingSet::createDescriptors()
+     {
+         // Process the volatile constant buffers: they occupy one root parameter each
+         for (const std::pair<RootParameterIndex, D3D12_ROOT_DESCRIPTOR1>& parameter : layout->rootParametersVolatileCB)
+@@ -95,19 +95,14 @@ namespace nvrhi::d3d12
+ 
+         if (layout->descriptorTableSizeSamplers > 0)
+         {
+-            DescriptorIndex descriptorTableBaseIndex = m_Resources.samplerHeap.allocateDescriptors(layout->descriptorTableSizeSamplers);
+-            descriptorTableSamplers = descriptorTableBaseIndex;
+-            rootParameterIndexSamplers = layout->rootParameterSamplers;
+-            descriptorTableValidSamplers = true;
++            // The table's samplers in descriptor order; a slot the set does not bind gets a default sampler.
++            std::vector<D3D12_SAMPLER_DESC> samplerDescs(layout->descriptorTableSizeSamplers, D3D12_SAMPLER_DESC{});
+ 
+             for (const auto& range : layout->descriptorRangesSamplers)
+             {
+                 for (uint32_t itemInRange = 0; itemInRange < range.NumDescriptors; itemInRange++)
+                 {
+                     uint32_t slot = range.BaseShaderRegister + itemInRange;
+-                    bool found = false;
+-                    D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = m_Resources.samplerHeap.getCpuHandle(
+-                        descriptorTableBaseIndex + range.OffsetInDescriptorsFromTableStart + itemInRange);
+ 
+                     for (const auto& binding : desc.bindings)
+                     {
+@@ -116,27 +111,44 @@ namespace nvrhi::d3d12
+                             Sampler* sampler = checked_cast<Sampler*>(binding.resourceHandle);
+                             resources.push_back(sampler);
+ 
+-                            sampler->createDescriptor(descriptorHandle.ptr);
+-                            found = true;
++                            samplerDescs[range.OffsetInDescriptorsFromTableStart + itemInRange] = sampler->getD3D12Desc();
+                             break;
+                         }
+                     }
++                }
++            }
+ 
+-                    if (!found)
+-                    {
+-                        // Create a default sampler
+-                        D3D12_SAMPLER_DESC samplerDesc = {};
+-                        m_Context.device->CreateSampler(&samplerDesc, descriptorHandle);
+-                    }
++            std::string key(reinterpret_cast<const char*>(samplerDescs.data()), samplerDescs.size() * sizeof(D3D12_SAMPLER_DESC));
++
++            std::lock_guard lockGuard(m_Resources.samplerTableMutex);
++            auto found = m_Resources.samplerTables.find(key);
++            if (found == m_Resources.samplerTables.end())
++            {
++                DescriptorIndex descriptorTableBaseIndex = m_Resources.samplerHeap.allocateDescriptors(layout->descriptorTableSizeSamplers);
++                if (descriptorTableBaseIndex == c_InvalidDescriptorIndex)
++                    return false;
++
++                for (uint32_t index = 0; index < layout->descriptorTableSizeSamplers; index++)
++                {
++                    m_Context.device->CreateSampler(&samplerDescs[index], m_Resources.samplerHeap.getCpuHandle(descriptorTableBaseIndex + index));
+                 }
++
++                m_Resources.samplerHeap.copyToShaderVisibleHeap(descriptorTableBaseIndex, layout->descriptorTableSizeSamplers);
++                found = m_Resources.samplerTables.emplace(key, DeviceResources::SharedSamplerTable{ descriptorTableBaseIndex, 0 }).first;
+             }
+ 
+-            m_Resources.samplerHeap.copyToShaderVisibleHeap(descriptorTableBaseIndex, layout->descriptorTableSizeSamplers);
++            found->second.refCount++;
++            samplerTableKey = std::move(key);
++            descriptorTableSamplers = found->second.baseIndex;
++            rootParameterIndexSamplers = layout->rootParameterSamplers;
++            descriptorTableValidSamplers = true;
+         }
+ 
+         if (layout->descriptorTableSizeSRVetc > 0)
+         {
+             DescriptorIndex descriptorTableBaseIndex = m_Resources.shaderResourceViewHeap.allocateDescriptors(layout->descriptorTableSizeSRVetc);
++            if (descriptorTableBaseIndex == c_InvalidDescriptorIndex)
++                return false;
+             descriptorTableSRVetc = descriptorTableBaseIndex;
+             rootParameterIndexSRVetc = layout->rootParameterSRVetc;
+             descriptorTableValidSRVetc = true;
+@@ -338,6 +350,8 @@ namespace nvrhi::d3d12
+ 
+             m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorTableBaseIndex, layout->descriptorTableSizeSRVetc);
+         }
++
++        return true;
+     }
+ 
+     BindingLayoutHandle Device::createBindingLayout(const BindingLayoutDesc& desc)
+@@ -360,9 +374,14 @@ namespace nvrhi::d3d12
+         BindingLayout* pipelineLayout = checked_cast<BindingLayout*>(_layout);
+         ret->layout = pipelineLayout;
+ 
+-        ret->createDescriptors();
++        BindingSetHandle handle = BindingSetHandle::Create(ret);
++        if (!ret->createDescriptors())
++        {
++            m_Context.error("Failed to create a binding set: a descriptor heap is full");
++            return nullptr;
++        }
+ 
+-        return BindingSetHandle::Create(ret);
++        return handle;
+     }
+ 
+     DescriptorTableHandle Device::createDescriptorTable(IBindingLayout* layout)
+@@ -378,9 +397,19 @@ namespace nvrhi::d3d12
+ 
+     BindingSet::~BindingSet()
+     {
+-        m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTableSRVetc, layout->descriptorTableSizeSRVetc);
+-    
+-        m_Resources.samplerHeap.releaseDescriptors(descriptorTableSamplers, layout->descriptorTableSizeSamplers);
++        if (descriptorTableValidSRVetc)
++            m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTableSRVetc, layout->descriptorTableSizeSRVetc);
++
++        if (descriptorTableValidSamplers)
++        {
++            std::lock_guard lockGuard(m_Resources.samplerTableMutex);
++            auto found = m_Resources.samplerTables.find(samplerTableKey);
++            if (found != m_Resources.samplerTables.end() && --found->second.refCount == 0)
++            {
++                m_Resources.samplerHeap.releaseDescriptors(found->second.baseIndex, layout->descriptorTableSizeSamplers);
++                m_Resources.samplerTables.erase(found);
++            }
++        }
+     }
+ 
+     DescriptorTable::~DescriptorTable()

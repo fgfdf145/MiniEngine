@@ -45,6 +45,11 @@ vcpkg_from_github(
         # with heap-directly-indexed on, every root signature allows it (the ray hit shading reads mesh
         # buffers through ResourceDescriptorHeap).
         d3d12-fixes.patch
+        # D3D12 binding sets naming the same samplers share one sampler table: the shader-visible
+        # sampler heap holds at most 2048 descriptors, and the frame sets (every material sampler, a
+        # set per frame slot and scene view) filled it once a second view (a capture view) was made.
+        # A binding set that does not fit a descriptor heap fails instead of writing past the heap.
+        d3d12-shared-sampler-tables.patch
 )
 
 if(VCPKG_TARGET_IS_WINDOWS)

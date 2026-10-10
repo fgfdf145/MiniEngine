@@ -26,6 +26,10 @@ VulkanRenderer 只拿 GpuDevice::Get() 的 nvrhi::IDevice 录制和建资源；
 - **设备**：高性能适配器上的 feature level 12_1 设备，Agility SDK 619（`app/main.cpp` 导出 `D3D12SDKVersion` /
   `D3D12SDKPath ".\\D3D12\\"`，构建时把 `D3D12Core.dll`、`d3d12SDKLayers.dll` 拷到 `app/D3D12/`）。NVRHI 描述符堆：
   SRV/UAV/CBV 1,000,000（流式地图的贴图 + 光追 bindless 表 + 网格缓冲视图），采样器 2048，RTV 4096。
+  采样器堆 2048 是 shader 可见采样器堆的上限，不能再大：采样器内容相同的 binding set 共用一张采样器表
+  （`d3d12-shared-sampler-tables.patch`，按 `D3D12_SAMPLER_DESC` 逐字节比较、引用计数）。帧 set 每张都带全部材质采样器，
+  每个帧槽、每个场景视图一张，不共用的话第二个视图（捕获视图）就把堆用完了；堆满时 binding set 创建失败（返回空），
+  不再越界写描述符。
   `MINIENGINE_NVRHI_VALIDATION=1` 同时开 NVRHI validation 和 D3D12 debug layer，debug layer 的消息走
   `ID3D12InfoQueue1::RegisterMessageCallback` 进引擎日志（过滤掉“清屏没有优化清除值”和“缓冲初始状态被忽略”两条建议）。
 - **交换链**：DXGI flip-discard，3 张，frame-latency waitable（最大延迟 = 在飞帧数），`Present(0, 0)`。
