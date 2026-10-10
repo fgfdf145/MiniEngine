@@ -81,6 +81,23 @@ endif()
 
 set_target_properties(miniengine_scene_environment_tests PROPERTIES FOLDER "Tests")
 
+add_executable(miniengine_vehicle_drivetrain_tests
+    vehicle_drivetrain_tests.cpp
+)
+miniengine_group_target_sources(miniengine_vehicle_drivetrain_tests)
+
+target_link_libraries(miniengine_vehicle_drivetrain_tests
+    PRIVATE
+        engine_physics
+)
+
+add_test(
+    NAME miniengine.vehicle_drivetrain
+    COMMAND miniengine_vehicle_drivetrain_tests
+)
+
+set_target_properties(miniengine_vehicle_drivetrain_tests PROPERTIES FOLDER "Tests")
+
 add_executable(miniengine_vehicle_physics_tests
     vehicle_physics_tests.cpp
     ae86_car_spec.h

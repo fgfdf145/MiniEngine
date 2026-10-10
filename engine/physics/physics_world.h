@@ -117,6 +117,13 @@ struct VehicleWheelState
     bool treadRollingForward = true;
     int brushRibCount = 0;
     std::array<BrushRib, kMaxBrushRibs> brushRibs{};
+    // The car's own drivetrain (a brush-tyred car): the wheel is a rim and the tyre's belt on its
+    // sidewalls. angularVelocity is the rim's; the belt's speed, how far the rim has turned ahead of it
+    // (rad) and the torque the sidewalls pass from the rim to the belt (N m, the last step's mean).
+    bool ownDrivetrain = false;
+    float beltAngularVelocity = 0.0f;
+    float sidewallTwist = 0.0f;
+    float sidewallTorque = 0.0f;
 };
 
 // A car's suspension linkage where the last step left it, in world space, for drawing: the rods and

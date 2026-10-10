@@ -444,7 +444,7 @@ struct VehicleSettings
     float engineCoastTorque = 0.0f;
     float engineCoastRpm = 0.0f;
     // How hard the clutch drags the wheels along with the engine, torque per rad/s of difference (the
-    // physics engine's 10 when 0).
+    // physics engine's 10 when 0). Not used by the car's own drivetrain (a brush-tyred car's).
     float clutchStrength = 0.0f;
     // The tyres, by wheel (0 front left, 1 front right, 2 rear left, 3 rear right): with any grip set the
     // vehicle's tyres multiply the surface's friction (as the game does) instead of the physics engine's
@@ -464,6 +464,13 @@ struct VehicleSettings
     // tyre::kBrushMaxSegments). Its cost grows about in step with ribs times segments.
     int brushTyreRibs = 0;
     int brushTyreSegments = 0;
+    // A brush-tyred car turns its wheels with its own drivetrain, each wheel a rim and the tyre's belt on
+    // its sidewalls (docs/design/2026-10-10-own-drivetrain-design.md): the belt's share of the wheel's spin
+    // inertia (the rest the rim's, 0.05 to 0.95), and the sidewalls' torsional damping as a share of
+    // critical with the rim held. Neither is in the game's data: SWIFT's belt for a car tyre of this size,
+    // and Massaro et al. (2023)'s 3.4 % for a car tyre's torsional mode.
+    float beltInertiaShare = 0.5f;
+    float sidewallTorsionDampingRatio = 0.03f;
     // The air: the surfaces it acts on, each where it sits from the centre of mass (vehicle axes), as
     // the drag and the downforce it makes per unit of dynamic pressure (coefficient times area, m^2).
     std::vector<VehicleAeroSurface> aeroSurfaces;
@@ -493,7 +500,8 @@ struct VehicleSettings
     float tcMinSpeedKmh = 0.0f;
     float tcRateHz = 0.0f;
     // The clutch's torque limit at the engine (Nm; 0 none): the physics engine's clutch is viscous and
-    // would pass any torque its speed gap asks.
+    // would pass any torque its speed gap asks. The car's own drivetrain (a brush-tyred car's) has a dry
+    // clutch that grips up to this, or without it up to twice the engine's most torque.
     float clutchMaxTorque = 0.0f;
     float maxHandBrakeTorque = 4000.0f; // Nm per rear wheel
     VehicleDrive drive = VehicleDrive::RearWheel;

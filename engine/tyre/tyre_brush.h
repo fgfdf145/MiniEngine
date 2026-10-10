@@ -172,6 +172,12 @@ struct BrushTyreOutput
     // The rolling resistance moment on the wheel about its axle, N m: the most it takes, for it acts as
     // dry friction on the spin (opposing the roll at this, or holding a wheel at rest against up to it).
     double rollingResistanceLimit = 0.0;
+    // The fore-aft carcass damping the step used over the standing one (rollingDampingShare lowers it
+    // rolling): 1 standing still, less rolling.
+    double carcassDampingShare = 1.0;
+    // How the force along the wheel answers the tread's speed within the step (N s/m, dFx / d(omega R_e)
+    // for a stepped tyre, 0 standing alone): for a caller that steps the wheel's spin implicitly.
+    double treadDamping = 0.0;
     double effectiveRadius = 0.0; // R0 - deflection / 3 at the middle rib (23)
     double contactLength = 0.0;   // the longest rib's, m
     double slidingShare = 0.0;    // of the load, on sliding bristles

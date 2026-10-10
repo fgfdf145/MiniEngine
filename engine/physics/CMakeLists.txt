@@ -5,6 +5,8 @@ add_library(engine_physics
     physics_world.h
     task_job_system.cpp
     task_job_system.h
+    vehicle_drivetrain.cpp
+    vehicle_drivetrain.h
     vehicle_settings.cpp
     vehicle_settings.h
     vehicle_suspension.cpp

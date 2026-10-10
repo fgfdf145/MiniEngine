@@ -1,6 +1,7 @@
 #include "physics_world.h"
 #include "task_job_system.h"
 #include "water_surface.h"
+#include "vehicle_drivetrain.h"
 #include "vehicle_suspension.h"
 
 #include <engine/suspension/suspension_corner.h>
@@ -973,11 +974,36 @@ float StaticWheelLoad(const VehicleSettings& settings, bool front)
     return static_cast<float>((body + SeparateHubMass(settings, front ? 0 : 2)) * 9.81);
 }
 
+// SWIFT's sidewall torsional stiffness over the tyre's load and radius, c_btheta / (F_z0 R_0)
+// (Pacejka 2006, appendix 3, the 205/60R15).
+constexpr double kSidewallTorsionPerLoadRadius = 61.96;
+
+// The sidewalls' twist that a brush tyre's carcass was set beside (BuildBrushTyreParameters): its
+// stiffness (N m/rad), and the time constant of its damping standing still (s), the carcass's own fore and
+// aft, so that the two in series give and settle as the fitted carcass alone did.
+struct SidewallTwist
+{
+    double stiffness = 0.0;
+    double standingDampingSeconds = 0.0;
+};
+
+// How stiffly a wheel's sidewalls hold its belt against the rim's turning (N m/rad): SWIFT's, at the
+// tyre's reference load (else the wheel's static one) and radius, and never so soft that it alone would
+// take more than half the fore-aft give the brush tyre's carcass has (`carcassStiffness` N/m at the
+// patch, which then keeps the rest in series; see BuildBrushTyreParameters).
+double SidewallTorsionStiffness(const VehicleSettings& settings, size_t index, double carcassStiffness)
+{
+    const double radius = std::max(GetVehicleWheelMount(settings, index).radius, 0.05f);
+    const double load = settings.tyres[index].referenceLoad > 0.0f ? settings.tyres[index].referenceLoad : StaticWheelLoad(settings, index < 2);
+    return std::max(kSidewallTorsionPerLoadRadius * load * radius, 2.0 * carcassStiffness * radius * radius);
+}
+
 // A wheel's brush tyre from its tyre's figures: the peak grip along and across the wheel at the load
 // it carries standing still (a road tyre's 1.1 without data; one alone stands for both), the slip angle of
 // the lateral peak (7 degrees without) and the slip ratio of the longitudinal one, the share of grip left
-// well past the peak, the wheel's size and its tyre rate.
-tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settings, size_t index)
+// well past the peak, the wheel's size and its tyre rate. `sidewallTwist`, when given, gets the sidewalls'
+// twist the carcass was set beside.
+tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settings, size_t index, SidewallTwist* sidewallTwist = nullptr)
 {
     const bool front = index < 2;
     const VehicleTyreSettings& tyres = settings.tyres[index];
@@ -1027,6 +1053,21 @@ tyre::BrushTyreParameters BuildBrushTyreParameters(const VehicleSettings& settin
     if (settings.brushTyreSegments > 0)
     {
         parameters.segmentsPerRib = std::clamp(settings.brushTyreSegments, 2, tyre::kBrushMaxSegments);
+    }
+    // The belt twists on its sidewalls as a body of its own (the car's own drivetrain), which is part of
+    // the fore-aft give the carcass was fitted with (its relaxation length): the carcass keeps the rest,
+    // in series, 1/K = 1/K_fitted - R^2/k_twist, so the two together give as the tyre's data says. Each
+    // keeps the fitted carcass's damping time constant standing still: two such springs in series settle
+    // as the one did (a car braked to a stop stops rocking on its tyres within a cycle or two).
+    const double fitted = parameters.carcassStiffness[0];
+    const double standing = parameters.carcassDamping[0] / fitted;
+    const double twist = SidewallTorsionStiffness(settings, index, fitted);
+    const double radius = parameters.unloadedRadius;
+    parameters.carcassStiffness[0] = 1.0 / (1.0 / fitted - radius * radius / twist);
+    parameters.carcassDamping[0] = parameters.carcassStiffness[0] * standing;
+    if (sidewallTwist != nullptr)
+    {
+        *sidewallTwist = {twist, standing};
     }
     return parameters;
 }
@@ -1444,6 +1485,35 @@ struct PhysicsWorld::Impl
             bool contact = false;
         };
         std::array<BrushWheel, kVehicleWheelCount> brushWheels{};
+        // The car's own drivetrain (a brush-tyred car, see OwnsDrivetrain and StepOwnDrivetrain): engine,
+        // rims and belts stepped together after the tyres, the physics engine's controller kept only for
+        // the engine's speed and curve, the gear and the clutch's travel, and the differentials' layout. It
+        // gets no driver (its throttle and brakes stay at nothing, its clutch has no strength), so its own
+        // step turns nothing; the driver's inputs are here instead. The tyres' torques on the belts and
+        // their rolling resistance wait here for the step; the clutch's capacity is set before it
+        // (LimitClutchTorque), at full travel.
+        struct OwnDrive
+        {
+            std::array<DrivetrainWheel, kDrivetrainWheels> wheels{};
+            DrivetrainState state;
+            DrivetrainResult last;
+            float forward = 0.0f;
+            float brake = 0.0f;
+            float handBrake = 0.0f;
+            float maxClutchTorque = 0.0f;
+            float clutchCapacity = 0.0f;
+            float engineDamping = 0.0f;
+            std::array<double, kDrivetrainWheels> beltTorque{};
+            std::array<double, kDrivetrainWheels> rollingCapacity{};
+            std::array<double, kDrivetrainWheels> beltDamping{};
+            // The sidewalls' damping: `wheels` has the data's (the belt's own ring, rolling); standing still
+            // it rises to the twist's stiffness times this time constant (SidewallTwist), by the share of
+            // its standing damping the tyre's carcass kept in the step (0 off the ground).
+            std::array<double, kDrivetrainWheels> standingDampingSeconds{};
+            std::array<double, kDrivetrainWheels> standingDampingShare{};
+        };
+        bool ownDrivetrain = false;
+        OwnDrive own;
         // The turns the physics engine left out (ApplyDroppedRotation), rad about world axes.
         std::array<double, 3> droppedRotation{};
         // Each wheel's roll angle before the step (RollWheelsBySpinAfterStep), rad.
@@ -1455,6 +1525,60 @@ struct PhysicsWorld::Impl
     static bool PushesOwnSuspension(const Vehicle& vehicle)
     {
         return !vehicle.corners.empty();
+    }
+
+    // A brush-tyred car turns its wheels with its own drivetrain (Vehicle::OwnDrive). The physics engine's
+    // tyres need its controller: their friction turns the wheels inside its solver.
+    static bool OwnsDrivetrain(const VehicleSettings& settings)
+    {
+        return settings.tyreModel == VehicleTyreModel::Brush;
+    }
+
+    // A wheel's spin (rad/s) as the drivetrain, the brakes' controllers and the gearbox see it: the rim's
+    // with the car's own drivetrain (the speed sensors sit at the hubs), else the physics engine's wheel.
+    float WheelSpin(const Vehicle& vehicle, size_t index) const
+    {
+        if (vehicle.ownDrivetrain)
+        {
+            return static_cast<float>(vehicle.own.state.rim[index]);
+        }
+        return vehicle.constraint->GetWheel(static_cast<JPH::uint>(index))->GetAngularVelocity();
+    }
+
+    // The inertia that WheelSpin turns with, and a torque on it over one step.
+    float WheelSpinInertia(const Vehicle& vehicle, size_t index) const
+    {
+        if (vehicle.ownDrivetrain)
+        {
+            return static_cast<float>(vehicle.own.wheels[index].rimInertia);
+        }
+        return vehicle.wheelSettings[index]->mInertia;
+    }
+
+    void AddWheelTorque(Vehicle& vehicle, size_t index, float torque) const
+    {
+        if (vehicle.ownDrivetrain)
+        {
+            vehicle.own.state.rim[index] += static_cast<double>(torque) * stepSeconds / vehicle.own.wheels[index].rimInertia;
+            return;
+        }
+        static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(index)])->ApplyTorque(torque, stepSeconds);
+    }
+
+    // The driver's throttle (after the turbos' scale), brake and hand brake in this step.
+    static float ForwardInput(const Vehicle& vehicle, const JPH::WheeledVehicleController& controller)
+    {
+        return vehicle.ownDrivetrain ? vehicle.own.forward : controller.GetForwardInput();
+    }
+
+    static float BrakeInput(const Vehicle& vehicle, const JPH::WheeledVehicleController& controller)
+    {
+        return vehicle.ownDrivetrain ? vehicle.own.brake : controller.GetBrakeInput();
+    }
+
+    static float HandBrakeInput(const Vehicle& vehicle, const JPH::WheeledVehicleController& controller)
+    {
+        return vehicle.ownDrivetrain ? vehicle.own.handBrake : controller.GetHandBrakeInput();
     }
 
     void BuildCorners(Vehicle& vehicle) const
@@ -1669,7 +1793,7 @@ struct PhysicsWorld::Impl
             return suspension::Vec3(0.0);
         }
         const JPH::WheelSettingsWV& settings = *vehicle.wheelSettings[index];
-        const double brakes = controller.GetBrakeInput() * settings.mMaxBrakeTorque + controller.GetHandBrakeInput() * settings.mMaxHandBrakeTorque;
+        const double brakes = BrakeInput(vehicle, controller) * settings.mMaxBrakeTorque + HandBrakeInput(vehicle, controller) * settings.mMaxHandBrakeTorque;
         return KnuckleSpinMomentRelief(axle.Output(static_cast<int>(index % 2)).geometry, force, brakes);
     }
 
@@ -1697,7 +1821,7 @@ struct PhysicsWorld::Impl
                 }
             }
             const JPH::VehicleTransmission& transmission = controller->GetTransmission();
-            const double propshaft = controller->GetEngine().GetTorque(std::max(controller->GetForwardInput(), 0.0f)) * transmission.GetClutchFriction() *
+            const double propshaft = controller->GetEngine().GetTorque(std::max(ForwardInput(vehicle, *controller), 0.0f)) * transmission.GetClutchFriction() *
                                      transmission.GetCurrentRatio() * share * StepDrivetrainEfficiency(vehicle, *controller);
             const double moment = data.axleTorqueReaction * propshaft;
             solid->SetHousingMoment(suspension::Vec3(moment, 0.0, 0.0));
@@ -1875,7 +1999,7 @@ struct PhysicsWorld::Impl
                     continue;
                 }
                 const float road = (vehicle.body->GetPointVelocity(wheel.GetContactPosition()) - wheel.GetContactPointVelocity()).Dot(wheel.GetContactLongitudinal());
-                const float tread = wheel.GetAngularVelocity() * wheel.GetSettings()->mRadius;
+                const float tread = WheelSpin(vehicle, index) * wheel.GetSettings()->mRadius;
                 if (std::abs(road) > kMinRoadSpeed && road * tread > 0.0f && (std::abs(tread) - std::abs(road)) / std::abs(road) > settings.tcSlipRatioLimit)
                 {
                     spinning = true;
@@ -1917,7 +2041,7 @@ struct PhysicsWorld::Impl
                 {
                     // How much slower than the road the tread turns, as a share of the road's speed.
                     const float road = (vehicle.body->GetPointVelocity(wheel.GetContactPosition()) - wheel.GetContactPointVelocity()).Dot(wheel.GetContactLongitudinal());
-                    const float tread = wheel.GetAngularVelocity() * wheel.GetSettings()->mRadius;
+                    const float tread = WheelSpin(vehicle, index) * wheel.GetSettings()->mRadius;
                     release = std::abs(road) > kMinSpeed && (road - tread) / road > settings.absSlipRatioLimit;
                 }
                 vehicle.absReleased[index] = release;
@@ -1999,7 +2123,7 @@ struct PhysicsWorld::Impl
             {
                 if (index >= 0)
                 {
-                    wheelSpeed += std::abs(vehicle.constraint->GetWheel(static_cast<JPH::uint>(index))->GetAngularVelocity());
+                    wheelSpeed += std::abs(WheelSpin(vehicle, static_cast<size_t>(index)));
                     ++driven;
                 }
             }
@@ -2042,8 +2166,17 @@ struct PhysicsWorld::Impl
     // than they can pass to the ground while the engine keeps its revs and its throttle, as a driver slips the
     // clutch on a start. The clutch's torque is its strength times the gap between the engine's speed and the
     // wheels', so the strength is set to the torque allowed over the gap, up to its own.
+    //
+    // The car's own drivetrain has a dry clutch: it grips up to its own torque, or what traction control lets
+    // the tyres take, whichever is less, and slips at that.
     void LimitClutchTorque(Vehicle& vehicle, JPH::WheeledVehicleController& controller) const
     {
+        if (vehicle.ownDrivetrain)
+        {
+            const float traction = TractionClutchTorque(vehicle, controller);
+            vehicle.own.clutchCapacity = traction >= 0.0f ? std::min(vehicle.own.maxClutchTorque, traction) : vehicle.own.maxClutchTorque;
+            return;
+        }
         SetClutchStrength(vehicle, controller);
         CapClutchTorque(vehicle, controller);
     }
@@ -2068,7 +2201,7 @@ struct PhysicsWorld::Impl
             {
                 if (index >= 0)
                 {
-                    wheelSpeed += vehicle.constraint->GetWheel(static_cast<JPH::uint>(index))->GetAngularVelocity();
+                    wheelSpeed += WheelSpin(vehicle, static_cast<size_t>(index));
                     ++driven;
                 }
             }
@@ -2083,21 +2216,47 @@ struct PhysicsWorld::Impl
     void SetClutchStrength(Vehicle& vehicle, JPH::WheeledVehicleController& controller) const
     {
         JPH::VehicleTransmission& transmission = controller.GetTransmission();
-        const float ratio = std::abs(transmission.GetCurrentRatio());
-        if (vehicle.tractionControlGrip <= 0.0f || ratio < 1e-3f || controller.GetDifferentials().empty() ||
-            vehicle.current.wheels.size() < kVehicleWheelCount)
+        const float engineSide = TractionClutchTorque(vehicle, controller);
+        if (engineSide < 0.0f)
         {
             transmission.mClutchStrength = vehicle.defaultClutchStrength;
             return;
         }
-        float holdTorque = 0.0f;
+        const float overall = std::abs(transmission.GetCurrentRatio()) * controller.GetDifferentials()[0].mDifferentialRatio;
         float wheelSpeed = 0.0f;
         int driven = 0;
+        const bool coupled = vehicle.drive == VehicleDrive::AllWheel && vehicle.settings.centreDrive == VehicleCentreDrive::Coupling;
+        for (size_t index = 0; index < kVehicleWheelCount; ++index)
+        {
+            const bool front = index < 2;
+            const bool isDriven = vehicle.drive == VehicleDrive::AllWheel || (vehicle.drive == VehicleDrive::FrontWheel) == front;
+            if (isDriven && !(coupled && front))
+            {
+                ++driven;
+                wheelSpeed += std::abs(vehicle.current.wheels[index].angularVelocity);
+            }
+        }
+        const float engineSpeed = controller.GetEngine().GetCurrentRPM() * 2.0f * std::numbers::pi_v<float> / 60.0f;
+        const float gap = std::abs(engineSpeed - wheelSpeed / static_cast<float>(std::max(driven, 1)) * overall);
+        transmission.mClutchStrength = std::clamp(engineSide / std::max(gap, 1.0f), 0.05f, vehicle.defaultClutchStrength);
+    }
+
+    // The torque at the engine that traction control lets through the clutch: the driven tyres' grip on
+    // their loads times the setting, geared back to the engine; -1 when it has no say (off, in neutral).
+    float TractionClutchTorque(const Vehicle& vehicle, const JPH::WheeledVehicleController& controller) const
+    {
+        const JPH::VehicleTransmission& transmission = controller.GetTransmission();
+        const float ratio = std::abs(transmission.GetCurrentRatio());
+        if (vehicle.tractionControlGrip <= 0.0f || ratio < 1e-3f || controller.GetDifferentials().empty() ||
+            vehicle.current.wheels.size() < kVehicleWheelCount)
+        {
+            return -1.0f;
+        }
+        float holdTorque = 0.0f;
         float worstSlip = 0.0f;
         bool brush = false;
         const float carSpeed = std::abs((vehicle.body->GetRotation().Conjugated() * vehicle.body->GetLinearVelocity()).GetZ());
-        // A coupled four-wheel drive holds on all four tyres, but the engine turns with the rear alone.
-        const bool coupled = vehicle.drive == VehicleDrive::AllWheel && vehicle.settings.centreDrive == VehicleCentreDrive::Coupling;
+        // A coupled four-wheel drive holds on all four tyres.
         for (size_t index = 0; index < kVehicleWheelCount; ++index)
         {
             const bool front = index < 2;
@@ -2106,11 +2265,6 @@ struct PhysicsWorld::Impl
             if (!isDriven)
             {
                 continue;
-            }
-            if (!(coupled && front))
-            {
-                ++driven;
-                wheelSpeed += std::abs(wheel.angularVelocity);
             }
             if (wheel.inContact)
             {
@@ -2137,9 +2291,7 @@ struct PhysicsWorld::Impl
             constexpr float kSlipLimit = 0.1f;
             engineSide *= std::clamp(2.0f - worstSlip / kSlipLimit, 0.2f, 1.0f);
         }
-        const float engineSpeed = controller.GetEngine().GetCurrentRPM() * 2.0f * std::numbers::pi_v<float> / 60.0f;
-        const float gap = std::abs(engineSpeed - wheelSpeed / static_cast<float>(std::max(driven, 1)) * overall);
-        transmission.mClutchStrength = std::clamp(engineSide / std::max(gap, 1.0f), 0.05f, vehicle.defaultClutchStrength);
+        return engineSide;
     }
 
     // A limited-slip differential as a clutch pack between the two wheels of an axle: a torque, growing with
@@ -2165,7 +2317,7 @@ struct PhysicsWorld::Impl
         const VehicleSettings& settings = vehicle.settings;
         const JPH::VehicleEngine& engine = controller.GetEngine();
         const JPH::VehicleTransmission& transmission = controller.GetTransmission();
-        const float netTorque = engine.GetTorque(std::abs(controller.GetForwardInput())) - EngineCoastTorque(settings, engine.GetCurrentRPM(), vehicle.pedal);
+        const float netTorque = engine.GetTorque(std::abs(ForwardInput(vehicle, controller))) - EngineCoastTorque(settings, engine.GetCurrentRPM(), vehicle.pedal);
         // What the drivetrain's losses (ApplyDrivetrainLoss) leave of it.
         const float engineTorque = netTorque + DrivetrainLossTorque(netTorque, StepDrivetrainEfficiency(vehicle, controller));
         const bool overrun = engineTorque < 0.0f;
@@ -2201,16 +2353,16 @@ struct PhysicsWorld::Impl
             const float coast = own.coast >= 0.0f ? own.coast : carCoast;
             const float lock = overrun ? coast : power;
             const float preload = own.preload >= 0.0f ? own.preload : carPreload;
-            auto* left = static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(leftIndex)]);
-            auto* right = static_cast<JPH::WheelWV*>(vehicle.constraint->GetWheels()[static_cast<JPH::uint>(leftIndex + 1)]);
+            const size_t left = static_cast<size_t>(leftIndex);
+            const size_t right = left + 1;
             const float limit = preload + lock * axleTorque * 0.5f;
             // Stiff enough that a wheel is pulled to the other's speed within a few steps, and no stiffer than
             // the step can integrate.
-            const float inertia = 0.5f * (left->GetSettings()->mInertia + right->GetSettings()->mInertia);
+            const float inertia = 0.5f * (WheelSpinInertia(vehicle, left) + WheelSpinInertia(vehicle, right));
             const float stiffness = 0.25f * inertia / stepSeconds;
-            const float torque = std::clamp(stiffness * (left->GetAngularVelocity() - right->GetAngularVelocity()), -limit, limit);
-            left->ApplyTorque(-torque, stepSeconds);
-            right->ApplyTorque(torque, stepSeconds);
+            const float torque = std::clamp(stiffness * (WheelSpin(vehicle, left) - WheelSpin(vehicle, right)), -limit, limit);
+            AddWheelTorque(vehicle, left, -torque);
+            AddWheelTorque(vehicle, right, torque);
         }
     }
 
@@ -2228,16 +2380,11 @@ struct PhysicsWorld::Impl
         {
             return;
         }
-        const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
-        auto* frontLeft = static_cast<JPH::WheelWV*>(wheels[0]);
-        auto* frontRight = static_cast<JPH::WheelWV*>(wheels[1]);
-        auto* rearLeft = static_cast<JPH::WheelWV*>(wheels[2]);
-        auto* rearRight = static_cast<JPH::WheelWV*>(wheels[3]);
         const float finalDrive = controller.GetDifferentials()[0].mDifferentialRatio;
-        const float frontSpeed = 0.5f * (frontLeft->GetAngularVelocity() + frontRight->GetAngularVelocity());
-        const float rearSpeed = 0.5f * (rearLeft->GetAngularVelocity() + rearRight->GetAngularVelocity());
-        const float frontInertia = 0.5f * (frontLeft->GetSettings()->mInertia + frontRight->GetSettings()->mInertia);
-        const float rearInertia = 0.5f * (rearLeft->GetSettings()->mInertia + rearRight->GetSettings()->mInertia);
+        const float frontSpeed = 0.5f * (WheelSpin(vehicle, 0) + WheelSpin(vehicle, 1));
+        const float rearSpeed = 0.5f * (WheelSpin(vehicle, 2) + WheelSpin(vehicle, 3));
+        const float frontInertia = 0.5f * (WheelSpinInertia(vehicle, 0) + WheelSpinInertia(vehicle, 1));
+        const float rearInertia = 0.5f * (WheelSpinInertia(vehicle, 2) + WheelSpinInertia(vehicle, 3));
         // The coupling's rate at the wheels (Nm per rad/s of the axles' mean speed difference), and the most the
         // step integrates.
         const float rate = settings.centreCouplingRampTorque * finalDrive * finalDrive;
@@ -2256,10 +2403,10 @@ struct PhysicsWorld::Impl
             (toFront ? frontTorque : rearTorque) *= transfer;
             vehicle.drivetrainMeshLoss += (1.0f - transfer) * std::abs(2.0f * wheelTorque * (toFront ? frontSpeed : rearSpeed));
         }
-        frontLeft->ApplyTorque(frontTorque, stepSeconds);
-        frontRight->ApplyTorque(frontTorque, stepSeconds);
-        rearLeft->ApplyTorque(rearTorque, stepSeconds);
-        rearRight->ApplyTorque(rearTorque, stepSeconds);
+        AddWheelTorque(vehicle, 0, frontTorque);
+        AddWheelTorque(vehicle, 1, frontTorque);
+        AddWheelTorque(vehicle, 2, rearTorque);
+        AddWheelTorque(vehicle, 3, rearTorque);
         vehicle.centreCouplingTorque = shaftTorque;
     }
 
@@ -2624,6 +2771,134 @@ struct PhysicsWorld::Impl
             PushSuspension(vehicle, constraint, context, loads);
         }
         ApplyBrushTyres(vehicle, constraint, context, loads);
+        if (vehicle.ownDrivetrain)
+        {
+            StepOwnDrivetrain(vehicle, constraint, context.mDeltaTime);
+        }
+    }
+
+    // The car's own drivetrain over the step (vehicle_drivetrain.h): the engine at the throttle's share of its
+    // curve, through the clutch at the gearbox's ratio and the differentials' shares to the rims, the brakes
+    // on the rims, the tyres' pull and rolling resistance on the belts. The engine's speed goes back to the
+    // controller, which holds it between its idle and its limiter as its own step did, and the rims' to its
+    // wheels, for their roll, the snapshot and its sleep test.
+    void StepOwnDrivetrain(Vehicle& vehicle, JPH::VehicleConstraint& constraint, float dt)
+    {
+        auto* controller = static_cast<JPH::WheeledVehicleController*>(constraint.GetController());
+        JPH::VehicleEngine& engine = controller->GetEngine();
+        const JPH::VehicleTransmission& transmission = controller->GetTransmission();
+        Vehicle::OwnDrive& own = vehicle.own;
+        // The engine as the steps before this one left it (the coast and the losses, a change's rev match).
+        own.state.engine = engine.GetAngularVelocity();
+
+        DrivetrainStep step;
+        step.dt = dt;
+        step.engineInertia = engine.mInertia;
+        step.engineDamping = own.engineDamping;
+        step.engineTorque = engine.GetTorque(std::abs(own.forward));
+        const float ratio = transmission.GetCurrentRatio();
+        if (ratio != 0.0f)
+        {
+            for (const JPH::VehicleDifferentialSettings& differential : controller->GetDifferentials())
+            {
+                const bool both = differential.mLeftWheel >= 0 && differential.mRightWheel >= 0;
+                const double gearing = static_cast<double>(ratio) * differential.mDifferentialRatio * differential.mEngineTorqueRatio;
+                if (differential.mLeftWheel >= 0)
+                {
+                    step.clutchWeights[static_cast<size_t>(differential.mLeftWheel)] += gearing * (both ? 1.0 - differential.mLeftRightSplit : 1.0);
+                }
+                if (differential.mRightWheel >= 0)
+                {
+                    step.clutchWeights[static_cast<size_t>(differential.mRightWheel)] += gearing * (both ? differential.mLeftRightSplit : 1.0);
+                }
+            }
+            step.clutchCapacity = std::clamp(transmission.GetClutchFriction(), 0.0f, 1.0f) * own.clutchCapacity;
+        }
+        for (size_t index = 0; index < kDrivetrainWheels && index < vehicle.wheelSettings.size(); ++index)
+        {
+            const JPH::WheelSettingsWV& settings = *vehicle.wheelSettings[index];
+            step.brakeCapacity[index] = own.brake * settings.mMaxBrakeTorque + own.handBrake * settings.mMaxHandBrakeTorque;
+        }
+        step.beltTorque = own.beltTorque;
+        step.rollingCapacity = own.rollingCapacity;
+        step.beltDamping = own.beltDamping;
+        std::array<DrivetrainWheel, kDrivetrainWheels> wheelsNow = own.wheels;
+        for (size_t index = 0; index < kDrivetrainWheels; ++index)
+        {
+            DrivetrainWheel& wheel = wheelsNow[index];
+            wheel.sidewallDamping = std::max(wheel.sidewallDamping, own.standingDampingShare[index] * wheel.sidewallStiffness * own.standingDampingSeconds[index]);
+        }
+        own.beltTorque = {};
+        own.rollingCapacity = {};
+        own.beltDamping = {};
+        own.standingDampingShare = {};
+
+        const std::array<double, kDrivetrainWheels> beltBefore = own.state.belt;
+        own.last = StepDrivetrain(wheelsNow, own.state, step);
+
+        // The step took each tyre's pull as linear in the belt's speed about where the tyre was stepped
+        // (beltDamping); the road pushes the body by the same change, or the wheel would gain what the car does
+        // not lose (with it on the wheel alone, a car braking at the 240 Hz step stopped 4 % longer).
+        JPH::Body& body = *constraint.GetVehicleBody();
+        if (body.IsActive())
+        {
+            JPH::BodyInterface& bodies = physicsSystem.GetBodyInterfaceNoLock();
+            const JPH::Array<JPH::Wheel*>& wheels = constraint.GetWheels();
+            for (size_t index = 0; index < kDrivetrainWheels && index < wheels.size() && index < vehicle.brushWheels.size(); ++index)
+            {
+                Vehicle::BrushWheel& brush = vehicle.brushWheels[index];
+                const JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
+                const double radius = brush.out.effectiveRadius;
+                if (!brush.contact || !wheel.HasContact() || step.beltDamping[index] <= 0.0 || radius <= 0.0)
+                {
+                    continue;
+                }
+                const double pull = step.beltDamping[index] / radius * (own.state.belt[index] - beltBefore[index]);
+                const JPH::Vec3 force = wheel.GetContactLongitudinal() * static_cast<float>(pull);
+                bodies.AddForce(body.GetID(), force, wheel.GetContactPosition(), JPH::EActivation::DontActivate);
+                brush.force += force;
+                brush.out.Fx += pull;
+            }
+        }
+        engine.SetCurrentRPM(static_cast<float>(own.state.engine) * JPH::VehicleEngine::cAngularVelocityToRPM);
+        own.state.engine = engine.GetAngularVelocity();
+        const JPH::Array<JPH::Wheel*>& wheels = constraint.GetWheels();
+        for (size_t index = 0; index < kDrivetrainWheels && index < wheels.size(); ++index)
+        {
+            wheels[static_cast<JPH::uint>(index)]->SetAngularVelocity(static_cast<float>(own.state.rim[index]));
+        }
+    }
+
+    // Sets up a brush-tyred car's own drivetrain once its wheels and tyres are made: each wheel's spin inertia
+    // split between the rim and the belt, the belt held by the sidewalls' twist (`sidewallTwist`, as the
+    // brush tyres were set beside) and damped to the settings' share of critical with the rim held. The
+    // physics engine's controller loses its clutch's strength and its engine's drag (that comes into the
+    // step instead), so its own step turns nothing.
+    void BuildOwnDrivetrain(Vehicle& vehicle, const std::array<SidewallTwist, kVehicleWheelCount>& sidewallTwist) const
+    {
+        const VehicleSettings& settings = vehicle.settings;
+        auto* controller = static_cast<JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
+        Vehicle::OwnDrive& own = vehicle.own;
+        own = {};
+        own.engineDamping = controller->GetEngine().mAngularDamping;
+        controller->GetEngine().mAngularDamping = 0.0f;
+        vehicle.defaultClutchStrength = 0.0f;
+        controller->GetTransmission().mClutchStrength = 0.0f;
+        own.maxClutchTorque = settings.clutchMaxTorque > 0.0f ? settings.clutchMaxTorque : 2.0f * std::max(controller->GetEngine().mMaxTorque, 1.0f);
+        own.clutchCapacity = own.maxClutchTorque;
+        const double share = std::clamp(static_cast<double>(settings.beltInertiaShare), 0.05, 0.95);
+        const double damping = std::max(static_cast<double>(settings.sidewallTorsionDampingRatio), 0.0);
+        for (size_t index = 0; index < kDrivetrainWheels && index < vehicle.wheelSettings.size(); ++index)
+        {
+            const double inertia = std::max(static_cast<double>(vehicle.wheelSettings[index]->mInertia), 0.01);
+            DrivetrainWheel& wheel = own.wheels[index];
+            wheel.beltInertia = share * inertia;
+            wheel.rimInertia = inertia - wheel.beltInertia;
+            wheel.sidewallStiffness = sidewallTwist[index].stiffness;
+            wheel.sidewallDamping = 2.0 * damping * std::sqrt(wheel.sidewallStiffness * wheel.beltInertia);
+            own.standingDampingSeconds[index] = sidewallTwist[index].standingDampingSeconds;
+        }
+        own.state.engine = controller->GetEngine().GetAngularVelocity();
     }
 
     // The multibody suspension's push: each wheel's load along its contact normal at its contact, on the
@@ -2669,10 +2944,11 @@ struct PhysicsWorld::Impl
     }
 
     // The brush tyres (see AfterGroundFound). Each tyre reads the wheel's motion over the ground in the
-    // contact frame, the load the suspension will carry in this step and the camber to the road, steps its
-    // carcass, and puts the road's force and aligning moment on the body at the contact and the force's
-    // moment about the axle on the wheel's spin. The physics engine's own tyre friction is off (its
-    // impulse limits are zero).
+    // contact frame (the tread's with the belt's spin), the load the suspension will carry in this step and
+    // the camber to the road, steps its carcass, and puts the road's force and aligning moment on the body
+    // at the contact; the force's moment about the axle and the rolling resistance go on the belt in the
+    // drivetrain's step (StepOwnDrivetrain). The physics engine's own tyre friction is off (its impulse
+    // limits are zero).
     void ApplyBrushTyres(Vehicle& vehicle, JPH::VehicleConstraint& constraint, const JPH::PhysicsStepListenerContext& context,
                          const std::array<float, kVehicleWheelCount>& loads)
     {
@@ -2697,7 +2973,8 @@ struct PhysicsWorld::Impl
         {
             auto& wheel = *static_cast<JPH::WheelWV*>(wheels[static_cast<JPH::uint>(index)]);
             tyre::BrushTyreInput& in = inputs[index];
-            in.wheelSpeed = wheel.GetAngularVelocity();
+            // The tread turns with the belt (a brush-tyred car has its own drivetrain).
+            in.wheelSpeed = vehicle.own.state.belt[index];
             if (!wheel.HasContact())
             {
                 continue;
@@ -2802,9 +3079,12 @@ struct PhysicsWorld::Impl
             const JPH::Vec3 force = longitudinals[index] * static_cast<float>(out.Fx) + lefts[index] * static_cast<float>(out.Fy);
             bodies.AddForce(body.GetID(), force, positions[index], JPH::EActivation::DontActivate);
             bodies.AddTorque(body.GetID(), normals[index] * static_cast<float>(out.Mz), JPH::EActivation::DontActivate);
-            const float torque = static_cast<float>(-out.Fx * out.effectiveRadius);
-            const float rolling = RollingResistanceTorque(wheel.GetAngularVelocity(), torque, wheel.GetSettings()->mInertia, static_cast<float>(out.rollingResistanceLimit), dt);
-            wheel.ApplyTorque(torque + rolling, dt);
+            // The road's pull on the belt, and the rolling resistance as dry friction on it, for the
+            // drivetrain's step.
+            vehicle.own.beltTorque[index] += -out.Fx * out.effectiveRadius;
+            vehicle.own.beltDamping[index] = out.treadDamping * out.effectiveRadius * out.effectiveRadius;
+            vehicle.own.rollingCapacity[index] = out.rollingResistanceLimit;
+            vehicle.own.standingDampingShare[index] = out.carcassDampingShare;
             state.force = force;
             state.load = static_cast<float>(inputs[index].load);
             state.contact = true;
@@ -2824,7 +3104,7 @@ struct PhysicsWorld::Impl
             const VehicleTyreSettings& tyreData = vehicle.settings.tyres[index];
             tyre::TyreThermalInput heat;
             heat.dt = dt;
-            heat.wheelSpeed = wheel.GetAngularVelocity();
+            heat.wheelSpeed = vehicle.own.state.belt[index];
             heat.camber = in.camber;
             heat.carSpeed = carSpeed;
             if (wheel.HasContact() && in.load > 0.0)
@@ -2854,7 +3134,7 @@ struct PhysicsWorld::Impl
             rub.dt = dt;
             if (wheel.HasContact() && in.load > 0.0)
             {
-                const double treadSpeed = wheel.GetAngularVelocity() * outputs[index].effectiveRadius;
+                const double treadSpeed = vehicle.own.state.belt[index] * outputs[index].effectiveRadius;
                 rub.slideSpeed = std::hypot(static_cast<double>(lateralSlides[index]), treadSpeed - in.forwardVelocity);
                 rub.contactSpeed = std::hypot(in.forwardVelocity, static_cast<double>(lateralSlides[index]));
                 rub.load = in.load;
@@ -3004,7 +3284,7 @@ struct PhysicsWorld::Impl
             return;
         }
         JPH::VehicleEngine& engine = controller.GetEngine();
-        const float net = engine.GetTorque(std::abs(controller.GetForwardInput())) - EngineCoastTorque(vehicle.settings, engine.GetCurrentRPM(), vehicle.pedal);
+        const float net = engine.GetTorque(std::abs(ForwardInput(vehicle, controller))) - EngineCoastTorque(vehicle.settings, engine.GetCurrentRPM(), vehicle.pedal);
         const float loss = DrivetrainLossTorque(net, StepDrivetrainEfficiency(vehicle, controller));
         if (loss == 0.0f)
         {
@@ -3023,23 +3303,21 @@ struct PhysicsWorld::Impl
         {
             return;
         }
-        const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
-        for (int axle = 0; axle < 2; ++axle)
+        for (size_t axle = 0; axle < 2; ++axle)
         {
             const bool driven = vehicle.drive == VehicleDrive::AllWheel || (axle == 0) == (vehicle.drive == VehicleDrive::FrontWheel);
             if (!driven)
             {
                 continue;
             }
-            auto* left = static_cast<JPH::WheelWV*>(wheels[static_cast<JPH::uint>(2 * axle)]);
-            auto* right = static_cast<JPH::WheelWV*>(wheels[static_cast<JPH::uint>(2 * axle + 1)]);
-            const float speed = 0.5f * (left->GetAngularVelocity() + right->GetAngularVelocity());
+            const float speed = 0.5f * (WheelSpin(vehicle, 2 * axle) + WheelSpin(vehicle, 2 * axle + 1));
             const float limit = 0.5f * DrivetrainSpinTorque(losses, speed);
-            for (JPH::WheelWV* wheel : {left, right})
+            for (const size_t wheel : {2 * axle, 2 * axle + 1})
             {
-                const float drag = RollingResistanceTorque(wheel->GetAngularVelocity(), 0.0f, wheel->GetSettings()->mInertia, limit, stepSeconds);
-                vehicle.drivetrainSpinLoss += std::abs(drag * wheel->GetAngularVelocity());
-                wheel->ApplyTorque(drag, stepSeconds);
+                const float spin = WheelSpin(vehicle, wheel);
+                const float drag = RollingResistanceTorque(spin, 0.0f, WheelSpinInertia(vehicle, wheel), limit, stepSeconds);
+                vehicle.drivetrainSpinLoss += std::abs(drag * spin);
+                AddWheelTorque(vehicle, wheel, drag);
             }
         }
     }
@@ -3298,6 +3576,13 @@ struct PhysicsWorld::Impl
                 const JPH::WheelSettingsWV& tyre = *wheelWV.GetSettings();
                 state.longitudinalPeakFriction = peakOf(tyre.mLongitudinalFriction, wheelWV.mLongitudinalSlip, wheelWV.mCombinedLongitudinalFriction);
                 state.lateralPeakFriction = peakOf(tyre.mLateralFriction, JPH::RadiansToDegrees(wheelWV.mLateralSlip), wheelWV.mCombinedLateralFriction);
+            }
+            if (vehicle.ownDrivetrain && index < kDrivetrainWheels)
+            {
+                state.ownDrivetrain = true;
+                state.beltAngularVelocity = static_cast<float>(vehicle.own.state.belt[index]);
+                state.sidewallTwist = static_cast<float>(vehicle.own.state.twist[index]);
+                state.sidewallTorque = static_cast<float>(vehicle.own.last.sidewallTorque[index]);
             }
             if (index < vehicle.brushTyres.size())
             {
@@ -3720,9 +4005,10 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
     impl.BuildCorners(vehicle);
     if (settings.tyreModel == VehicleTyreModel::Brush)
     {
+        std::array<SidewallTwist, kVehicleWheelCount> sidewallTwist{};
         for (size_t index = 0; index < kVehicleWheelCount; ++index)
         {
-            vehicle.brushTyres.emplace_back(BuildBrushTyreParameters(settings, index));
+            vehicle.brushTyres.emplace_back(BuildBrushTyreParameters(settings, index, &sidewallTwist[index]));
             if (settings.tyreTemperatures && settings.tyres[index].thermal.surfaceTransfer > 0.0)
             {
                 vehicle.thermals[index].emplace(settings.tyres[index].thermal, settings.tyreStartTemperature);
@@ -3740,6 +4026,11 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
                 outLongitudinalImpulse = 0.0f;
                 outLateralImpulse = 0.0f;
             });
+        vehicle.ownDrivetrain = Impl::OwnsDrivetrain(settings);
+        if (vehicle.ownDrivetrain)
+        {
+            impl.BuildOwnDrivetrain(vehicle, sidewallTwist);
+        }
     }
     else if (Impl::PushesOwnSuspension(vehicle))
     {
@@ -3886,6 +4177,21 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose, bool keep
     vehicle.tyreSlips = {};
     vehicle.springs = {};
     vehicle.suspensionLoads = {};
+    if (vehicle.ownDrivetrain)
+    {
+        Impl::Vehicle::OwnDrive& own = vehicle.own;
+        own.state = {};
+        own.state.engine = controller->GetEngine().GetAngularVelocity();
+        own.last = {};
+        own.forward = 0.0f;
+        own.brake = 0.0f;
+        own.handBrake = 0.0f;
+        own.clutchCapacity = own.maxClutchTorque;
+        own.beltTorque = {};
+        own.rollingCapacity = {};
+        own.beltDamping = {};
+        own.standingDampingShare = {};
+    }
     vehicle.brushWheels = {};
     vehicle.droppedRotation = {};
     vehicle.spinAngleBefore = {};
@@ -4160,7 +4466,19 @@ int PhysicsWorld::Update(float deltaSeconds, float wallBudgetSeconds)
             impl.LimitClutchTorque(vehicle, *controller);
             impl.UpdateCorners(vehicle, input.right);
             impl.ApplyRearSteer(vehicle, input);
-            controller->SetDriverInput(impl.SpoolTurbos(vehicle, *controller, input.forward), input.right, input.brake, input.handBrake);
+            const float forward = impl.SpoolTurbos(vehicle, *controller, input.forward);
+            if (vehicle.ownDrivetrain)
+            {
+                // The car's own drivetrain takes the driver; the physics engine's only steers.
+                vehicle.own.forward = forward;
+                vehicle.own.brake = input.brake;
+                vehicle.own.handBrake = input.handBrake;
+                controller->SetDriverInput(0.0f, input.right, 0.0f, 0.0f);
+            }
+            else
+            {
+                controller->SetDriverInput(forward, input.right, input.brake, input.handBrake);
+            }
             impl.ApplyEngineCoast(vehicle, *controller, input.forward);
             impl.ApplyDrivetrainLoss(vehicle, *controller);
             impl.RememberWheelAngles(vehicle);

@@ -617,6 +617,7 @@ BrushTyreOutput MakeOutput(const BrushTyreParameters& p, const Patch& patch, con
     out.slipRatio = (in.wheelSpeed * patch.effectiveRadius - in.forwardVelocity) / reference;
     out.slipAngle = std::atan2(in.lateralVelocity, std::max(std::abs(in.forwardVelocity), p.lowSpeed));
     out.rollingResistanceLimit = (p.rollingResistance + std::max(in.extraRollingResistance, 0.0)) * patch.load * patch.effectiveRadius;
+    out.carcassDampingShare = p.carcassDamping[0] > 0.0 ? patch.damping[0] / p.carcassDamping[0] : 1.0;
     out.evaluations = s.evaluations;
     out.converged = s.converged;
     out.ribCount = patch.ribCount;
@@ -766,7 +767,24 @@ BrushTyreOutput BrushTyre::Step(const BrushTyreInput& input, double dt)
         // Not balanced: keep the carcass and bristles where they were and start the Jacobian afresh next step.
         m_state.jacobianValid = false;
     }
-    return MakeOutput(m_p, patch, input, s);
+    BrushTyreOutput out = MakeOutput(m_p, patch, input, s);
+    if (stepped)
+    {
+        // How the force along the wheel answers the tread's speed within the step: each stuck bristle bends by
+        // the slip's speed times the step, or at most as far as a steady slip bends it before it leaves the
+        // patch (half the stuck length over the speed), in series with the carcass's give over the step.
+        const double speed = std::max({std::abs(input.forwardVelocity), std::abs(input.wheelSpeed * patch.effectiveRadius), m_p.lowSpeed});
+        double bristles = 0.0;
+        for (int rib = 0; rib < out.ribCount; ++rib)
+        {
+            const double stuck = out.ribs[static_cast<size_t>(rib)].stuckLength;
+            bristles += patch.ribs[static_cast<size_t>(rib)].width * std::min(stuck * dt, 0.5 * stuck * stuck / speed);
+        }
+        bristles *= m_p.bristleStiffnessX;
+        const double carcass = m_p.carcassStiffness[0] * dt + patch.damping[0];
+        out.treadDamping = bristles > 0.0 && carcass > 0.0 ? 1.0 / (1.0 / bristles + 1.0 / carcass) : 0.0;
+    }
+    return out;
 }
 
 BrushTyreOutput BrushTyre::Steady(const BrushTyreInput& input) const
