@@ -1779,6 +1779,13 @@ void EditorRenderBackendBase::InitializeEditorScene()
 
 void EditorRenderBackendBase::SaveEngineSettings()
 {
+    if (EnginePaths::SettingsReadOnly())
+    {
+        // What changed applies to this run; the file keeps what the user saved.
+        State().engineSettingsNeedsBootstrapSave = false;
+        State().engineSettingsDirty = false;
+        return;
+    }
     if (State().engineSettingsPath.empty())
     {
         State().engineSettingsPath = BuildEngineSettingsPath();

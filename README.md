@@ -180,7 +180,13 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
 --drive-controls <油门>,<转向>  与 --drive 一起使用：保持这组输入（-1 到 1）代替键盘和手柄，每帧固定推进 1/60 s 仿真，每仿真秒记录一次车的位置、速度、着地轮数和倾角（无人值守的试驾）
 --physics-rate <Hz>  物理固定步长的频率（每仿真秒的步数，60 到 4000，默认 1000，即 1 ms；Vehicle 面板 Tuning > Physics Rate 同一设置）
 --drive-view <视角>  与 --drive 一起使用：chase（追尾）、cockpit（车内第一人称）、bonnet（引擎盖）、bumper（车头保险杠）或 fixed（相机停在 --camera 给的位置，不跟车）
+--control [端口]     打开控制通道：在 127.0.0.1:端口（默认 47811）上接受一行一个 JSON 的命令，运行中改相机、渲染设置、
+                    截图、读帧时间、开车、读日志等（`help` 列出全部命令）；环境变量 MINIENGINE_CONTROL_PORT 同效。
+                    客户端在 tools/engine_control（mectl.py 命令行、mcp_server.py MCP 服务器）
+--read-only-settings  只读不写 miniengine.settings.json 与 imgui.ini（MINIENGINE_READ_ONLY_SETTINGS=1 同效），测试运行不改用户设置
 ```
+
+控制通道的设计见 [docs/design/2026-10-10-engine-control-channel-design.md](docs/design/2026-10-10-engine-control-channel-design.md)。
 
 代码改动的自动化验证入口如下；60 帧进程退出和 CTest 不能替代人工 GUI/视觉确认。本文档改动只进行静态核验，不把以下命令的历史或建议用法表述为本轮运行结果。
 

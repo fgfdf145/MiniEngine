@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "miniengine": {
+      "command": "python",
+      "args": ["tools/engine_control/mcp_server.py"]
+    }
+  }
+}

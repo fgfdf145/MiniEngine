@@ -15,6 +15,7 @@ struct ResolvedRoots
     std::filesystem::path assets;
     std::filesystem::path cache;
     std::filesystem::path shaders;
+    bool readOnlySettings = false;
 };
 
 std::optional<std::filesystem::path> ReadEnvironmentPath(const char* name)
@@ -109,6 +110,8 @@ ResolvedRoots Resolve(const EnginePaths::Overrides& overrides)
         overrides.cacheRoot, "MINIENGINE_CACHE_DIR", SharedCacheRoot());
     roots.shaders = ResolveRoot(
         overrides.shaderRoot, "MINIENGINE_SHADER_DIR", MINIENGINE_DEFAULT_SHADER_DIR);
+    const std::optional<std::filesystem::path> readOnly = ReadEnvironmentPath("MINIENGINE_READ_ONLY_SETTINGS");
+    roots.readOnlySettings = overrides.readOnlySettings || (readOnly.has_value() && readOnly->string() != "0");
     return roots;
 }
 
@@ -153,6 +156,11 @@ const std::filesystem::path& CacheRoot()
 const std::filesystem::path& ShaderRoot()
 {
     return Roots().shaders;
+}
+
+bool SettingsReadOnly()
+{
+    return Roots().readOnlySettings;
 }
 }
 }

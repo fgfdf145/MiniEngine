@@ -209,6 +209,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     void CaptureViewport(const std::filesystem::path& path) override;
     void CaptureDdgiReference(const DdgiReferenceRequest& reference) override;
     void LogFrameTimings() const override;
+    FrameTimings GetFrameTimings() const override;
 
   protected:
     void HandleBackendEvent(const SDL_Event& event) override;
@@ -300,6 +301,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     // In ddgi_reference_capture.cpp.
     void CaptureDdgiReferenceNow(const DdgiReferenceRequest& reference);
     void LogFrameTimingsNow() const;
+    FrameTimings GetFrameTimingsNow() const;
 
     void CreateDeviceResources();
     void DestroyDeviceResources();

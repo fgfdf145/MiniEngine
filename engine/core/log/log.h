@@ -27,6 +27,16 @@ class Log
     static bool RefreshInputMessagesSnapshot(std::vector<std::string>& messages, uint64_t& revision);
     static void ClearInputMessages();
 
+    struct RecentLine
+    {
+        // Counts every line logged since Init, from 1.
+        uint64_t sequence = 0;
+        std::string text;
+    };
+    // The last lines the default logger wrote (at most `maxLines`, of the newest 4096 kept), only those
+    // after `afterSequence`, oldest first: what the control channel's log command returns.
+    static std::vector<RecentLine> RecentLines(size_t maxLines, uint64_t afterSequence = 0);
+
   private:
     static void WriteInputLine(const std::string& message);
 };

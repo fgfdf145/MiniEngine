@@ -1,4 +1,6 @@
 ﻿#include "editor_application.h"
+#include "control_server.h"
+#include "control_session.h"
 
 #include <engine/asset/compressed_texture_cache.h>
 #include <engine/asset/tyre_library.h>
@@ -24,6 +26,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -95,6 +98,19 @@ std::array<float, count> ParseFloatList(std::string_view value, std::string_view
         cursor = parsedEnd + 1;
     }
     return numbers;
+}
+
+constexpr uint16_t kDefaultControlPort = 47811;
+
+uint16_t ParseControlPort(std::string_view value)
+{
+    uint32_t port = 0;
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), port);
+    if (error != std::errc() || end != value.data() + value.size() || port > 65535)
+    {
+        throw std::runtime_error("--control takes a port from 0 to 65535, not '" + std::string(value) + "'");
+    }
+    return static_cast<uint16_t>(port);
 }
 
 RenderBackendType ParseRenderBackend(std::string_view value)
@@ -557,6 +573,22 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--control")
+        {
+            options.controlPort = kDefaultControlPort;
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9')
+            {
+                options.controlPort = ParseControlPort(argv[++i]);
+            }
+            continue;
+        }
+
+        if (argument == "--read-only-settings")
+        {
+            options.paths.readOnlySettings = true;
+            continue;
+        }
+
         if (argument == "--shaders")
         {
             options.paths.shaderRoot = ReadRequiredArgument(i, argc, argv, argument);
@@ -564,6 +596,14 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         }
 
         throw std::runtime_error("Unknown argument: " + std::string(argument));
+    }
+
+    if (!options.controlPort.has_value())
+    {
+        if (const char* port = std::getenv("MINIENGINE_CONTROL_PORT"); port != nullptr && port[0] != '\0')
+        {
+            options.controlPort = ParseControlPort(port);
+        }
     }
 
     if ((options.followPath.has_value() || options.replayDrive.has_value() || options.driveLog.has_value()) && !options.driveEntity.has_value())
@@ -712,7 +752,7 @@ int EditorApplication::Run()
     sharedState->viewSettingsFromCommandLine =
         m_options.maxFrames > 0 || m_options.statePath.has_value() || m_options.khronosReference ||
         m_options.debugView.has_value() || m_options.displayPattern.has_value() || m_options.ddgiDisabled || m_options.ddgiSpacing.has_value() ||
-        m_options.softwareRays;
+        m_options.softwareRays || m_options.paths.readOnlySettings;
     std::optional<std::string> startupScenePath = m_options.startupScenePath;
     std::optional<RenderExtent> viewportSize = m_options.viewportSize;
     if (m_options.statePath.has_value())
@@ -829,6 +869,15 @@ int EditorApplication::Run()
         // editor, so it replaces the test scene a few frames in.
         SceneIoService::StartAsyncSceneLoad(*sharedState, *startupScenePath);
     }
+    // After the renderer, which the commands use, and destroyed before it.
+    std::unique_ptr<ControlServer> controlServer;
+    std::unique_ptr<ControlSession> controlSession;
+    if (m_options.controlPort.has_value())
+    {
+        controlServer = std::make_unique<ControlServer>(*m_options.controlPort);
+        controlSession = std::make_unique<ControlSession>(*controlServer, *sharedState, *renderer);
+        LOG_INFO("Control channel: listening on 127.0.0.1:{}", controlServer->Port());
+    }
     uint32_t renderedFrameCount = 0;
     bool countingStarted = false;
     bool recordingStarted = false;
@@ -902,6 +951,15 @@ int EditorApplication::Run()
         if (minimized)
         {
             SDL_Delay(10);
+        }
+
+        if (controlSession)
+        {
+            controlSession->Update(!minimized);
+            if (controlSession->QuitRequested())
+            {
+                break;
+            }
         }
 
         const bool loading = sharedState->IsSceneLoading();

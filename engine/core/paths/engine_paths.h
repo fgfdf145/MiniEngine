@@ -20,6 +20,8 @@ struct Overrides
     std::optional<std::filesystem::path> assetsRoot;
     std::optional<std::filesystem::path> cacheRoot;
     std::optional<std::filesystem::path> shaderRoot;
+    // --read-only-settings (or MINIENGINE_READ_ONLY_SETTINGS=1): see SettingsReadOnly.
+    bool readOnlySettings = false;
 };
 
 // Resolves every root once, at startup, before any other subsystem touches the
@@ -50,5 +52,9 @@ const std::filesystem::path& CacheRoot();
 
 // Compiled SPIR-V produced by the build. Environment: MINIENGINE_SHADER_DIR.
 const std::filesystem::path& ShaderRoot();
+
+// The configuration files under ProjectRoot() (miniengine.settings.json, imgui.ini) are read but never
+// written: a test or remote-controlled run leaves the user's own settings and layout as they were.
+bool SettingsReadOnly();
 }
 }

@@ -295,7 +295,16 @@ VulkanImGuiLayer::VulkanImGuiLayer(SDL_Window* window, nvrhi::IDevice* device, u
     ImPlot::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.IniFilename = m_iniFilePath.c_str();
+    if (EnginePaths::SettingsReadOnly())
+    {
+        // The user's layout, read once and never written back.
+        io.IniFilename = nullptr;
+        ImGui::LoadIniSettingsFromDisk(m_iniFilePath.c_str());
+    }
+    else
+    {
+        io.IniFilename = m_iniFilePath.c_str();
+    }
     // The layout (positions, sizes, docking) is written a second after it changes rather than ImGui's
     // default five, so a crash or a killed process loses little of it.
     io.IniSavingRate = 1.0f;

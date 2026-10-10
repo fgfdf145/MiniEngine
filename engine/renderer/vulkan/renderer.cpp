@@ -2500,7 +2500,15 @@ void VulkanRenderer::LogFrameTimings() const
                                  });
 }
 
-void VulkanRenderer::LogFrameTimingsNow() const
+IRenderBackend::FrameTimings VulkanRenderer::GetFrameTimings() const
+{
+    return m_renderThread->RunExclusive([this]()
+                                        {
+                                            return GetFrameTimingsNow();
+                                        });
+}
+
+IRenderBackend::FrameTimings VulkanRenderer::GetFrameTimingsNow() const
 {
     const auto average = [](const std::vector<double>& samples)
     {
@@ -2511,33 +2519,59 @@ void VulkanRenderer::LogFrameTimingsNow() const
         }
         return samples.empty() ? 0.0 : sum / static_cast<double>(samples.size());
     };
-    LOG_INFO(
-        "Frame timings over the last {} frames: CPU {:.2f} ms recording, {:.2f} ms waiting on the GPU; GPU {:.2f} ms; "
-        "slowest frame {:.1f} ms of CPU",
-        m_cpuFrameMs.size(),
-        average(m_cpuFrameMs),
-        average(m_cpuWaitMs),
-        m_gpuTimer ? m_gpuTimer->GetAverageFrameMs() : 0.0,
-        m_cpuFrameMs.empty() ? 0.0 : *std::max_element(m_cpuFrameMs.begin(), m_cpuFrameMs.end()));
+    FrameTimings timings;
+    timings.frames = static_cast<uint32_t>(m_cpuFrameMs.size());
+    timings.cpuRecordingMs = average(m_cpuFrameMs);
+    timings.cpuWaitMs = average(m_cpuWaitMs);
+    timings.gpuMs = m_gpuTimer ? m_gpuTimer->GetAverageFrameMs() : 0.0;
+    timings.slowestCpuMs = m_cpuFrameMs.empty() ? 0.0 : *std::max_element(m_cpuFrameMs.begin(), m_cpuFrameMs.end());
+    timings.mainThreadMs = average(m_mainFrameMs);
+    timings.renderThread = m_renderThread && m_renderThread->GetMode() == RenderThread::Mode::Threaded;
     for (const CpuStageTimer::Stage& stage : m_cpuStages.GetStages())
     {
-        LOG_INFO("  CPU {:<20} {:7.3f} ms", stage.name, stage.averageMs);
+        timings.cpuStages.emplace_back(stage.name, stage.averageMs);
     }
-    LOG_INFO(
-        "Main thread: {:.2f} ms a frame ({} frames), render work on {}",
-        average(m_mainFrameMs),
-        m_mainFrameMs.size(),
-        m_renderThread && m_renderThread->GetMode() == RenderThread::Mode::Threaded ? "the render thread" : "the main thread");
     for (const CpuStageTimer::Stage& stage : m_mainStages.GetStages())
     {
-        LOG_INFO("  Main {:<19} {:7.3f} ms", stage.name, stage.averageMs);
+        timings.mainStages.emplace_back(stage.name, stage.averageMs);
     }
     if (m_gpuTimer)
     {
         for (const VulkanGpuTimer::Section& section : m_gpuTimer->GetSections())
         {
-            LOG_INFO("  GPU {:<20} {:7.3f} ms", section.name, section.averageMs);
+            timings.gpuPasses.emplace_back(section.name, section.averageMs);
         }
+    }
+    return timings;
+}
+
+void VulkanRenderer::LogFrameTimingsNow() const
+{
+    const FrameTimings timings = GetFrameTimingsNow();
+    LOG_INFO(
+        "Frame timings over the last {} frames: CPU {:.2f} ms recording, {:.2f} ms waiting on the GPU; GPU {:.2f} ms; "
+        "slowest frame {:.1f} ms of CPU",
+        timings.frames,
+        timings.cpuRecordingMs,
+        timings.cpuWaitMs,
+        timings.gpuMs,
+        timings.slowestCpuMs);
+    for (const auto& [name, ms] : timings.cpuStages)
+    {
+        LOG_INFO("  CPU {:<20} {:7.3f} ms", name, ms);
+    }
+    LOG_INFO(
+        "Main thread: {:.2f} ms a frame ({} frames), render work on {}",
+        timings.mainThreadMs,
+        m_mainFrameMs.size(),
+        timings.renderThread ? "the render thread" : "the main thread");
+    for (const auto& [name, ms] : timings.mainStages)
+    {
+        LOG_INFO("  Main {:<19} {:7.3f} ms", name, ms);
+    }
+    for (const auto& [name, ms] : timings.gpuPasses)
+    {
+        LOG_INFO("  GPU {:<20} {:7.3f} ms", name, ms);
     }
 }
 

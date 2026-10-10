@@ -147,6 +147,10 @@ struct EditorApplicationOptions
     std::optional<platform::process::ProcessPriority> processPriority;
     std::optional<platform::process::CpuSelection> cpuSelection;
     std::vector<uint32_t> customCpus;
+    // --control [PORT]: the control channel (ControlSession) listens on 127.0.0.1:PORT (47811 when the
+    // next argument is not a number); a client drives the editor while it runs. MINIENGINE_CONTROL_PORT
+    // does the same.
+    std::optional<uint16_t> controlPort;
     EnginePaths::Overrides paths;
 };
 

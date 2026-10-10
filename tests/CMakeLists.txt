@@ -2250,6 +2250,37 @@ add_test(
 
 set_target_properties(miniengine_capture_state_tests PROPERTIES FOLDER "Tests")
 
+# The control channel (--control): requests over a real loopback socket, and the commands against the
+# editor's state with a render backend that draws nothing.
+add_executable(miniengine_control_channel_tests
+    control_channel_tests.cpp
+)
+miniengine_group_target_sources(miniengine_control_channel_tests)
+
+target_link_libraries(miniengine_control_channel_tests
+    PRIVATE
+        engine_application
+        engine_editor
+        engine_logic
+)
+
+if(WIN32)
+    target_link_libraries(miniengine_control_channel_tests PRIVATE ws2_32)
+    add_custom_command(TARGET miniengine_control_channel_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_control_channel_tests>
+            $<TARGET_FILE_DIR:miniengine_control_channel_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.control_channel
+    COMMAND miniengine_control_channel_tests
+)
+
+set_target_properties(miniengine_control_channel_tests PROPERTIES FOLDER "Tests")
+
 # The flexible ring tyre (engine/tyre/flex_ring): numerics against closed forms, statics, the fit,
 # rolling, cleats and the C interface (the shared library, copied next to the test).
 add_executable(miniengine_flex_ring_tests

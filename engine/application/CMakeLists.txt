@@ -1,4 +1,8 @@
 add_library(engine_application
+    control_server.cpp
+    control_server.h
+    control_session.cpp
+    control_session.h
     editor_application.cpp
     editor_application.h
 )
@@ -21,3 +25,7 @@ target_link_libraries(engine_application
         yaml-cpp::yaml-cpp
         EnTT::EnTT
 )
+
+if(WIN32)
+    target_link_libraries(engine_application PRIVATE ws2_32)
+endif()

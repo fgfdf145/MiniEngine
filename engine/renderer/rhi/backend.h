@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace me
 {
@@ -133,6 +135,24 @@ class IRenderBackend
     // Logs the recent frames' average CPU and per-pass GPU times. For verification runs (--frames).
     virtual void LogFrameTimings() const
     {
+    }
+    // The recent frames' average times (ms), as LogFrameTimings logs them, for the control channel.
+    struct FrameTimings
+    {
+        uint32_t frames = 0;
+        double cpuRecordingMs = 0.0;
+        double cpuWaitMs = 0.0;
+        double gpuMs = 0.0;
+        double slowestCpuMs = 0.0;
+        double mainThreadMs = 0.0;
+        bool renderThread = false;
+        std::vector<std::pair<std::string, double>> cpuStages;
+        std::vector<std::pair<std::string, double>> mainStages;
+        std::vector<std::pair<std::string, double>> gpuPasses;
+    };
+    virtual FrameTimings GetFrameTimings() const
+    {
+        return {};
     }
 };
 }
