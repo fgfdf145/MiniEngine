@@ -65,6 +65,32 @@ struct DrivePathTrack
 // open path's speed comes down to 0 at its end. Empty with fewer than two distinct points.
 DrivePathTrack BuildDrivePathTrack(const SceneDrivePath& path, const DrivePathTrackSettings& settings = {});
 
+// The path driven the other way round: its points in the opposite order, each with its speed. The curve
+// through them is the same one. A closed path keeps its first point as its start.
+SceneDrivePath ReversedDrivePath(const SceneDrivePath& path);
+
+// One end of a path. A closed path's start and end are both its first point.
+enum class DrivePathEnd
+{
+    Start,
+    End,
+};
+
+// A link from one end of `from` to one end of `to` that leaves both paths as they are: a cubic Bezier
+// that leaves `from` the way its curve runs out of that end (out of its start is backwards along it) and
+// arrives at `to` the way its curve runs in from that end, so the three curves meet without a kink. The
+// points are about `spacingMetres` apart along it, both ends included; their speeds go from the speed at
+// the one end to the speed at the other. Empty when either path has no curve or the ends are one point.
+std::vector<SceneDrivePathPoint> DrivePathLinkPoints(
+    const SceneDrivePath& from, DrivePathEnd fromEnd, const SceneDrivePath& to, DrivePathEnd toEnd, double spacingMetres = 2.0);
+
+// `from`, the link and `to` as one new path: `from` turned so the linked end is its last point, the link,
+// then `to` turned so its linked end is its first. Linking a path to itself (one end to the other) closes
+// it. Every point keeps the speed it had (one that took its path's speed now has it written in). Empty
+// when a path is closed, or as DrivePathLinkPoints.
+SceneDrivePath JoinDrivePaths(
+    const SceneDrivePath& from, DrivePathEnd fromEnd, const SceneDrivePath& to, DrivePathEnd toEnd, double spacingMetres = 2.0);
+
 // Where a point is against the track.
 struct DrivePathProjection
 {

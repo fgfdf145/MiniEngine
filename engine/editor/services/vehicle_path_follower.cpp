@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <optional>
 
 namespace me
 {
@@ -317,6 +318,168 @@ DrivePathTrack BuildDrivePathTrack(const SceneDrivePath& path, const DrivePathTr
         }
     }
     return track;
+}
+
+SceneDrivePath ReversedDrivePath(const SceneDrivePath& path)
+{
+    SceneDrivePath reversed = path;
+    if (path.closed && !reversed.points.empty())
+    {
+        std::reverse(reversed.points.begin() + 1, reversed.points.end());
+    }
+    else
+    {
+        std::reverse(reversed.points.begin(), reversed.points.end());
+    }
+    return reversed;
+}
+
+namespace
+{
+// Where a path's curve is at one end, the way it runs out of the path there, and the speed (km/h) set there.
+struct DrivePathEndPoint
+{
+    glm::dvec3 position{0.0};
+    glm::dvec3 outward{0.0};
+    float speedKmh = 0.0f;
+};
+
+std::optional<DrivePathEndPoint> EndOf(const SceneDrivePath& path, DrivePathEnd end)
+{
+    const DrivePathTrack track = BuildDrivePathTrack(path);
+    if (track.Empty())
+    {
+        return std::nullopt;
+    }
+    const bool atStart = end == DrivePathEnd::Start || track.closed;
+    const DrivePathSample& sample = atStart ? track.samples.front() : track.samples.back();
+    const SceneDrivePathPoint& point = atStart ? path.points.front() : path.points.back();
+    DrivePathEndPoint result;
+    result.position = sample.position;
+    result.outward = glm::dvec3(sample.tangent) * (end == DrivePathEnd::Start ? -1.0 : 1.0);
+    result.speedKmh = point.speedKmh > 0.0f ? point.speedKmh : path.speedKmh;
+    return result;
+}
+
+glm::dvec3 CubicBezier(const glm::dvec3& p0, const glm::dvec3& p1, const glm::dvec3& p2, const glm::dvec3& p3, double t)
+{
+    const double s = 1.0 - t;
+    return s * s * s * p0 + 3.0 * s * s * t * p1 + 3.0 * s * t * t * p2 + t * t * t * p3;
+}
+
+// The path's points in the order it is driven when `last` is to be its last end, speeds written in.
+std::vector<SceneDrivePathPoint> PointsEndingAt(const SceneDrivePath& path, DrivePathEnd last)
+{
+    std::vector<SceneDrivePathPoint> points = last == DrivePathEnd::End ? path.points : ReversedDrivePath(path).points;
+    for (SceneDrivePathPoint& point : points)
+    {
+        if (point.speedKmh <= 0.0f)
+        {
+            point.speedKmh = path.speedKmh;
+        }
+    }
+    return points;
+}
+}
+
+std::vector<SceneDrivePathPoint> DrivePathLinkPoints(
+    const SceneDrivePath& from, DrivePathEnd fromEnd, const SceneDrivePath& to, DrivePathEnd toEnd, double spacingMetres)
+{
+    const std::optional<DrivePathEndPoint> start = EndOf(from, fromEnd);
+    const std::optional<DrivePathEndPoint> finish = EndOf(to, toEnd);
+    if (!start || !finish)
+    {
+        return {};
+    }
+    const double gap = glm::length(finish->position - start->position);
+    if (gap < kSamePointMetres)
+    {
+        return {};
+    }
+    // Handles 0.4 of the gap long: a straight on when the ends face each other, a round hairpin when
+    // they sit side by side facing the same way.
+    const double handle = 0.4 * gap;
+    const glm::dvec3 p0 = start->position;
+    const glm::dvec3 p1 = p0 + start->outward * handle;
+    const glm::dvec3 p3 = finish->position;
+    const glm::dvec3 p2 = p3 + finish->outward * handle; // arriving against the way `to` runs out of that end
+
+    // Finely by the parameter, then evenly by arc length.
+    constexpr int kDense = 512;
+    std::vector<glm::dvec3> dense(kDense + 1);
+    std::vector<double> distance(kDense + 1, 0.0);
+    for (int index = 0; index <= kDense; ++index)
+    {
+        dense[index] = CubicBezier(p0, p1, p2, p3, static_cast<double>(index) / kDense);
+        if (index > 0)
+        {
+            distance[index] = distance[index - 1] + glm::length(dense[index] - dense[index - 1]);
+        }
+    }
+    const double length = distance.back();
+    const size_t intervals = std::max<size_t>(2, static_cast<size_t>(std::ceil(length / std::max(spacingMetres, 0.1))));
+    std::vector<double> alongs;
+    for (size_t index = 0; index <= intervals; ++index)
+    {
+        alongs.push_back(length * static_cast<double>(index) / static_cast<double>(intervals));
+    }
+    // A point a quarter metre in from each end: the spline's direction at an end is about its end
+    // stretch's chord's, so these hold it to the Bezier's (and at a join keep the path's own curve as
+    // it was right up to its end).
+    constexpr double kHoldMetres = 0.25;
+    if (length / static_cast<double>(intervals) > 4.0 * kHoldMetres)
+    {
+        alongs.insert(alongs.begin() + 1, kHoldMetres);
+        alongs.insert(alongs.end() - 1, length - kHoldMetres);
+    }
+    std::vector<SceneDrivePathPoint> points;
+    points.reserve(alongs.size());
+    size_t denseIndex = 0;
+    for (size_t index = 0; index < alongs.size(); ++index)
+    {
+        const double along = alongs[index];
+        while (denseIndex + 2 < dense.size() && distance[denseIndex + 1] < along)
+        {
+            ++denseIndex;
+        }
+        const double span = distance[denseIndex + 1] - distance[denseIndex];
+        const double blend = span > 0.0 ? std::clamp((along - distance[denseIndex]) / span, 0.0, 1.0) : 0.0;
+        SceneDrivePathPoint point;
+        point.position = index == 0 ? p0 : index + 1 == alongs.size() ? p3 : glm::mix(dense[denseIndex], dense[denseIndex + 1], blend);
+        point.speedKmh = glm::mix(start->speedKmh, finish->speedKmh, static_cast<float>(along / length));
+        points.push_back(point);
+    }
+    return points;
+}
+
+SceneDrivePath JoinDrivePaths(
+    const SceneDrivePath& from, DrivePathEnd fromEnd, const SceneDrivePath& to, DrivePathEnd toEnd, double spacingMetres)
+{
+    if (from.closed || to.closed)
+    {
+        return {};
+    }
+    const std::vector<SceneDrivePathPoint> link = DrivePathLinkPoints(from, fromEnd, to, toEnd, spacingMetres);
+    if (link.size() < 2)
+    {
+        return {};
+    }
+    SceneDrivePath joined;
+    joined.name = from.name + "_to_" + to.name;
+    joined.speedKmh = from.speedKmh;
+    joined.laps = from.laps;
+    joined.points = PointsEndingAt(from, fromEnd);
+    joined.points.insert(joined.points.end(), link.begin() + 1, link.end() - 1);
+    // The same path's other end: the link closes it.
+    if (from == to)
+    {
+        joined.name = from.name + "_loop";
+        joined.closed = true;
+        return joined;
+    }
+    const std::vector<SceneDrivePathPoint> after = PointsEndingAt(to, toEnd == DrivePathEnd::Start ? DrivePathEnd::End : DrivePathEnd::Start);
+    joined.points.insert(joined.points.end(), after.begin(), after.end());
+    return joined;
 }
 
 DrivePathProjection ProjectOntoDrivePath(const DrivePathTrack& track, const glm::dvec3& position, size_t hintSegment, double searchMetres)

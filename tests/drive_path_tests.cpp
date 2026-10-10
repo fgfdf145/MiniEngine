@@ -264,6 +264,104 @@ void StartJustBehindAClosedStartCountsNoLap()
     Require(result.seconds > 20.0f, "one lap took only " + std::to_string(result.seconds) + " s");
 }
 
+void ReversingKeepsTheCurve()
+{
+    SceneDrivePath path;
+    path.speedKmh = 50.0f;
+    path.points = {{{0.0, 0.0, 0.0}, 30.0f}, {{0.0, 0.0, 30.0}}, {{12.0, 1.0, 55.0}, 80.0f}, {{40.0, 2.0, 60.0}}};
+    const SceneDrivePath reversed = ReversedDrivePath(path);
+    Require(reversed.points.front() == path.points.back() && reversed.points.back() == path.points.front(), "the ends did not swap");
+    Require(reversed.points[1].speedKmh == 80.0f, "a point lost its speed");
+    Require(ReversedDrivePath(reversed) == path, "reversing twice is not the path");
+    const DrivePathTrack forward = BuildDrivePathTrack(path);
+    const DrivePathTrack backward = BuildDrivePathTrack(reversed);
+    Require(std::abs(forward.length - backward.length) < 0.01, "the reversed curve is another length");
+    for (const DrivePathSample& sample : backward.samples)
+    {
+        const double off = glm::length(ProjectOntoDrivePath(forward, sample.position).closest - sample.position);
+        Require(off < 0.01, "the reversed curve is " + std::to_string(off) + " m off the original");
+    }
+    Require(glm::dot(forward.samples.front().tangent, backward.samples.back().tangent) < -0.999f, "the reversed curve does not end the other way");
+
+    // A closed path keeps its start and goes round the other way.
+    const SceneDrivePath circle = Circle(30.0, 12, 40.0f, 1);
+    const SceneDrivePath around = ReversedDrivePath(circle);
+    Require(around.points.front() == circle.points.front() && around.points[1] == circle.points.back(), "a closed path's start moved");
+    const DrivePathTrack circleTrack = BuildDrivePathTrack(around);
+    Require(circleTrack.samples[10].curvature < 0.0f, "the reversed circle does not turn left");
+}
+
+void LinkLeavesAndArrivesWithoutAKink()
+{
+    // Two straights heading +Z, the second 40 m across and 50 m on: the link is an S between them.
+    SceneDrivePath a;
+    a.name = "a";
+    a.speedKmh = 60.0f;
+    a.points = {{{0.0, 0.0, 0.0}}, {{0.0, 0.0, 50.0}}};
+    SceneDrivePath b;
+    b.name = "b";
+    b.speedKmh = 40.0f;
+    b.points = {{{40.0, 0.0, 100.0}}, {{40.0, 0.0, 150.0}}};
+    const SceneDrivePath aBefore = a;
+    const SceneDrivePath bBefore = b;
+
+    const std::vector<SceneDrivePathPoint> link = DrivePathLinkPoints(a, DrivePathEnd::End, b, DrivePathEnd::Start);
+    Require(link.size() >= 3, "the link has " + std::to_string(link.size()) + " points");
+    Require(link.front().position == a.points.back().position && link.back().position == b.points.front().position, "the link misses the ends");
+    Require(link.front().speedKmh == 60.0f && link.back().speedKmh == 40.0f, "the link's speeds do not run from end to end");
+    for (size_t index = 1; index < link.size(); ++index)
+    {
+        const double gap = glm::length(link[index].position - link[index - 1].position);
+        const bool hold = index == 1 || index + 1 == link.size();
+        Require(hold ? std::abs(gap - 0.25) < 0.01 : gap > 1.0 && gap <= 2.0 + 1.0e-6, "link points are " + std::to_string(gap) + " m apart");
+    }
+    SceneDrivePath linkPath;
+    linkPath.points = link;
+    DrivePathTrackSettings fine;
+    fine.sampleSpacing = 0.05f; // tangents from 5 cm chords: the spline's own direction at the ends
+    const DrivePathTrack linkTrack = BuildDrivePathTrack(linkPath, fine);
+    const float leave = glm::dot(linkTrack.samples.front().tangent, glm::vec3(0.0f, 0.0f, 1.0f));
+    const float arrive = glm::dot(linkTrack.samples.back().tangent, glm::vec3(0.0f, 0.0f, 1.0f));
+    std::cout << "link: " << link.size() << " points, " << linkTrack.length << " m, leaves " << glm::degrees(std::acos(std::min(leave, 1.0f)))
+              << " deg and arrives " << glm::degrees(std::acos(std::min(arrive, 1.0f))) << " deg off the paths\n";
+    Require(leave > 0.9999f && arrive > 0.9999f, "the link kinks at an end");
+
+    // Joined: a, the link, then b, with each path's own points and
+    // speeds where they were.
+    const SceneDrivePath joined = JoinDrivePaths(a, DrivePathEnd::End, b, DrivePathEnd::Start);
+    Require(joined.points.size() == a.points.size() + link.size() - 2 + b.points.size(), "the joined path has " + std::to_string(joined.points.size()) + " points");
+    Require(joined.points.front().position == a.points.front().position && joined.points.back().position == b.points.back().position, "the joined path's ends are wrong");
+    Require(joined.points.front().speedKmh == 60.0f && joined.points.back().speedKmh == 40.0f, "the joined path lost the paths' speeds");
+    const DrivePathTrack joinedTrack = BuildDrivePathTrack(joined, fine);
+    for (const SceneDrivePathPoint& point : a.points)
+    {
+        Require(glm::length(ProjectOntoDrivePath(joinedTrack, point.position).closest - point.position) < 0.02, "the joined path misses a point of a");
+    }
+    // The middle of a and of b: the joined curve stays on the straights.
+    for (const glm::dvec3 middle : {glm::dvec3(0.0, 0.0, 25.0), glm::dvec3(40.0, 0.0, 125.0)})
+    {
+        const double off = glm::length(ProjectOntoDrivePath(joinedTrack, middle).closest - middle);
+        Require(off < 0.05, "the joined path leaves a straight by " + std::to_string(off) + " m");
+    }
+    // Through the joins it runs on along the straights.
+    for (const glm::dvec3 join : {a.points.back().position, b.points.front().position})
+    {
+        const float along = glm::dot(DrivePathTangentAt(joinedTrack, ProjectOntoDrivePath(joinedTrack, join).distance), glm::vec3(0.0f, 0.0f, 1.0f));
+        Require(along > 0.9999f, "the joined path turns " + std::to_string(glm::degrees(std::acos(std::min(along, 1.0f)))) + " deg off at a join");
+    }
+    Require(a == aBefore && b == bBefore, "linking changed a path");
+
+    // b's end to a's start backwards: the same link reversed, b and a driven the other way.
+    const SceneDrivePath back = JoinDrivePaths(b, DrivePathEnd::Start, a, DrivePathEnd::End);
+    Require(back.points.front().position == b.points.back().position && back.points.back().position == a.points.front().position, "the backward join's ends are wrong");
+
+    // A path's end linked to its own start closes it.
+    const SceneDrivePath loop = JoinDrivePaths(a, DrivePathEnd::End, a, DrivePathEnd::Start);
+    Require(loop.closed && loop.points.size() > a.points.size(), "a path linked to itself is not a loop");
+    Require(DrivePathLinkPoints(a, DrivePathEnd::End, a, DrivePathEnd::End).empty(), "an end linked to itself gave a link");
+    Require(JoinDrivePaths(Circle(30.0, 12, 40.0f, 1), DrivePathEnd::End, b, DrivePathEnd::Start).points.empty(), "a closed path was joined");
+}
+
 void DriveLogRoundTrips(const std::filesystem::path& folder)
 {
     const std::filesystem::path file = folder / "drive_path_tests_log.csv";
@@ -486,6 +584,8 @@ int main()
         FollowsALaneChangeAndStops();
         FailsWhenFarOff();
         StartJustBehindAClosedStartCountsNoLap();
+        ReversingKeepsTheCurve();
+        LinkLeavesAndArrivesWithoutAKink();
         DriveLogRoundTrips(folder);
         ScenePathsRoundTrip(folder);
         RayFindsTheGround();

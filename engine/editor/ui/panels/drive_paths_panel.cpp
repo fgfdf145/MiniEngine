@@ -33,6 +33,7 @@ constexpr size_t kListedLogs = 12;
 constexpr ImU32 kPathColor = IM_COL32(90, 200, 230, 170);
 constexpr ImU32 kSelectedPathColor = IM_COL32(255, 196, 64, 255);
 constexpr ImU32 kPointColor = IM_COL32(255, 255, 255, 230);
+constexpr ImU32 kLinkColor = IM_COL32(230, 120, 255, 220);
 constexpr ImU32 kLookaheadColor = IM_COL32(120, 255, 120, 255);
 
 bool Project(const glm::mat4& viewProjection, const ImVec2& origin, const ImVec2& size, const glm::dvec3& world, ImVec2& screen)
@@ -155,6 +156,7 @@ void DrivePathsPanel::OnGui(EditorContext& context)
     if (m_selectedPath >= 0)
     {
         DrawPathEditor(context, paths, changed);
+        DrawConnect(paths, changed);
     }
     DrawFollow(context, paths);
     DrawRecording(context, paths, changed);
@@ -247,6 +249,23 @@ void DrivePathsPanel::DrawPathEditor(EditorContext& context, std::vector<SceneDr
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0f);
         changed |= DragIntInRange("Laps", &path.laps, 1, 100);
     }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(path.points.size() < 2);
+    if (ImGui::Button(ICON_PH_ARROWS_LEFT_RIGHT " Reverse"))
+    {
+        const int count = static_cast<int>(path.points.size());
+        path = ReversedDrivePath(path);
+        if (m_selectedPoint >= 0 && m_selectedPoint < count)
+        {
+            m_selectedPoint = path.closed ? (count - m_selectedPoint) % count : count - 1 - m_selectedPoint;
+        }
+        changed = true;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("Swaps the start and the end: the same curve, driven the other way. Each point keeps its speed.");
+    }
     changed |= DragFloatInRange("Speed (km/h)", &path.speedKmh, 0.0f, 400.0f, "%.0f");
     if (ImGui::IsItemHovered())
     {
@@ -334,6 +353,117 @@ void DrivePathsPanel::DrawPathEditor(EditorContext& context, std::vector<SceneDr
     else if (path.points.empty())
     {
         ImGui::TextDisabled("No points: place them in the viewport, add them at the car, or record a line.");
+    }
+}
+
+void DrivePathsPanel::DrawConnect(std::vector<SceneDrivePath>& paths, bool& changed)
+{
+    ImGui::SeparatorText("Connect");
+    const size_t fromIndex = static_cast<size_t>(m_selectedPath);
+    if (m_linkTo >= static_cast<int>(paths.size()))
+    {
+        m_linkTo = -1;
+    }
+    const auto endCombo = [](const char* label, DrivePathEnd& end)
+    {
+        int value = end == DrivePathEnd::Start ? 0 : 1;
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 5.0f);
+        if (ImGui::Combo(label, &value, "Start\0End\0"))
+        {
+            end = value == 0 ? DrivePathEnd::Start : DrivePathEnd::End;
+        }
+    };
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("From the");
+    ImGui::SameLine();
+    endCombo("of this path##link_from_end", m_linkFromEnd);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("to the");
+    ImGui::SameLine(0.0f, ImGui::CalcTextSize("From the").x - ImGui::CalcTextSize("to the").x + ImGui::GetStyle().ItemSpacing.x);
+    endCombo("of##link_to_end", m_linkToEnd);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (ImGui::BeginCombo("##link_to", m_linkTo >= 0 ? paths[static_cast<size_t>(m_linkTo)].name.c_str() : "(choose a path)"))
+    {
+        for (size_t index = 0; index < paths.size(); ++index)
+        {
+            const std::string label = fmt::format("{}{}##{}", paths[index].name, index == fromIndex ? " (this path)" : "", index);
+            if (ImGui::Selectable(label.c_str(), m_linkTo == static_cast<int>(index)))
+            {
+                m_linkTo = static_cast<int>(index);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::Checkbox("Join into One Path", &m_linkJoin);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "Off: the link alone is a new path.\n"
+            "On: a new path drives this path, the link and the other path in turn (a path linked to itself is closed).\n"
+            "Either way both paths stay as they are.");
+    }
+
+    SceneDrivePath made;
+    std::string problem;
+    m_linkPreview.clear();
+    if (m_linkTo < 0)
+    {
+        problem = "Choose the path to connect to.";
+    }
+    else
+    {
+        const SceneDrivePath& from = paths[fromIndex];
+        const SceneDrivePath& to = paths[static_cast<size_t>(m_linkTo)];
+        m_linkPreview = DrivePathLinkPoints(from, m_linkFromEnd, to, m_linkToEnd);
+        if (m_linkJoin)
+        {
+            made = JoinDrivePaths(from, m_linkFromEnd, to, m_linkToEnd);
+            if (made.points.empty())
+            {
+                problem = from.closed || to.closed ? "A closed path cannot be joined; turn Join off for the link alone." : "The two ends are one point.";
+            }
+        }
+        else
+        {
+            made.points = DrivePathLinkPoints(from, m_linkFromEnd, to, m_linkToEnd);
+            made.name = from.name + "_to_" + to.name + "_link";
+            made.speedKmh = from.speedKmh;
+            if (made.points.empty())
+            {
+                problem = from.points.size() < 2 || to.points.size() < 2 ? "Both paths need two points or more." : "The two ends are one point.";
+            }
+        }
+    }
+    ImGui::BeginDisabled(!problem.empty());
+    if (ImGui::Button(ICON_PH_LINK " Add Connection") && problem.empty())
+    {
+        if (std::any_of(paths.begin(), paths.end(), [&](const SceneDrivePath& path)
+                        {
+                            return path.name == made.name;
+                        }))
+        {
+            made.name = FreeName(paths, made.name);
+        }
+        paths.push_back(std::move(made));
+        m_selectedPath = static_cast<int>(paths.size()) - 1;
+        m_selectedPoint = -1;
+        m_linkTo = -1;
+        m_linkPreview.clear();
+        changed = true;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip(
+            "A new path from the chosen end of this one to the chosen end of the other: it leaves along the way\n"
+            "this curve runs out of that end and arrives along the way the other runs in, so there is no kink.\n"
+            "Speeds go from the one end's to the other's. Neither path is changed.");
+    }
+    if (!problem.empty())
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", problem.c_str());
     }
 }
 
@@ -560,6 +690,10 @@ bool DrivePathsPanel::DrawViewportOverlay(EditorContext& context, ImDrawList& dr
         }
     }
     const bool following = status.automation.mode == VehicleAutomationMode::Path;
+    if (!IsOpen())
+    {
+        m_linkPreview.clear();
+    }
     if ((!IsOpen() && !following) || size.x <= 0.0f || size.y <= 0.0f)
     {
         return false;
@@ -645,6 +779,20 @@ bool DrivePathsPanel::DrawViewportOverlay(EditorContext& context, ImDrawList& dr
             }
         }
     }
+    // The link Connect would add.
+    for (const SceneDrivePathPoint& point : m_linkPreview)
+    {
+        ImVec2 screen;
+        if (Project(viewProjection, origin, size, point.position, screen))
+        {
+            line.push_back(screen);
+        }
+        else
+        {
+            flush(kLinkColor);
+        }
+    }
+    flush(kLinkColor);
     // The recorded line so far.
     if (m_recording)
     {

@@ -44,6 +44,7 @@ class DrivePathsPanel final : public EditorPanel
     const DrivePathTrack& TrackFor(size_t index, const SceneDrivePath& path);
     void DrawPathList(std::vector<SceneDrivePath>& paths, bool& changed);
     void DrawPathEditor(EditorContext& context, std::vector<SceneDrivePath>& paths, bool& changed);
+    void DrawConnect(std::vector<SceneDrivePath>& paths, bool& changed);
     void DrawFollow(EditorContext& context, const std::vector<SceneDrivePath>& paths);
     void DrawRecording(EditorContext& context, std::vector<SceneDrivePath>& paths, bool& changed);
     void DrawDriveLog(EditorContext& context);
@@ -57,6 +58,13 @@ class DrivePathsPanel final : public EditorPanel
     bool m_editPoints = true;
     bool m_placePoints = false;
     DrivePathTrackSettings m_followTrack;
+    // Connecting the selected path's end to another path's end (by index, -1 none chosen yet).
+    DrivePathEnd m_linkFromEnd = DrivePathEnd::End;
+    int m_linkTo = -1;
+    DrivePathEnd m_linkToEnd = DrivePathEnd::Start;
+    bool m_linkJoin = false;
+    // The link as it would be added, drawn over the viewport.
+    std::vector<SceneDrivePathPoint> m_linkPreview;
     // The driven line being recorded: a point every few metres with the speed there.
     bool m_recording = false;
     std::vector<SceneDrivePathPoint> m_recorded;
