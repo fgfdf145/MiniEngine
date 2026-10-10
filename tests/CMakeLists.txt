@@ -2964,3 +2964,39 @@ add_test(
 )
 
 set_target_properties(miniengine_vehicle_tyres_panel_tests PROPERTIES FOLDER "Tests")
+
+# The D3D12 backend's shared sampler tables, on the WARP adapter (no GPU needed).
+if(MINIENGINE_WITH_D3D12)
+    add_executable(miniengine_d3d12_sampler_table_tests
+        d3d12_sampler_table_tests.cpp
+    )
+    miniengine_group_target_sources(miniengine_d3d12_sampler_table_tests)
+    # Its own Windows and DirectX headers, in an order the shared precompiled header would upset.
+    set_target_properties(miniengine_d3d12_sampler_table_tests PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+
+    target_link_libraries(miniengine_d3d12_sampler_table_tests
+        PRIVATE
+            ${MINIENGINE_NVRHI_TARGETS}
+            Microsoft::DirectX-Headers
+            Microsoft::DirectX-Guids
+            d3d12
+            dxgi
+    )
+    if(TARGET nvrhi_d3d12)
+        target_link_libraries(miniengine_d3d12_sampler_table_tests PRIVATE nvrhi_d3d12)
+    endif()
+
+    add_custom_command(TARGET miniengine_d3d12_sampler_table_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_d3d12_sampler_table_tests>
+            $<TARGET_FILE_DIR:miniengine_d3d12_sampler_table_tests>
+        COMMAND_EXPAND_LISTS
+    )
+
+    add_test(
+        NAME miniengine.d3d12_sampler_table
+        COMMAND miniengine_d3d12_sampler_table_tests
+    )
+
+    set_target_properties(miniengine_d3d12_sampler_table_tests PROPERTIES FOLDER "Tests")
+endif()
