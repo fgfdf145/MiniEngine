@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+struct ImGuiTestEngine;
+
 namespace me
 {
 
@@ -153,6 +155,12 @@ class IRenderBackend
     virtual FrameTimings GetFrameTimings() const
     {
         return {};
+    }
+    // Dear ImGui Test Engine on the editor's UI, for the control channel's ui.* commands; null when the
+    // backend has none.
+    virtual ImGuiTestEngine* GetUiTestEngine()
+    {
+        return nullptr;
     }
 };
 }

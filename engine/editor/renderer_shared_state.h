@@ -201,6 +201,10 @@ struct RendererSharedState
     // temporal effect over from that frame (VulkanRenderer::RestartTemporalEffects), so the frames
     // drawn while loading, as many as the loading's timing makes, leave nothing in the capture.
     uint32_t temporalRestart = 0;
+    // Bumped to start over everything that carries one frame into the next, for repeatable captures
+    // (the control channel's restart_temporal with full): the temporal effects as temporalRestart does,
+    // and also the DDGI probes and their ray rotation and the cached sun shadow cascades.
+    uint32_t fullRestart = 0;
     // The render thread's last measurement of GPU memory, which world streaming fits the scene in.
     GpuMemoryReport gpuMemory;
     RenderExtent requestedViewportExtent{};
@@ -222,6 +226,11 @@ struct RendererSharedState
     // Seconds between the last two TickSharedFrame calls; drives time-based effects such as
     // exposure adaptation.
     float frameDeltaSeconds = 0.0f;
+    // Set: every frame steps this many seconds instead of the time that passed (0 freezes time), and
+    // none while the scene is still loading, so two runs or two captures in one run see the same clouds,
+    // animation, time of day and physics. MINIENGINE_FIXED_FRAME_SECONDS, --deterministic and the control
+    // channel's deterministic command set it.
+    std::optional<float> fixedFrameSeconds;
     // The engine's sound, made by the application; null when there is no audio output (--no-audio,
     // or no playback device). The listener follows the camera (TickSharedFrame).
     std::unique_ptr<AudioEngine> audio;

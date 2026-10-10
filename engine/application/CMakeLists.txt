@@ -3,6 +3,8 @@ add_library(engine_application
     control_server.h
     control_session.cpp
     control_session.h
+    control_ui.cpp
+    control_ui.h
     editor_application.cpp
     editor_application.h
 )
@@ -22,6 +24,7 @@ target_link_libraries(engine_application
         engine_audio
         engine_logic
         imguizmo::imguizmo
+        imgui::imgui
         yaml-cpp::yaml-cpp
         EnTT::EnTT
 )

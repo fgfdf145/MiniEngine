@@ -8,12 +8,17 @@
 #include <engine/editor/services/scene_io_service.h>
 #include <engine/editor/services/vehicle_drive_service.h>
 #include <engine/editor/view_settings_fields.h>
+#include <engine/platform/crash/crash_handler.h>
+#include <engine/platform/renderdoc/renderdoc_capture.h>
 #include <engine/logic/editor_world.h>
 #include <engine/renderer/rhi/backend.h>
 
 #include <glm/gtc/quaternion.hpp>
+#include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <cmath>
 #include <filesystem>
 #include <stdexcept>
@@ -237,6 +242,173 @@ entt::entity FindEntity(const IEditorWorld& world, const json& args)
     }
     throw std::runtime_error("The scene has no entity named '" + name + "' (entities.list lists them)");
 }
+
+// A scene file's YAML as JSON: numbers and booleans as such, the rest strings.
+json YamlToJson(const YAML::Node& node)
+{
+    switch (node.Type())
+    {
+    case YAML::NodeType::Map:
+    {
+        json result = json::object();
+        for (const auto& entry : node)
+        {
+            result[entry.first.as<std::string>()] = YamlToJson(entry.second);
+        }
+        return result;
+    }
+    case YAML::NodeType::Sequence:
+    {
+        json result = json::array();
+        for (const auto& entry : node)
+        {
+            result.push_back(YamlToJson(entry));
+        }
+        return result;
+    }
+    case YAML::NodeType::Scalar:
+    {
+        const std::string& text = node.Scalar();
+        if (node.Tag() == "!")
+        {
+            // Quoted in the file: a string whatever it looks like.
+            return text;
+        }
+        if (text == "true" || text == "false")
+        {
+            return text == "true";
+        }
+        if (text.empty() || !(std::isdigit(static_cast<unsigned char>(text[0])) || text[0] == '-' || text[0] == '.'))
+        {
+            return text;
+        }
+        long long integer = 0;
+        if (text.find_first_of(".eE") == std::string::npos && YAML::convert<long long>::decode(node, integer))
+        {
+            return integer;
+        }
+        double number = 0.0;
+        if (YAML::convert<double>::decode(node, number))
+        {
+            return number;
+        }
+        return text;
+    }
+    default:
+        return nullptr;
+    }
+}
+
+// The scene as its file would hold it, as JSON.
+json SceneDocument(const IEditorWorld& world)
+{
+    return YamlToJson(YAML::Load(SerializeEditorSceneData(world.CaptureSceneData())));
+}
+
+std::vector<std::string> SplitPath(const std::string& path)
+{
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (start < path.size())
+    {
+        const size_t dot = path.find('.', start);
+        const size_t end = dot == std::string::npos ? path.size() : dot;
+        if (end > start)
+        {
+            parts.push_back(path.substr(start, end - start));
+        }
+        start = end + 1;
+    }
+    return parts;
+}
+
+// Steps one segment into a scene document: a key of an object; in an array an index or the tag of
+// the element that has it ("lights.Key box").
+json& StepInto(json& node, const std::string& part, const std::string& path)
+{
+    if (node.is_object())
+    {
+        const auto found = node.find(part);
+        if (found == node.end())
+        {
+            std::string keys;
+            for (const auto& [key, value] : node.items())
+            {
+                keys += (keys.empty() ? "" : ", ") + key;
+            }
+            throw std::runtime_error("'" + path + "': no '" + part + "' here (there is " + keys + ")");
+        }
+        return *found;
+    }
+    if (node.is_array())
+    {
+        const bool numeric = std::all_of(part.begin(), part.end(), [](char c)
+                                          {
+                                              return std::isdigit(static_cast<unsigned char>(c)) != 0;
+                                          });
+        if (numeric)
+        {
+            const size_t index = std::stoul(part);
+            if (index >= node.size())
+            {
+                throw std::runtime_error("'" + path + "': index " + part + " is past the " + std::to_string(node.size()) + " elements");
+            }
+            return node[index];
+        }
+        for (json& element : node)
+        {
+            if (element.is_object() && element.value("tag", std::string()) == part)
+            {
+                return element;
+            }
+        }
+        throw std::runtime_error("'" + path + "': no element tagged '" + part + "'");
+    }
+    throw std::runtime_error("'" + path + "': '" + part + "' is past a value");
+}
+
+// Whether a value may replace the one a scene document holds: a number for a number, an array of as
+// many elements of their kinds, and so on.
+bool SameKind(const json& current, const json& value)
+{
+    if (current.is_number())
+    {
+        return value.is_number();
+    }
+    if (current.is_array())
+    {
+        if (!value.is_array() || value.size() != current.size())
+        {
+            return false;
+        }
+        for (size_t index = 0; index < value.size(); ++index)
+        {
+            if (!SameKind(current[index], value[index]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (current.is_object())
+    {
+        return value.is_object();
+    }
+    return current.type() == value.type();
+}
+
+// debug.crash throw: an exception out of a noexcept function ends in std::terminate with it current.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4297)
+#endif
+[[noreturn]] void ThrowOutOfNoexcept(const char* message) noexcept
+{
+    throw std::runtime_error(message);
+}
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 DlssMode ParseDlssMode(const std::string& value)
 {
@@ -520,6 +692,7 @@ void ControlSession::RegisterCommands()
                      {"fixed_viewport", m_state.fixedViewportExtent.has_value()},
                      {"camera", CameraToJson(m_state.camera)},
                      {"taking_photo", m_renderer.IsTakingPhoto()},
+                     {"fixed_frame_seconds", m_state.fixedFrameSeconds.has_value() ? json(*m_state.fixedFrameSeconds) : json(nullptr)},
                      {"driving", m_state.vehicleDrive.session != nullptr}};
                  if (!m_state.lastSceneIoError.empty())
                  {
@@ -578,6 +751,63 @@ void ControlSession::RegisterCommands()
                 return result;
             };
             return outcome;
+        });
+
+    Register(
+        "deterministic",
+        "Makes frames repeatable: every frame steps {frame_seconds} (default 1/60; 0 freezes clouds, time of day, animation, physics), "
+        "exposure pinned at {exposure_ev100} (default: the exposure now), auto white balance off unless {auto_white_balance}, "
+        "temporal history restarted. {enabled: false} goes back to real time and the camera's own adaptation.",
+        [this, now](const json& args)
+        {
+            Camera& camera = m_state.camera;
+            if (!args.value("enabled", true))
+            {
+                m_state.fixedFrameSeconds.reset();
+                if (m_adaptationBeforeDeterministic.has_value())
+                {
+                    camera.autoExposure.enabled = m_adaptationBeforeDeterministic->first;
+                    camera.autoWhiteBalance.enabled = m_adaptationBeforeDeterministic->second;
+                    m_adaptationBeforeDeterministic.reset();
+                }
+                return now({{"enabled", false}});
+            }
+            const float frameSeconds = ReadNumber<float>(args, "frame_seconds", 1.0f / 60.0f);
+            if (!(frameSeconds >= 0.0f) || frameSeconds > 1.0f)
+            {
+                throw std::runtime_error("'frame_seconds' takes 0 to 1");
+            }
+            if (!m_adaptationBeforeDeterministic.has_value())
+            {
+                m_adaptationBeforeDeterministic = std::make_pair(camera.autoExposure.enabled, camera.autoWhiteBalance.enabled);
+            }
+            m_state.fixedFrameSeconds = frameSeconds;
+            camera.exposureEv100 = ReadNumber<float>(args, "exposure_ev100", camera.exposureEv100);
+            camera.autoExposure.enabled = false;
+            camera.autoWhiteBalance.enabled = args.value("auto_white_balance", false);
+            ++m_state.temporalRestart;
+            return now({
+                {"enabled", true},
+                {"frame_seconds", frameSeconds},
+                {"exposure_ev100", camera.exposureEv100},
+                {"auto_white_balance", camera.autoWhiteBalance.enabled}});
+        });
+
+    Register(
+        "restart_temporal",
+        "Starts TAA, AO, denoiser and atmosphere history over, as a scene load does; {full: true} also wipes the DDGI probes "
+        "and redraws the sun's shadow cascades, so two captures after it match (A/B).",
+        [this, now](const json& args)
+        {
+            if (args.value("full", false))
+            {
+                ++m_state.fullRestart;
+            }
+            else
+            {
+                ++m_state.temporalRestart;
+            }
+            return now(json::object());
         });
 
     Register("scene.load", "Opens the scene file {path} as File > Open would; wait_scene waits for it.", [this, now](const json& args)
@@ -811,7 +1041,147 @@ void ControlSession::RegisterCommands()
             {
                 transform.scale = ReadVec3(args["scale"], "scale");
             }
+            world.MarkTransformDirty(entity);
             return now(EntityToJson(world, entity));
+        });
+
+    Register(
+        "scene.get",
+        "The scene as its file holds it, as JSON: all of it, or the part at {path} (dots; arrays by index or tag, "
+        "e.g. 'lights.Key box', 'environment.clouds').",
+        [this, now](const json& args)
+        {
+            json document = SceneDocument(m_state.GetEditorWorld());
+            const std::string path = args.value("path", std::string());
+            json* node = &document;
+            for (const std::string& part : SplitPath(path))
+            {
+                node = &StepInto(*node, part, path);
+            }
+            return now(*node);
+        });
+
+    Register(
+        "scene.set",
+        "Changes the scene by scene.get's paths, {values: {'environment.clouds.coverage': 0.6, 'lights.Key box.intensity': 90000}}: "
+        "environment, lights, the entities' tag and transform, drive_paths and minimap; all or none apply.",
+        [this, now](const json& args)
+        {
+            if (!args.contains("values") || !args["values"].is_object())
+            {
+                throw std::runtime_error("'values' (an object of path: value) is needed");
+            }
+            IEditorWorld& world = m_state.GetEditorWorld();
+            json document = SceneDocument(world);
+            bool environment = false;
+            bool drivePaths = false;
+            bool minimap = false;
+            std::vector<size_t> lights;
+            std::vector<size_t> entities;
+            for (const auto& [path, value] : args["values"].items())
+            {
+                const std::vector<std::string> parts = SplitPath(path);
+                if (parts.empty())
+                {
+                    throw std::runtime_error("An empty path");
+                }
+                json* node = &document;
+                size_t element = 0;
+                for (size_t index = 0; index < parts.size(); ++index)
+                {
+                    json* parent = node;
+                    node = &StepInto(*node, parts[index], path);
+                    if (index == 1 && parent->is_array())
+                    {
+                        element = static_cast<size_t>(std::distance(parent->begin(), std::find_if(parent->begin(), parent->end(), [&](const json& candidate)
+                                                                                                  {
+                                                                                                      return &candidate == node;
+                                                                                                  })));
+                    }
+                }
+                if (!SameKind(*node, value))
+                {
+                    throw std::runtime_error("'" + path + "' is " + node->dump() + "; " + value.dump() + " is not of its kind");
+                }
+                const std::string& section = parts[0];
+                if (section == "environment")
+                {
+                    environment = true;
+                }
+                else if (section == "drive_paths")
+                {
+                    drivePaths = true;
+                }
+                else if (section == "minimap")
+                {
+                    minimap = true;
+                }
+                else if (section == "lights" && parts.size() >= 3)
+                {
+                    lights.push_back(element);
+                }
+                else if (section == "entities" && parts.size() >= 3 && (parts[2] == "tag" || parts[2] == "transform"))
+                {
+                    entities.push_back(element);
+                }
+                else
+                {
+                    throw std::runtime_error("'" + path + "' cannot be changed while the scene is open (scene.load a file that has it)");
+                }
+                *node = value;
+            }
+            const SerializedSceneData data = ParseEditorSceneData(document.dump());
+            const auto findByUuid = [&](const std::string& uuid)
+            {
+                for (const entt::entity entity : world.GetSceneOrder())
+                {
+                    if (world.GetEntityUuid(entity) == uuid)
+                    {
+                        return entity;
+                    }
+                }
+                throw std::runtime_error("No entity has the uuid " + uuid);
+            };
+            if (environment)
+            {
+                world.SetEnvironment(data.environment);
+            }
+            if (drivePaths)
+            {
+                world.SetDrivePaths(data.drivePaths);
+            }
+            if (minimap)
+            {
+                world.SetMinimap(data.minimap);
+            }
+            for (const size_t index : lights)
+            {
+                const SerializedLightData& source = data.lights.at(index);
+                const entt::entity entity = findByUuid(source.entityUuid);
+                world.EditTag(entity).name = source.tagName;
+                world.EditTransform(entity) = source.transform;
+                world.MarkTransformDirty(entity);
+                LightComponent& light = world.EditLightComponent(entity);
+                light.type = source.lightType;
+                light.color = source.color;
+                light.intensity = source.intensity;
+                light.range = source.range;
+                light.spotInnerAngleDegrees = source.spotInnerAngle;
+                light.spotOuterAngleDegrees = source.spotOuterAngle;
+                light.areaSize = source.areaSize;
+                light.castShadows = source.castShadows;
+                light.sourceRadius = source.sourceRadius;
+                light.groundColor = source.groundColor;
+            }
+            for (const size_t index : entities)
+            {
+                const SerializedEntityData& source = data.entities.at(index);
+                const entt::entity entity = findByUuid(source.entityUuid);
+                world.EditTag(entity).name = source.tagName;
+                world.EditTransform(entity) = source.transform;
+                world.MarkTransformDirty(entity);
+            }
+            return now({{"applied", args["values"].size()}});
         });
 
     Register("drive.start", "Drives the model entity {name} (or {id}) as Play would.", [this, now](const json& args)
@@ -875,6 +1245,145 @@ void ControlSession::RegisterCommands()
                  }
                  return now(list);
              });
+
+    Register(
+        "debug.crash",
+        "For checking crash reports: {kind: 'report'} writes one for the main thread and goes on; "
+        "'access_violation', 'abort' or 'throw' crash the engine on purpose.",
+        [now](const json& args)
+        {
+            const std::string kind = ReadString(args, "kind");
+            if (kind == "report")
+            {
+                return now({{"report", platform::crash::WriteReportForCurrentThread("debug.crash report").string()}});
+            }
+            if (kind == "access_violation")
+            {
+                volatile int* nowhere = nullptr;
+                *nowhere = 1;
+            }
+            else if (kind == "abort")
+            {
+                std::abort();
+            }
+            else if (kind == "throw")
+            {
+                ThrowOutOfNoexcept("debug.crash throw");
+            }
+            throw std::runtime_error("'kind' takes report, access_violation, abort or throw");
+        });
+
+    Register(
+        "renderdoc.capture",
+        "RenderDoc capture of the next {frames} frames (default 1); answers with the .rdc once written. Needs --renderdoc.",
+        [this](const json& args)
+        {
+            if (!platform::renderdoc::IsLoaded())
+            {
+                throw std::runtime_error("RenderDoc is not loaded: start the engine with --renderdoc");
+            }
+            const size_t before = platform::renderdoc::Captures().size();
+            platform::renderdoc::TriggerCapture(ReadNumber<uint32_t>(args, "frames", 1));
+            Outcome outcome;
+            outcome.timeoutSeconds = ReadNumber<double>(args, "timeout_s", 120.0);
+            outcome.wait = [before]() -> std::optional<json>
+            {
+                const std::vector<platform::renderdoc::CaptureFile> captures = platform::renderdoc::Captures();
+                if (captures.size() <= before || platform::renderdoc::IsCapturing())
+                {
+                    return std::nullopt;
+                }
+                const std::filesystem::path& path = captures.back().path;
+                std::error_code error;
+                return json{{"path", path.string()}, {"bytes", std::filesystem::file_size(path, error)}};
+            };
+            return outcome;
+        });
+
+    Register("renderdoc.list", "The RenderDoc captures of this run.", [now](const json&)
+             {
+                 json list = json::array();
+                 for (const platform::renderdoc::CaptureFile& capture : platform::renderdoc::Captures())
+                 {
+                     list.push_back({{"path", capture.path.string()}, {"timestamp", capture.timestamp}});
+                 }
+                 return now({{"loaded", platform::renderdoc::IsLoaded()}, {"captures", list}});
+             });
+
+    Register("renderdoc.open", "Opens the RenderDoc UI on {path} (default: the latest capture), connected to the engine.", [now](const json& args)
+             {
+                 std::filesystem::path path = args.value("path", std::string());
+                 if (path.empty())
+                 {
+                     const std::vector<platform::renderdoc::CaptureFile> captures = platform::renderdoc::Captures();
+                     if (captures.empty())
+                     {
+                         throw std::runtime_error("No capture yet (renderdoc.capture)");
+                     }
+                     path = captures.back().path;
+                 }
+                 if (!platform::renderdoc::OpenInUi(path, true))
+                 {
+                     throw std::runtime_error("The RenderDoc UI did not start");
+                 }
+                 return now({{"path", path.string()}});
+             });
+
+    Register("crash_folder", "Where crash reports go.", [now](const json&)
+             {
+                 return now({{"folder", platform::crash::CrashFolder().string()}});
+             });
+
+    Register("ui.windows", "The editor's windows: name (the first part of a ui.run ref), shown, rect, docked.", [now](const json&)
+             {
+                 return now(ListUiWindows());
+             });
+
+    Register(
+        "ui.run",
+        "Drives the editor UI with simulated input (Dear ImGui Test Engine; the real mouse is not touched). {steps: [{op, ref, ...}]}; "
+        "ops: click, right_click, double_click, hold{seconds}, check, uncheck, open, close, input{value}, menu (ref 'File/Open...'), combo, "
+        "key{keys:'Ctrl+S'}, type{text}, focus, hover, drag{to}, drag_by{delta}, wheel{delta}, wait{seconds}, yield{frames}, set_ref, "
+        "info, exists, read, list{depth}. Refs are ImGui paths: 'Window/Label', 'Window/##id', '**/Label'. Answers when done.",
+        [this](const json& args)
+        {
+            // A test engine made now has not seen a frame yet and refuses tests until it has.
+            uint64_t startFrame = m_framesDrawn;
+            if (!m_uiRunner)
+            {
+                ImGuiTestEngine* engine = m_renderer.GetUiTestEngine();
+                if (engine == nullptr)
+                {
+                    throw std::runtime_error("This build has no ImGui test engine");
+                }
+                m_uiRunner = std::make_unique<ControlUiRunner>(engine);
+                startFrame += 2;
+            }
+            const json steps = args.value("steps", json());
+            ControlUiRunner::Validate(steps);
+            auto started = std::make_shared<bool>(false);
+            Outcome outcome;
+            outcome.timeoutSeconds = ReadNumber<double>(args, "timeout_s", 120.0);
+            outcome.wait = [this, steps, startFrame, started]() -> std::optional<json>
+            {
+                if (!*started)
+                {
+                    if (m_framesDrawn < startFrame)
+                    {
+                        return std::nullopt;
+                    }
+                    m_uiRunner->Start(steps);
+                    *started = true;
+                    return std::nullopt;
+                }
+                if (!m_uiRunner->Done())
+                {
+                    return std::nullopt;
+                }
+                return m_uiRunner->Result();
+            };
+            return outcome;
+        });
 
     Register("quit", "Closes the engine after this frame (an unsaved scene is not asked about).", [this, now](const json&)
              {

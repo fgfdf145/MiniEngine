@@ -181,4 +181,6 @@ SerializedSceneData LoadEditorSceneDataFromFile(const std::string& path);
 void SaveEditorSceneDataToFile(const SerializedSceneData& sceneData, const std::string& path);
 // The scene file's text for the scene data, as SaveEditorSceneDataToFile writes it.
 std::string SerializeEditorSceneData(const SerializedSceneData& sceneData);
+// The scene data a scene file's text holds, as LoadEditorSceneDataFromFile reads it.
+SerializedSceneData ParseEditorSceneData(const std::string& text);
 }

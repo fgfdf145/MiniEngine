@@ -60,6 +60,8 @@ struct RenderFramePacket
     float viewportOutputScale = 1.0f;
     // RendererSharedState::temporalRestart: a change starts every temporal effect over.
     uint32_t temporalRestart = 0;
+    // RendererSharedState::fullRestart.
+    uint32_t fullRestart = 0;
     // The renderables changed since the last frame: the render thread starts an upload.
     bool contentChanged = false;
     std::shared_ptr<const CpuRenderSubmeshList> renderSubmeshes;

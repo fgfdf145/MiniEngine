@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from engine_control import DEFAULT_PORT, EngineClient, EngineError, launch  # noqa: E402
+from engine_control import DEFAULT_PORT, EngineClient, EngineError, ab_compare, launch, steps_from_spec  # noqa: E402
 
 
 def parse_value(text: str):
@@ -33,6 +33,8 @@ def parse_value(text: str):
 
 
 def main(argv: list[str]) -> int:
+    # Labels carry icon-font glyphs; a GBK or cp1252 console cannot print them.
+    sys.stdout.reconfigure(encoding="utf-8")
     engine_args: list[str] = []
     if "--" in argv:
         split = argv.index("--")
@@ -49,6 +51,27 @@ def main(argv: list[str]) -> int:
     options = parser.parse_args(argv)
 
     try:
+        if options.command == "ab":
+            # mectl.py ab --json '{"a": {...render values...}, "b": {...}, "frames": 64}'
+            spec = json.loads(options.json_args or "{}")
+            with EngineClient(options.port) as client:
+                result = ab_compare(
+                    client,
+                    steps_from_spec(spec.get("a")),
+                    steps_from_spec(spec.get("b")),
+                    frames=int(spec.get("frames", 64)),
+                )
+            print(result["summary"])
+            print(result["folder"])
+            return 0
+        if options.command == "compare":
+            # mectl.py compare A.png B.png
+            from image_compare import compare, summary
+
+            first, second = options.pairs
+            result = compare(Path(first), Path(second), Path(first).parent / "compare")
+            print(summary(result))
+            return 0
         if options.command == "launch":
             client = launch(
                 engine_args,

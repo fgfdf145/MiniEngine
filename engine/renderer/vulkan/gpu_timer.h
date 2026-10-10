@@ -38,6 +38,12 @@ class VulkanGpuTimer
     void BeginFrame(nvrhi::ICommandList* commandList, uint32_t frameSlot);
     // Ends the section that started at the previous mark (or BeginFrame).
     void Mark(const char* name);
+    // Each Mark also leaves a debug marker named "end: <name>" in the command list, so a frame capture
+    // (RenderDoc, --renderdoc) shows where each timed pass ends. Off by default.
+    void SetDebugMarkers(bool enabled)
+    {
+        m_debugMarkers = enabled;
+    }
 
     // In recording order; empty until a frame has come back.
     std::vector<Section> GetSections() const;
@@ -67,5 +73,6 @@ class VulkanGpuTimer
     std::vector<double> m_frameSamples;
     uint32_t m_sampleCursor = 0;
     double m_lastFrameMs = 0.0;
+    bool m_debugMarkers = false;
 };
 }

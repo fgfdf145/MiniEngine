@@ -7,6 +7,9 @@
 #include <engine/core/paths/engine_paths.h>
 #include <engine/editor/editor_icons.h>
 
+#ifdef IMGUI_ENABLE_TEST_ENGINE
+#include <imgui_te_engine.h>
+#endif
 #include <imgui.h>
 #include <implot.h>
 #include <array>
@@ -321,10 +324,45 @@ VulkanImGuiLayer::VulkanImGuiLayer(SDL_Window* window, nvrhi::IDevice* device, u
 
 VulkanImGuiLayer::~VulkanImGuiLayer()
 {
+#ifdef IMGUI_ENABLE_TEST_ENGINE
+    if (m_testEngine != nullptr)
+    {
+        ImGuiTestEngine_Stop(m_testEngine);
+    }
+#endif
     m_renderer.reset();
     ImGui_ImplSDL3_Shutdown();
     ImPlot::DestroyContext();
     ImGui::DestroyContext();
+#ifdef IMGUI_ENABLE_TEST_ENGINE
+    if (m_testEngine != nullptr)
+    {
+        // After the ImGui context, as the test engine asks.
+        ImGuiTestEngine_DestroyContext(m_testEngine);
+    }
+#endif
+}
+
+void VulkanImGuiLayer::EndFrame()
+{
+#ifdef IMGUI_ENABLE_TEST_ENGINE
+    if (m_testEngine != nullptr)
+    {
+        ImGuiTestEngine_PostSwap(m_testEngine);
+    }
+#endif
+}
+
+ImGuiTestEngine* VulkanImGuiLayer::GetTestEngine()
+{
+#ifdef IMGUI_ENABLE_TEST_ENGINE
+    if (m_testEngine == nullptr)
+    {
+        m_testEngine = ImGuiTestEngine_CreateContext();
+        ImGuiTestEngine_Start(m_testEngine, ImGui::GetCurrentContext());
+    }
+#endif
+    return m_testEngine;
 }
 
 void VulkanImGuiLayer::ProcessEvent(const SDL_Event& event)

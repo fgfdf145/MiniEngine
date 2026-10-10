@@ -1,4 +1,6 @@
 add_library(engine_platform
+    crash/crash_handler.cpp
+    crash/crash_handler.h
     display/display_hdr.cpp
     display/display_hdr.h
     file_dialog/file_dialog.cpp
@@ -9,6 +11,8 @@ add_library(engine_platform
     process/process_allocation.h
     process/process_scheduling.cpp
     process/process_scheduling.h
+    renderdoc/renderdoc_capture.cpp
+    renderdoc/renderdoc_capture.h
     ui/ui_scale.cpp
     ui/ui_scale.h
     window/window.cpp
@@ -28,9 +32,13 @@ target_link_libraries(engine_platform
         engine_core
         Vulkan::Vulkan
         SDL3::SDL3
+    PRIVATE
+        ${CMAKE_DL_LIBS}
 )
+# RenderDoc's in-application API header (MIT), for renderdoc/renderdoc_capture.cpp.
+target_include_directories(engine_platform PRIVATE "${PROJECT_SOURCE_DIR}/third_party")
 if(WIN32)
-    target_link_libraries(engine_platform PRIVATE dxgi)
+    target_link_libraries(engine_platform PRIVATE dxgi dbghelp)
 endif()
 
 # macOS runs Vulkan through MoltenVK, which vcpkg does not provide. Bake in the driver manifest

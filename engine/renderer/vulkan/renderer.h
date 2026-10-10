@@ -210,6 +210,7 @@ class VulkanRenderer : public EditorRenderBackendBase
     void CaptureDdgiReference(const DdgiReferenceRequest& reference) override;
     void LogFrameTimings() const override;
     FrameTimings GetFrameTimings() const override;
+    ImGuiTestEngine* GetUiTestEngine() override;
 
   protected:
     void HandleBackendEvent(const SDL_Event& event) override;
@@ -495,6 +496,9 @@ class VulkanRenderer : public EditorRenderBackendBase
     bool m_activeDlssRayReconstruction = false;
     // The last RenderFramePacket::temporalRestart drawn with.
     uint32_t m_temporalRestart = 0;
+    uint32_t m_fullRestart = 0;
+    // A full restart wipes the DDGI probes where the frame next updates them.
+    bool m_ddgiRestartPending = false;
     std::vector<std::shared_ptr<const RenderSubmesh>> m_renderSubmeshes;
     // m_renderSubmeshes by revision, for the next upload to keep.
     std::unordered_map<uint64_t, std::shared_ptr<const RenderSubmesh>> m_liveSubmeshes;

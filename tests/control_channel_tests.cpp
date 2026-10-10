@@ -276,10 +276,76 @@ void EntitiesByName()
 }
 }
 
+// deterministic fixes the frame step and the exposure, and gives the camera its adaptation back.
+void DeterministicFramesAndBack()
+{
+    Fixture fixture;
+    fixture.state.camera.autoExposure.enabled = true;
+    fixture.state.camera.autoWhiteBalance.enabled = true;
+    fixture.state.camera.exposureEv100 = 9.5f;
+    const uint32_t restartBefore = fixture.state.temporalRestart;
+    const json on = fixture.session->Execute("deterministic", {{"frame_seconds", 0.0}});
+    Require(fixture.state.fixedFrameSeconds == 0.0f, "frame_seconds 0 freezes time");
+    Require(!fixture.state.camera.autoExposure.enabled && !fixture.state.camera.autoWhiteBalance.enabled, "adaptation is off");
+    Require(on["exposure_ev100"].get<float>() == 9.5f, "the exposure is pinned where it was");
+    Require(fixture.state.temporalRestart == restartBefore + 1, "temporal history restarts");
+    fixture.session->Execute("deterministic", {{"enabled", false}});
+    Require(!fixture.state.fixedFrameSeconds.has_value(), "real time again");
+    Require(fixture.state.camera.autoExposure.enabled && fixture.state.camera.autoWhiteBalance.enabled, "adaptation comes back");
+
+    const uint32_t fullBefore = fixture.state.fullRestart;
+    fixture.session->Execute("restart_temporal", {{"full", true}});
+    Require(fixture.state.fullRestart == fullBefore + 1, "a full restart is its own counter");
+}
+
+// scene.get and scene.set by path: the environment, a light by tag, kinds checked, all or none.
+void ScenePaths()
+{
+    Fixture fixture;
+    IEditorWorld& world = fixture.state.GetEditorWorld();
+    SerializedLightData light;
+    light.tagName = "Key";
+    light.intensity = 500.0f;
+    const entt::entity lightEntity = world.CreateLightEntity(light);
+
+    const json environment = fixture.session->Execute("scene.get", {{"path", "environment"}});
+    Require(environment.contains("exposure_compensation_ev"), "scene.get reads a section");
+    Require(fixture.session->Execute("scene.get", {{"path", "lights.Key.intensity"}}).get<float>() == 500.0f, "arrays by tag");
+
+    fixture.session->Execute("scene.set", {{"values", {{"lights.Key.intensity", 1234.0}, {"environment.exposure_compensation_ev", 1.5}}}});
+    Require(world.GetLightComponent(lightEntity).intensity == 1234.0f, "scene.set changes the light");
+    Require(world.GetEnvironment().exposureCompensationEv == 1.5f, "scene.set changes the environment");
+
+    bool threw = false;
+    try
+    {
+        fixture.session->Execute("scene.set", {{"values", {{"lights.Key.intensity", 1.0}, {"lights.Key.cast_shadows", 3}}}});
+    }
+    catch (const std::exception&)
+    {
+        threw = true;
+    }
+    Require(threw, "a number for a bool is an error");
+    Require(world.GetLightComponent(lightEntity).intensity == 1234.0f, "a failed scene.set changes nothing");
+
+    threw = false;
+    try
+    {
+        fixture.session->Execute("scene.get", {{"path", "lights.Nobody"}});
+    }
+    catch (const std::exception&)
+    {
+        threw = true;
+    }
+    Require(threw, "an unknown tag is an error");
+}
+
 int main()
 {
     try
     {
+        DeterministicFramesAndBack();
+        ScenePaths();
         RoundTripsOverTheSocket();
         FramesWaitForFrames();
         RenderSettingsByKey();

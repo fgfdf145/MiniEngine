@@ -184,6 +184,9 @@ overlay 会一直遮蔽上游同名 port：版本号仍是 `3.0.0`，所以刷�
                     截图、读帧时间、开车、读日志等（`help` 列出全部命令）；环境变量 MINIENGINE_CONTROL_PORT 同效。
                     客户端在 tools/engine_control（mectl.py 命令行、mcp_server.py MCP 服务器）
 --read-only-settings  只读不写 miniengine.settings.json 与 imgui.ini（MINIENGINE_READ_ONLY_SETTINGS=1 同效），测试运行不改用户设置
+--deterministic     可重复的帧：每帧固定 1/60 s（加载期间不走时间），关自动曝光和自动白平衡（A/B 截图用）
+--exposure <EV100>  固定相机曝光，关自动曝光
+--renderdoc         创建设备前加载 RenderDoc（MINIENGINE_RENDERDOC=1 同效），控制通道的 renderdoc.capture 可以抓帧
 ```
 
 控制通道的设计见 [docs/design/2026-10-10-engine-control-channel-design.md](docs/design/2026-10-10-engine-control-channel-design.md)。

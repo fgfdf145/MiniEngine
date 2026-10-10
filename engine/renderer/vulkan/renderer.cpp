@@ -6,6 +6,7 @@
 #include "memory_pool.h"
 #include "viewport_capture.h"
 
+#include <engine/platform/renderdoc/renderdoc_capture.h>
 #include <engine/renderer/view_frustum.h>
 #include <engine/renderer/environment_brdf.h>
 #include <engine/renderer/ltc_table.h>
@@ -755,6 +756,7 @@ void VulkanRenderer::DrawFrame()
     contentChanged |= State().renderablesDirty;
     State().renderablesDirty = false;
     ImGui::Render();
+    m_imguiLayer->EndFrame();
     ApplyImGuiTextureRequests(*ImGui::GetDrawData());
     m_mainStages.Mark("EditorUi");
 
@@ -894,6 +896,7 @@ void VulkanRenderer::BuildFramePacket(RenderFramePacket& packet, bool contentCha
     // The calibration's values, or the display's own until there are some.
     packet.display = ResolveDisplayOutput(State().renderDebug.display, m_displayReport, m_swapchain->IsHdr());
     packet.temporalRestart = State().temporalRestart;
+    packet.fullRestart = State().fullRestart;
     packet.viewportExtent = viewportExtent;
     packet.displayExtent = {};
     if (State().fixedViewportExtent.has_value() || State().renderDebug.viewportResolution.fixed)
@@ -963,6 +966,24 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
     {
         m_temporalRestart = packet.temporalRestart;
         RestartTemporalEffects();
+    }
+    if (packet.fullRestart != m_fullRestart)
+    {
+        m_fullRestart = packet.fullRestart;
+        RestartTemporalEffects();
+        m_ddgiRestartPending = true;
+        m_ddgiFrameIndex = 0;
+        if (m_view.shadowPass)
+        {
+            m_view.shadowPass->InvalidateCache();
+        }
+        for (const std::unique_ptr<VulkanSceneView>& view : m_captureViews)
+        {
+            if (view->shadowPass)
+            {
+                view->shadowPass->InvalidateCache();
+            }
+        }
     }
 
     uint32_t imageIndex = 0;
@@ -1215,8 +1236,9 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
         const uint32_t levelCount = static_cast<uint32_t>(std::clamp(ddgiSettings.levels, 1, static_cast<int>(kDdgiMaxLevels)));
         const float baseSpacing = std::clamp(ddgiSettings.baseSpacing, 0.25f, 8.0f);
         const glm::vec2 layout(static_cast<float>(levelCount), baseSpacing);
-        if (layout != m_ddgiLayout || ddgiLightingJump)
+        if (layout != m_ddgiLayout || ddgiLightingJump || m_ddgiRestartPending)
         {
+            m_ddgiRestartPending = false;
             m_ddgi->Invalidate();
             m_ddgiScheduler.Reset();
             m_ddgiLayout = layout;
@@ -2482,6 +2504,7 @@ void VulkanRenderer::CreateDeviceResources()
     uploadBatch.Flush();
 
     m_gpuTimer = std::make_unique<VulkanGpuTimer>(m_nvrhi->Get(), static_cast<uint32_t>(VulkanCommandContext::kMaxFramesInFlight));
+    m_gpuTimer->SetDebugMarkers(platform::renderdoc::IsLoaded());
     // Secondary command buffers are Vulkan's (and no pass records into them at present).
     if (State().parallelRecording && m_nvrhi->GetVulkanDevice() != nullptr)
     {
@@ -2498,6 +2521,11 @@ void VulkanRenderer::LogFrameTimings() const
                                  {
                                      LogFrameTimingsNow();
                                  });
+}
+
+ImGuiTestEngine* VulkanRenderer::GetUiTestEngine()
+{
+    return m_imguiLayer ? m_imguiLayer->GetTestEngine() : nullptr;
 }
 
 IRenderBackend::FrameTimings VulkanRenderer::GetFrameTimings() const

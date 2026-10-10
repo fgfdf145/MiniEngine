@@ -18,7 +18,17 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from engine_control import DEFAULT_PORT, REPO_ROOT, EngineClient, EngineError, launch, tail  # noqa: E402
+import image_compare  # noqa: E402
+from engine_control import (  # noqa: E402
+    DEFAULT_PORT,
+    REPO_ROOT,
+    EngineClient,
+    EngineError,
+    ab_compare,
+    launch,
+    steps_from_spec,
+    tail,
+)
 
 PROTOCOL_VERSION = "2025-06-18"
 
@@ -45,9 +55,12 @@ TOOLS = [
         "name": "engine_call",
         "description": (
             "Run a control command on the running engine and return its JSON result. cmd \"help\" lists every "
-            "command with its arguments: status, frames, wait_scene, scene.load, camera.get/set, render.get/set, "
+            "command with its arguments: status, frames, wait_scene, deterministic, restart_temporal, scene.load, "
+            "scene.get/set (any scene field by path: environment, lights, transforms), camera.get/set, render.get/set, "
             "viewport.set, capture, photo, timings, entities.list, entity.set, drive.start/stop/reset/controls/"
-            "pause/status, log, quit."
+            "pause/status, ui.windows, ui.run (click/type/menu/check in the editor UI via Dear ImGui Test Engine), "
+            "renderdoc.capture/list/open (needs --renderdoc), debug.crash, crash_folder, log, quit. "
+            "When the engine crashes the error carries its crash report (symbolized stack)."
         ),
         "inputSchema": {
             "type": "object",
@@ -73,6 +86,47 @@ TOOLS = [
                 "frames": {"type": "integer"},
                 "port": {"type": "integer"},
             },
+        },
+    },
+    {
+        "name": "engine_ab",
+        "description": (
+            "A/B in the running engine: sets up side A, captures, side B, captures, A again (the noise floor), with "
+            "time frozen, exposure pinned and temporal history restarted before each; returns PSNR, NVIDIA FLIP, "
+            "changed share and the most changed regions, plus an image of A | B | difference heat map. "
+            "a and b are either an object of render settings (render.set keys) or a list of {cmd, args} steps."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"description": "Side A: render settings object or [{cmd, args}, ...]."},
+                "b": {"description": "Side B: render settings object or [{cmd, args}, ...]."},
+                "frames": {"type": "integer", "description": "Frames before each capture (default 64)."},
+                "port": {"type": "integer"},
+            },
+            "required": ["a", "b"],
+        },
+    },
+    {
+        "name": "image_compare",
+        "description": "Compare two PNGs on disk: PSNR, FLIP, changed share, regions; returns the side-by-side heat map image.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "out": {"type": "string"}},
+            "required": ["a", "b"],
+        },
+    },
+    {
+        "name": "renderdoc_summary",
+        "description": (
+            "Summarize a RenderDoc capture (.rdc from engine_call renderdoc.capture) without the UI: the frame's passes "
+            "(named by the engine's GPU timer markers) with draws, dispatches, barriers and pipeline changes. Takes ~40 s "
+            "for a large frame (converts to XML first)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}, "calls": {"type": "boolean", "description": "List each pass's calls."}},
+            "required": ["path"],
         },
     },
     {
@@ -115,6 +169,20 @@ def text(value) -> dict:
     return {"type": "text", "text": value if isinstance(value, str) else json.dumps(value, indent=2, ensure_ascii=False)}
 
 
+def image(path, max_width: int = 2400) -> dict:
+    """A PNG as MCP image content, scaled down to max_width (the file on disk keeps its size)."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    picture = Image.open(path)
+    if picture.width > max_width:
+        picture = picture.resize((max_width, round(picture.height * max_width / picture.width)), Image.LANCZOS)
+    buffer = BytesIO()
+    picture.save(buffer, format="PNG")
+    return {"type": "image", "data": base64.b64encode(buffer.getvalue()).decode("ascii"), "mimeType": "image/png"}
+
+
 def run_tool(name: str, arguments: dict) -> list[dict]:
     port = int(arguments.get("port") or DEFAULT_PORT)
     if name == "engine_launch":
@@ -133,8 +201,34 @@ def run_tool(name: str, arguments: dict) -> list[dict]:
             call(port, "frames", count=frames)
         path = arguments.get("path") or str(REPO_ROOT / "out" / "control" / f"capture-{time.strftime('%Y%m%d-%H%M%S')}.png")
         result = call(port, "capture", path=path)
-        data = base64.b64encode(Path(result["path"]).read_bytes()).decode("ascii")
-        return [text(result), {"type": "image", "data": data, "mimeType": "image/png"}]
+        return [text(result), image(result["path"])]
+    if name == "engine_ab":
+        try:
+            result = ab_compare(
+                client_for(port),
+                steps_from_spec(arguments.get("a")),
+                steps_from_spec(arguments.get("b")),
+                frames=int(arguments.get("frames") or 64),
+            )
+        except (ConnectionError, OSError):
+            drop_client(port)
+            raise
+        return [text(result), image(result["change"]["side_by_side"])]
+    if name == "image_compare":
+        a = Path(arguments["a"])
+        out = Path(arguments["out"]) if arguments.get("out") else a.parent / f"compare-{a.stem}"
+        result = image_compare.compare(a, Path(arguments["b"]), out)
+        return [text({"summary": image_compare.summary(result), **result}), image(result["side_by_side"])]
+    if name == "renderdoc_summary":
+        import rdc_summary
+
+        capture = Path(arguments["path"])
+        xml_path = rdc_summary.convert(capture) if capture.suffix != ".xml" else capture
+        try:
+            return [text(rdc_summary.summarize(xml_path, bool(arguments.get("calls"))))]
+        finally:
+            if xml_path != capture:
+                xml_path.unlink(missing_ok=True)
     if name == "engine_quit":
         try:
             call(port, "quit")

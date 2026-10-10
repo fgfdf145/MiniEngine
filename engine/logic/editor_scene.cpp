@@ -746,6 +746,11 @@ SerializedSceneData LoadEditorSceneDataFromFile(const std::string& path)
     return ReadSceneData(YAML::LoadFile(path));
 }
 
+SerializedSceneData ParseEditorSceneData(const std::string& text)
+{
+    return ReadSceneData(YAML::Load(text));
+}
+
 std::string SerializeEditorSceneData(const SerializedSceneData& sceneData)
 {
     return EmitSceneYaml(sceneData);

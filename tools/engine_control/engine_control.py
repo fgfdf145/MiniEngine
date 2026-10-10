@@ -25,6 +25,7 @@ from pathlib import Path
 
 DEFAULT_PORT = 47811
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 class EngineError(RuntimeError):
@@ -41,6 +42,7 @@ class EngineClient:
         self._socket.settimeout(None)
         self._reader = self._socket.makefile("r", encoding="utf-8", newline="\n")
         self._ids = itertools.count(1)
+        self._connected_at = time.time()
 
     def close(self) -> None:
         try:
@@ -62,8 +64,14 @@ class EngineClient:
         try:
             self._socket.sendall(line.encode("utf-8") + b"\n")
             while True:
-                text = self._reader.readline()
+                try:
+                    text = self._reader.readline()
+                except ConnectionResetError:
+                    text = ""
                 if not text:
+                    report = latest_crash_report(self._connected_at - 5.0)
+                    if report is not None:
+                        raise ConnectionError(f"The engine crashed. Report {report}:\n{crash_summary(report)}")
                     raise ConnectionError("The engine closed the connection (did it quit or crash?)")
                 answer = json.loads(text)
                 if answer.get("id") != request_id:
@@ -145,6 +153,78 @@ def launch(
         except OSError:
             time.sleep(0.25)
     raise TimeoutError(f"The engine did not answer on port {port} within {ready_timeout:.0f} s:\n{tail(log_file, 30)}")
+
+
+def steps_from_spec(spec) -> list[tuple[str, dict]]:
+    """One side of an A/B: a list of {"cmd": ..., "args": {...}} steps, or (shorthand) an object of
+    render settings for render.set."""
+    if spec is None:
+        return []
+    if isinstance(spec, dict):
+        return [("render.set", {"values": spec})]
+    return [(step["cmd"], step.get("args") or {}) for step in spec]
+
+
+def ab_compare(
+    client: EngineClient,
+    a: list[tuple[str, dict]],
+    b: list[tuple[str, dict]],
+    frames: int = 64,
+    out: Path | str | None = None,
+    restore: list[tuple[str, dict]] | None = None,
+) -> dict:
+    """Captures the same view under two set-ups in one engine and compares them.
+
+    `a` and `b` are lists of (command, args) that set each side up, e.g.
+    [("render.set", {"values": {"ray_tracing.reflections": True}})]. Frames are made repeatable first
+    (deterministic: time frozen, exposure pinned at what it is now, auto white balance off). Captures
+    A, then B, then A again: A against B is the change, A against A the noise floor (what DDGI and
+    other state the reset does not cover leave). Each capture follows a temporal restart and `frames`
+    frames. `restore` runs at the end (default: A's set-up); deterministic is switched off again."""
+    import image_compare  # beside this file
+
+    folder = Path(out) if out else REPO_ROOT / "out" / "control" / f"ab-{time.strftime('%Y%m%d-%H%M%S')}"
+    folder.mkdir(parents=True, exist_ok=True)
+    client.call("deterministic", frame_seconds=0.0)
+    try:
+        captures = {}
+        for name, steps in (("a", a), ("b", b), ("a2", a)):
+            for command, args in steps:
+                client.call(command, **args)
+            client.call("restart_temporal", full=True)
+            client.call("frames", count=frames)
+            captures[name] = Path(client.call("capture", path=str(folder / f"{name}.png"))["path"])
+        change = image_compare.compare(captures["a"], captures["b"], folder / "a_vs_b")
+        floor = image_compare.compare(captures["a"], captures["a2"], folder / "a_vs_a")
+    finally:
+        for command, args in restore if restore is not None else a:
+            client.call(command, **args)
+        client.call("deterministic", enabled=False)
+    return {
+        "folder": str(folder),
+        "change": change,
+        "noise_floor": floor,
+        "summary": f"A vs B: {image_compare.summary(change)}; A vs A (floor): {image_compare.summary(floor)}",
+    }
+
+
+def crash_folder() -> Path:
+    return Path(os.environ.get("LOCALAPPDATA", "")) / "MiniEngine" / "crashes"
+
+
+def latest_crash_report(since: float) -> Path | None:
+    """The newest crash report (engine/platform/crash) written after `since` (time.time())."""
+    reports = [path for path in crash_folder().glob("miniengine_*.txt") if path.stat().st_mtime >= since]
+    return max(reports, key=lambda path: path.stat().st_mtime) if reports else None
+
+
+def crash_summary(report: Path, stack_lines: int = 25) -> str:
+    """A crash report's head: the reason and the top of the stack."""
+    lines = report.read_text(encoding="utf-8", errors="replace").splitlines()
+    end = next((index for index, line in enumerate(lines) if line.startswith("The log's last lines")), len(lines))
+    head = lines[:end]
+    stack_start = next((index for index, line in enumerate(head) if line.startswith("Stack of")), len(head))
+    return "\n".join(head[: stack_start + 1 + stack_lines])
 
 
 def tail(path: Path, lines: int) -> str:

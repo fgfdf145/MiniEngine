@@ -1,6 +1,7 @@
 #pragma once
 
 #include <engine/application/control_server.h>
+#include <engine/application/control_ui.h>
 
 #include <nlohmann/json.hpp>
 
@@ -8,8 +9,10 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace me
@@ -83,5 +86,9 @@ class ControlSession
     std::vector<Waiter> m_waiters;
     uint64_t m_framesDrawn = 0;
     bool m_quitRequested = false;
+    // The camera's adaptation before deterministic turned it off, given back when it is turned off.
+    std::optional<std::pair<bool, bool>> m_adaptationBeforeDeterministic;
+    // Made with the first ui.run.
+    std::unique_ptr<ControlUiRunner> m_uiRunner;
 };
 }

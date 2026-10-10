@@ -11,6 +11,7 @@
 
 // ImGui's own type, declared in the global namespace like the rest of ImGui.
 struct ImDrawData;
+struct ImGuiTestEngine;
 
 namespace me
 {
@@ -33,6 +34,11 @@ class VulkanImGuiLayer
     ImDrawData* GetDrawData() const;
     bool WantsKeyboardCapture() const;
     bool WantsMouseCapture() const;
+    // After the frame's ImGui::Render: lets a running UI test (the test engine) go on to its next step.
+    void EndFrame();
+    // Dear ImGui Test Engine on this context, made the first time it is asked for (the control
+    // channel's ui.* commands); null where ImGui was built without it.
+    ImGuiTestEngine* GetTestEngine();
 
     // The render side.
     ImGuiNvrhiRenderer& GetRenderer() const;
@@ -41,5 +47,6 @@ class VulkanImGuiLayer
     SDL_Window* m_window = nullptr;
     std::unique_ptr<ImGuiNvrhiRenderer> m_renderer;
     std::string m_iniFilePath;
+    ImGuiTestEngine* m_testEngine = nullptr;
 };
 }

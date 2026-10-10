@@ -158,6 +158,12 @@ class VulkanShadowPass
         VulkanGpuTimer* timer = nullptr,
         VulkanParallelRecorder* recorder = nullptr) const;
 
+    // Every cascade redraws on the next frame (a full restart, for repeatable captures).
+    void InvalidateCache()
+    {
+        m_cache.Invalidate();
+    }
+
   private:
     nvrhi::IDevice* m_nvrhiDevice = nullptr;
     uint32_t m_resolution = 0;

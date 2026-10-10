@@ -58,6 +58,11 @@ void VulkanGpuTimer::Mark(const char* name)
     {
         return;
     }
+    if (m_debugMarkers)
+    {
+        m_commandList->beginMarker((std::string("end: ") + name).c_str());
+        m_commandList->endMarker();
+    }
     const std::vector<nvrhi::TimerQueryHandle>& queries = m_queries[m_recordingSlot];
     m_commandList->endTimerQuery(queries[marks.size()]);
     marks.push_back(name);

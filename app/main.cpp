@@ -1,6 +1,7 @@
 #include <SDL3/SDL_main.h>
 #include <engine/application/editor_application.h>
 #include <engine/core/log/log.h>
+#include <engine/platform/crash/crash_handler.h>
 
 #include <exception>
 
@@ -21,6 +22,8 @@ __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\";
 int main(int argc, char** argv)
 {
     Log::Init();
+    // A crash in any thread leaves a report with a symbolized stack (and a minidump) in the crash folder.
+    platform::crash::Install();
     LOG_INFO("MiniEngine starting");
 
     try

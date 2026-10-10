@@ -23,7 +23,8 @@
     {
       "name": "imgui",
       "features": [
-        "docking-experimental"
+        "docking-experimental",
+        "test-engine"
       ]
     },
     "imguizmo",

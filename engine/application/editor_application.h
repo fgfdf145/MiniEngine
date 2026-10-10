@@ -151,6 +151,15 @@ struct EditorApplicationOptions
     // next argument is not a number); a client drives the editor while it runs. MINIENGINE_CONTROL_PORT
     // does the same.
     std::optional<uint16_t> controlPort;
+    // --deterministic: repeatable frames for A/B captures: a fixed 1/60 s a frame (none while loading),
+    // auto exposure and white balance off (exposure from --exposure, --state or the default).
+    // MINIENGINE_FIXED_FRAME_SECONDS=<s> sets the step alone.
+    bool deterministic = false;
+    // --renderdoc (or MINIENGINE_RENDERDOC=1): loads RenderDoc before the device is made, so the control
+    // channel's renderdoc.capture can take frame captures (engine/platform/renderdoc).
+    bool renderDoc = false;
+    // --exposure EV100: the camera's fixed exposure; auto exposure off.
+    std::optional<float> exposureEv100;
     EnginePaths::Overrides paths;
 };
 

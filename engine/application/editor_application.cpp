@@ -1,6 +1,8 @@
 ﻿#include "editor_application.h"
 #include "control_server.h"
 #include "control_session.h"
+#include <engine/platform/crash/crash_handler.h>
+#include <engine/platform/renderdoc/renderdoc_capture.h>
 
 #include <engine/asset/compressed_texture_cache.h>
 #include <engine/asset/tyre_library.h>
@@ -26,6 +28,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -583,6 +586,31 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
             continue;
         }
 
+        if (argument == "--renderdoc")
+        {
+            options.renderDoc = true;
+            continue;
+        }
+
+        if (argument == "--deterministic")
+        {
+            options.deterministic = true;
+            continue;
+        }
+
+        if (argument == "--exposure")
+        {
+            const std::string value(ReadRequiredArgument(i, argc, argv, argument));
+            char* end = nullptr;
+            const float ev = std::strtof(value.c_str(), &end);
+            if (end == value.c_str() || *end != '\0' || !std::isfinite(ev))
+            {
+                throw std::runtime_error("--exposure takes an EV100 number, not '" + value + "'");
+            }
+            options.exposureEv100 = ev;
+            continue;
+        }
+
         if (argument == "--read-only-settings")
         {
             options.paths.readOnlySettings = true;
@@ -752,7 +780,7 @@ int EditorApplication::Run()
     sharedState->viewSettingsFromCommandLine =
         m_options.maxFrames > 0 || m_options.statePath.has_value() || m_options.khronosReference ||
         m_options.debugView.has_value() || m_options.displayPattern.has_value() || m_options.ddgiDisabled || m_options.ddgiSpacing.has_value() ||
-        m_options.softwareRays || m_options.paths.readOnlySettings;
+        m_options.softwareRays || m_options.paths.readOnlySettings || m_options.deterministic || m_options.exposureEv100.has_value();
     std::optional<std::string> startupScenePath = m_options.startupScenePath;
     std::optional<RenderExtent> viewportSize = m_options.viewportSize;
     if (m_options.statePath.has_value())
@@ -778,6 +806,21 @@ int EditorApplication::Run()
         {
             viewportSize = state.viewportExtent;
         }
+    }
+    if (const char* fixed = std::getenv("MINIENGINE_FIXED_FRAME_SECONDS"); fixed != nullptr && fixed[0] != '\0')
+    {
+        sharedState->fixedFrameSeconds = std::max(std::strtof(fixed, nullptr), 0.0f);
+    }
+    if (m_options.exposureEv100.has_value())
+    {
+        sharedState->camera.exposureEv100 = *m_options.exposureEv100;
+        sharedState->camera.autoExposure.enabled = false;
+    }
+    if (m_options.deterministic)
+    {
+        sharedState->fixedFrameSeconds = sharedState->fixedFrameSeconds.value_or(1.0f / 60.0f);
+        sharedState->camera.autoExposure.enabled = false;
+        sharedState->camera.autoWhiteBalance.enabled = false;
     }
     if (m_options.khronosReference)
     {
@@ -856,6 +899,15 @@ int EditorApplication::Run()
         }
     }
     LOG_INFO("Using render backend: {}", ToString(m_options.renderBackend));
+    if (const char* renderDoc = std::getenv("MINIENGINE_RENDERDOC"); m_options.renderDoc || (renderDoc != nullptr && std::string_view(renderDoc) == "1"))
+    {
+        // Before the window's surface and the device, which RenderDoc hooks as they are made.
+        std::string error;
+        if (!platform::renderdoc::Load(platform::crash::CrashFolder().parent_path() / "renderdoc", error))
+        {
+            LOG_WARN("--renderdoc: {}", error);
+        }
+    }
     const std::string windowTitle = std::string("MiniEngine v") + EngineVersion::String();
     Window window(1920, 1080, windowTitle.c_str(), m_options.renderBackend);
     std::unique_ptr<IRenderBackend> renderer = CreateRenderBackend(
@@ -863,6 +915,7 @@ int EditorApplication::Run()
         sharedState,
         m_options.renderBackend,
         m_options.startupModelPath);
+    platform::crash::Reassert();
     if (startupScenePath.has_value())
     {
         // Loaded asynchronously and applied by the frame loop, exactly like a scene opened from the
