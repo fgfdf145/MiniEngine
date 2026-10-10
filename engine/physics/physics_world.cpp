@@ -924,10 +924,9 @@ double SprungMass(const VehicleSettings& settings)
     return std::max(mass - hubs, 0.5 * mass);
 }
 
-// The physics engine's spring carries the tyre's force, which the suspension sets each step through
-// the preload; this stiffness only keeps the spring defined, small enough that the body's motion
-// within a step hardly changes the force.
-constexpr float kTyreCarrierStiffness = 100.0f;
+// The multibody suspension's stand-in for the physics engine's spring, which only keeps it defined:
+// preloaded to pull, it pushes nothing (see BuildVehicleConstraintSettings).
+constexpr float kInertSpringStiffness = 1.0f;
 
 // A hub moving slower than this (m/s) has settled.
 constexpr double kHubSettledRate = 5e-4;
@@ -1092,9 +1091,13 @@ JPH::Ref<JPH::VehicleConstraintSettings> BuildVehicleConstraintSettings(const Ve
                 // The hub's end stops and the rim's are its own springs (StepUnsprungCorner); the physics
                 // engine's rigid stop lies past them, for what they cannot hold.
                 wheel->mSuspensionMinLength = std::max(designLength - bump - TyreDeflectionRoom(settings, index), 0.0f);
-                wheel->mSuspensionSpring.mStiffness = kTyreCarrierStiffness;
-                wheel->mSuspensionSpring.mDamping = 0.0f;
             }
+            // The suspension pushes on the body itself (PushSuspension). The physics engine's spring stays
+            // for its lengths (how far it looks for the ground, where its rigid stop is) but never pushes:
+            // preloaded past its whole length it would pull, which it cannot.
+            wheel->mSuspensionSpring.mStiffness = kInertSpringStiffness;
+            wheel->mSuspensionSpring.mDamping = 0.0f;
+            wheel->mSuspensionPreloadLength = -(wheel->mSuspensionMaxLength + 1.0f);
         }
         vehicle->mWheels.push_back(wheel);
     }
@@ -1393,6 +1396,23 @@ struct PhysicsWorld::Impl
             bool lastMountValid = false;
         };
         std::vector<Corner> corners;
+        // The multibody suspension's push along each wheel's contact normal in the coming step, set before it
+        // (UpdateCorners) and put on the body once the ground is found (PushSuspension): for a hub with a mass
+        // of its own the tyre's force the hub took, else the suspension at the wheel, linear about the state
+        // before the step as k (reference - L) + c (closing speed) with L the suspension's length to the
+        // ground, solved with the other wheels' (PredictSuspensionForces).
+        struct SuspensionSpring
+        {
+            bool known = false;
+            float force = 0.0f;
+            float stiffness = 0.0f;
+            float damping = 0.0f;
+            float reference = 0.0f;
+        };
+        std::array<SuspensionSpring, kVehicleWheelCount> springs{};
+        // What each wheel's suspension pushed along its contact normal in the last step (N), when it pushes
+        // itself; see SuspensionLoad.
+        std::array<float, kVehicleWheelCount> suspensionLoads{};
         // Front and rear: each axle's two wheels (independent corners or a solid axle), stepped together.
         std::array<std::unique_ptr<suspension::AxleSuspension>, 2> axles;
         // A solid axle's propshaft torque reaction on its housing in the last step (N m, about the
@@ -1429,6 +1449,13 @@ struct PhysicsWorld::Impl
         // Each wheel's roll angle before the step (RollWheelsBySpinAfterStep), rad.
         std::array<float, kVehicleWheelCount> spinAngleBefore{};
     };
+
+    // The multibody suspension pushes the body itself (PushSuspension); a car on straight springs has
+    // the physics engine's.
+    static bool PushesOwnSuspension(const Vehicle& vehicle)
+    {
+        return !vehicle.corners.empty();
+    }
 
     void BuildCorners(Vehicle& vehicle) const
     {
@@ -1501,13 +1528,13 @@ struct PhysicsWorld::Impl
     }
 
     // Before each step: the multibody suspension reads where the physics engine left each wheel, moves
-    // the wheel along its linkage (the mount's horizontal place, camber, toe and steering), and hands
-    // the physics engine's straight spring the stiffness, damping and preload that make its force, near
-    // the current state, the suspension's: springs, damper, stops and anti-roll bar at the wheel, plus
-    // the tyre's horizontal forces through the linkage's geometry (anti-dive, anti-squat, jacking).
+    // the wheel along its linkage (the mount's horizontal place, camber, toe and steering), and sets the
+    // push along the contact normal (Vehicle::springs) that is, near the current state, the suspension's:
+    // springs, damper, stops and anti-roll bar at the wheel, plus the tyre's horizontal forces through the
+    // linkage's geometry (anti-dive, anti-squat, jacking).
     //
     // A wheel with an unsprung mass (StepUnsprungCorner) instead moves on its own travel state, and the
-    // physics engine's spring carries the tyre's vertical force between the ground and the hub.
+    // push is the tyre's vertical force between the ground and the hub.
     void UpdateCorners(Vehicle& vehicle, float steering)
     {
         if (vehicle.corners.empty())
@@ -1533,7 +1560,6 @@ struct PhysicsWorld::Impl
             travel[index] = c.unsprung ? c.travel : c.designLength - wheels[static_cast<JPH::uint>(index)]->GetSuspensionLength();
         }
         std::array<suspension::CornerInput, kVehicleWheelCount> inputs{};
-        std::array<float, kVehicleWheelCount> cosines{};
         for (size_t index = 0; index < vehicle.corners.size(); ++index)
         {
             const Vehicle::Corner& c = vehicle.corners[index];
@@ -1543,7 +1569,6 @@ struct PhysicsWorld::Impl
             in.travel = travel[index];
             in.travelRate = c.unsprung ? c.travelRate : (travel[index] - c.travel) / dt;
             in.rack = c.front ? rack : 0.0;
-            float cosine = 1.0f;
             if (wheel.HasContact())
             {
                 // The road's horizontal push on the tyre over the last step, in the corner's frame.
@@ -1557,10 +1582,8 @@ struct PhysicsWorld::Impl
                 }
                 in.load.force = VehicleToCorner(FromJolt(force));
                 in.contactNormal = VehicleToCorner(FromJolt(normal));
-                cosine = std::max(0.1f, normal.GetY());
                 in.load.moment = KnuckleSpinMoment(vehicle, *controller, index, in.load.force);
             }
-            cosines[index] = cosine;
         }
         ApplyAxleTorqueReaction(vehicle);
         for (size_t axle = 0; axle < 2; ++axle)
@@ -1573,7 +1596,6 @@ struct PhysicsWorld::Impl
             const JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
             JPH::WheelSettingsWV& settings = *vehicle.wheelSettings[index];
             const suspension::CornerInput& in = inputs[index];
-            const float cosine = cosines[index];
             const suspension::CornerOutput& out = vehicle.axles[index / 2]->Output(static_cast<int>(index % 2));
 
             // The anti-roll bar from the two wheels' travel difference.
@@ -1582,7 +1604,7 @@ struct PhysicsWorld::Impl
 
             if (c.unsprung)
             {
-                StepUnsprungCorner(vehicle, index, wheel, settings, out, in, arb, cosine);
+                StepUnsprungCorner(vehicle, index, wheel, settings, out, in, arb);
                 if (std::abs(c.travelRate) > kHubSettledRate)
                 {
                     // The physics engine judges sleep by the body alone: not while a hub still moves.
@@ -1598,12 +1620,13 @@ struct PhysicsWorld::Impl
                 const double normalForce = -generalised / perTravel;
                 const double stiffness = std::max(-(out.strutTravelStiffness - c.antiRollBarRate) / perTravel, 1000.0);
                 const double damping = std::max(-out.strutTravelDamping / perTravel, 0.0);
-                // The physics engine's spring is k (Lmax + preload - L) - c dL/dt along the normal (its k
-                // and c divided by the cosine between the suspension and the normal): match force and slopes.
-                settings.mSuspensionSpring.mMode = JPH::ESpringMode::StiffnessAndDamping;
-                settings.mSuspensionSpring.mStiffness = static_cast<float>(stiffness) * cosine;
-                settings.mSuspensionSpring.mDamping = static_cast<float>(damping) * cosine;
-                settings.mSuspensionPreloadLength = static_cast<float>((normalForce - stiffness * in.travel - damping * in.travelRate) / stiffness) - settings.mSuspensionMaxLength + c.designLength;
+                // The push along the normal, k (reference - L) + c (closing speed), with the force and its
+                // slopes the suspension's here (the travel is the design length less L).
+                Vehicle::SuspensionSpring& spring = vehicle.springs[index];
+                spring.known = false;
+                spring.stiffness = static_cast<float>(stiffness);
+                spring.damping = static_cast<float>(damping);
+                spring.reference = static_cast<float>((normalForce - stiffness * in.travel - damping * in.travelRate) / stiffness + c.designLength);
             }
 
             // The wheel where the linkage has it: the mount above its centre, turned by camber and toe.
@@ -1696,12 +1719,12 @@ struct PhysicsWorld::Impl
     // with the ground are stiff springs, not rigid stops: a rigid stop took the hub's (or, through the
     // physics engine's, the whole car's) speed away within a step, some 100 g on a 0.5 m drop.
     //
-    // The physics engine's body is the whole car (hubs included). It receives the tyre's force through
-    // its spring, set by the preload to exactly the force the hub took, and the hub's motion relative
+    // The physics engine's body is the whole car (hubs included). It receives the tyre's force the hub
+    // took (PushSuspension) and the hub's motion relative
     // to the body as -m_hub z'' dW/dz at the hub: together they leave the sprung mass with the
     // suspension's force, and the tyre's friction with the tyre's load.
-    void StepUnsprungCorner(Vehicle& vehicle, size_t index, const JPH::Wheel& wheel, JPH::WheelSettingsWV& settings, const suspension::CornerOutput& out,
-                            const suspension::CornerInput& in, double arb, float cosine)
+    void StepUnsprungCorner(Vehicle& vehicle, size_t index, const JPH::Wheel& wheel, const JPH::WheelSettingsWV& settings, const suspension::CornerOutput& out,
+                            const suspension::CornerInput& in, double arb)
     {
         Vehicle::Corner& c = vehicle.corners[index];
         const double dt = stepSeconds;
@@ -1805,16 +1828,16 @@ struct PhysicsWorld::Impl
         c.travel = next;
         c.travelRate = rate;
 
-        // The tyre's force the hub took, for the physics engine to apply to the body (and to bound the
-        // tyre's friction): k (Lmax + preload - L) with L where the ground is now. Its mean over the step
+        // The tyre's force the hub took, to push the body with (PushSuspension) and to bound the tyre's
+        // friction. Its mean over the step
         // the hub was just stepped through, as the trapezoidal step has it, since the physics engine now
         // moves the body through that same step: the force at the step's end would reach the body half a
         // step early (7 % off its response at 1 ms on the rig, 1.2 % with the mean).
         const double applied = std::max(tyre + 0.5 * (tyreSlope * (next - z) + tyreRateSlope * (rate - v)), 0.0);
-        settings.mSuspensionSpring.mMode = JPH::ESpringMode::StiffnessAndDamping;
-        settings.mSuspensionSpring.mStiffness = kTyreCarrierStiffness * cosine;
-        settings.mSuspensionSpring.mDamping = 0.0f;
-        settings.mSuspensionPreloadLength = std::max(static_cast<float>(applied / kTyreCarrierStiffness + length) - settings.mSuspensionMaxLength, 0.0f);
+        Vehicle::SuspensionSpring& spring = vehicle.springs[index];
+        spring = {};
+        spring.known = true;
+        spring.force = static_cast<float>(applied);
 
         // The hub's motion relative to the body, as a force on the body at the hub.
         const JPH::Vec3 relative = rotation * ToJolt(hubPerTravelVehicle) * static_cast<float>(-c.hubMass * travelAccel);
@@ -2293,9 +2316,10 @@ struct PhysicsWorld::Impl
         }
     }
 
-    // The normal forces the wheels' suspensions will push with in the coming step, as the physics engine's
-    // solver finds them (VehicleConstraint::SetupVelocityConstraint, solved to convergence). Each spring is
-    // a soft constraint (Catto, "Soft constraints", GDC 2011), implicit in the step:
+    // The normal forces the wheels' suspensions will push with in the coming step: the multibody
+    // suspension's own (Vehicle::springs, which PushSuspension then applies), or the physics engine's
+    // springs as its solver finds them (VehicleConstraint::SetupVelocityConstraint, solved to convergence).
+    // Each spring is a soft constraint (Catto, "Soft constraints", GDC 2011), implicit in the step:
     //
     //   F_i = k_i x_i + (c_i + dt k_i)(v_i - b_i - dt sum_j W_ij F_j),
     //
@@ -2304,18 +2328,25 @@ struct PhysicsWorld::Impl
     // the forces on it (the other parts' already added, the tyres' as they pushed in the last step) and W
     // the body's inverse mass matrix between the force points along their normals, through which the four
     // springs push on one another. The four equations are solved together, a spring that would pull let go.
-    // The last step's impulse instead is a step old; it stands in where the solver will also push the wheel
-    // against its bump stop, which cannot be foretold, and wherever the ground cannot be read.
+    // A hub with a mass of its own has its push already (the tyre's force it took). For the physics engine's
+    // springs the last step's impulse stands in where the solver will also push the wheel against its bump
+    // stop, which cannot be foretold, and wherever the ground cannot be read.
     std::array<float, kVehicleWheelCount> PredictSuspensionForces(const Vehicle& vehicle, const JPH::VehicleConstraint& constraint,
                                                                   const JPH::PhysicsStepListenerContext& context) const
     {
         const float dt = context.mDeltaTime;
         const JPH::Array<JPH::Wheel*>& wheels = constraint.GetWheels();
         const size_t count = std::min<size_t>(wheels.size(), kVehicleWheelCount);
+        const bool own = PushesOwnSuspension(vehicle);
         std::array<float, kVehicleWheelCount> loads{};
         for (size_t index = 0; index < count; ++index)
         {
-            loads[index] = wheels[index]->HasContact() ? std::max(wheels[index]->GetSuspensionLambda() / dt, 0.0f) : 0.0f;
+            if (!wheels[index]->HasContact())
+            {
+                continue;
+            }
+            loads[index] = own ? (vehicle.springs[index].known ? std::max(vehicle.springs[index].force, 0.0f) : 0.0f)
+                               : std::max(wheels[index]->GetSuspensionLambda() / dt, 0.0f);
         }
         const JPH::Body& body = *constraint.GetVehicleBody();
         if (!body.IsDynamic())
@@ -2338,6 +2369,21 @@ struct PhysicsWorld::Impl
             {
                 force += last.force;
                 torque += JPH::Vec3(wheels[index]->GetContactPosition() - com).Cross(last.force) + wheels[index]->GetContactNormal() * static_cast<float>(last.out.Mz);
+            }
+        }
+        if (own && vehicle.brushTyres.empty())
+        {
+            // The physics engine's tyres push inside its solver, as they did in the last step. Left out, the
+            // suspension met their roll moment a step late and the body rocked (0.04 deg at 60 Hz).
+            for (size_t index = 0; index < count; ++index)
+            {
+                const JPH::Wheel& wheel = *wheels[index];
+                if (wheel.HasContact())
+                {
+                    const JPH::Vec3 last = (wheel.GetContactLongitudinal() * wheel.GetLongitudinalLambda() + wheel.GetContactLateral() * wheel.GetLateralLambda()) / dt;
+                    force += last;
+                    torque += JPH::Vec3(wheel.GetContactPosition() - com).Cross(last);
+                }
             }
         }
         const JPH::Vec3 linear = body.GetLinearVelocity() + (context.mPhysicsSystem->GetGravity() * motion.GetGravityFactor() + force * inverseMass) * dt;
@@ -2371,14 +2417,32 @@ struct PhysicsWorld::Impl
             spring.normal = wheel.GetContactNormal();
             const JPH::RVec3 point = settings.mEnableSuspensionForcePoint ? transform * settings.mSuspensionForcePoint : wheel.GetContactPosition();
             spring.arm = JPH::Vec3(point - com);
-            if (!(settings.mSuspensionMaxLength > settings.mSuspensionMinLength) || wheel.GetSuspensionLength() < settings.mSuspensionMinLength)
+            float stiffness = 0.0f;
+            float damping = 0.0f;
+            float compression = 0.0f;
+            if (own)
+            {
+                // The suspension's own push, whole whatever the physics engine's rigid stop adds past it.
+                const Vehicle::SuspensionSpring& ours = vehicle.springs[index];
+                if (ours.known)
+                {
+                    continue;
+                }
+                stiffness = ours.stiffness;
+                damping = ours.damping;
+                compression = ours.reference - wheel.GetSuspensionLength();
+            }
+            else if (!(settings.mSuspensionMaxLength > settings.mSuspensionMinLength) || wheel.GetSuspensionLength() < settings.mSuspensionMinLength)
             {
                 continue;
             }
-
-            float stiffness = settings.mSuspensionSpring.mStiffness;
-            float damping = settings.mSuspensionSpring.mDamping;
-            if (settings.mSuspensionSpring.mMode == JPH::ESpringMode::FrequencyAndDamping)
+            else
+            {
+                stiffness = settings.mSuspensionSpring.mStiffness;
+                damping = settings.mSuspensionSpring.mDamping;
+                compression = settings.mSuspensionMaxLength + settings.mSuspensionPreloadLength - wheel.GetSuspensionLength();
+            }
+            if (!own && settings.mSuspensionSpring.mMode == JPH::ESpringMode::FrequencyAndDamping)
             {
                 const JPH::Vec3 forcePoint = settings.mEnableSuspensionForcePoint
                                                  ? settings.mSuspensionForcePoint
@@ -2389,9 +2453,12 @@ struct PhysicsWorld::Impl
                 stiffness = mass * omega * omega;
                 damping = 2.0f * mass * settings.mSuspensionSpring.mDamping * omega;
             }
-            const float cosine = std::max(0.1f, transform.Multiply3x3(settings.mSuspensionDirection).Dot(-spring.normal));
-            stiffness /= cosine;
-            damping /= cosine;
+            if (!own)
+            {
+                const float cosine = std::max(0.1f, transform.Multiply3x3(settings.mSuspensionDirection).Dot(-spring.normal));
+                stiffness /= cosine;
+                damping /= cosine;
+            }
             if (!(stiffness > 0.0f))
             {
                 continue;
@@ -2402,16 +2469,19 @@ struct PhysicsWorld::Impl
             JPH::Vec3 groundVelocity = wheel.GetContactPointVelocity();
             {
                 JPH::BodyLockRead lock(context.mPhysicsSystem->GetBodyLockInterfaceNoLock(), wheel.GetContactBodyID());
-                if (!lock.Succeeded())
+                if (lock.Succeeded())
+                {
+                    const JPH::Body& ground = lock.GetBody();
+                    groundVelocity = ground.GetPointVelocity(point);
+                    if (ground.IsDynamic())
+                    {
+                        const JPH::Vec3 groundArm = JPH::Vec3(point - ground.GetCenterOfMassPosition()).Cross(spring.normal);
+                        spring.inverseGround = ground.GetMotionProperties()->GetInverseMass() + groundArm.Dot(ground.GetInverseInertia().Multiply3x3(groundArm));
+                    }
+                }
+                else if (!own)
                 {
                     continue;
-                }
-                const JPH::Body& ground = lock.GetBody();
-                groundVelocity = ground.GetPointVelocity(point);
-                if (ground.IsDynamic())
-                {
-                    const JPH::Vec3 groundArm = JPH::Vec3(point - ground.GetCenterOfMassPosition()).Cross(spring.normal);
-                    spring.inverseGround = ground.GetMotionProperties()->GetInverseMass() + groundArm.Dot(ground.GetInverseInertia().Multiply3x3(groundArm));
                 }
             }
             const float closing = -spring.normal.Dot(linear + angular.Cross(spring.arm) - groundVelocity);
@@ -2432,7 +2502,6 @@ struct PhysicsWorld::Impl
                     bias += bar.mLeftWheel == index ? -impulse : impulse;
                 }
             }
-            const float compression = settings.mSuspensionMaxLength + settings.mSuspensionPreloadLength - wheel.GetSuspensionLength();
             spring.rightSide = stiffness * compression + spring.soft * (closing - bias);
             spring.push = Push::Solved;
         }
@@ -2538,13 +2607,74 @@ struct PhysicsWorld::Impl
         return loads;
     }
 
-    // The brush tyres, called by the vehicle constraint once it has found the ground and before the
-    // controller turns the engine and brakes the wheels. Each tyre reads the wheel's motion over the
-    // ground in the contact frame, the load the suspension will carry in this step and the camber to
-    // the road, steps its carcass, and puts the road's force and aligning moment on the body at the
-    // contact and the force's moment about the axle on the wheel's spin. The physics engine's own tyre
-    // friction is off (its impulse limits are zero).
-    void ApplyBrushTyres(Vehicle& vehicle, JPH::VehicleConstraint& constraint, const JPH::PhysicsStepListenerContext& context)
+    // Called by the vehicle constraint once it has found the ground and before the controller turns the
+    // engine and brakes the wheels: the multibody suspension pushes the body, and the brush tyres step on
+    // the loads the suspensions carry. All four loads come before any tyre pushes, since each spring's
+    // depends on the others' through the body.
+    void AfterGroundFound(Vehicle& vehicle, JPH::VehicleConstraint& constraint, const JPH::PhysicsStepListenerContext& context)
+    {
+        const bool own = PushesOwnSuspension(vehicle);
+        if ((!own && vehicle.brushTyres.empty()) || context.mDeltaTime <= 0.0f)
+        {
+            return;
+        }
+        const std::array<float, kVehicleWheelCount> loads = PredictSuspensionForces(vehicle, constraint, context);
+        if (own)
+        {
+            PushSuspension(vehicle, constraint, context, loads);
+        }
+        ApplyBrushTyres(vehicle, constraint, context, loads);
+    }
+
+    // The multibody suspension's push: each wheel's load along its contact normal at its contact, on the
+    // body and, when the ground moves, the opposite on the ground. A car asleep is not stepped and keeps
+    // the loads it rested on.
+    void PushSuspension(Vehicle& vehicle, const JPH::VehicleConstraint& constraint, const JPH::PhysicsStepListenerContext& context,
+                        const std::array<float, kVehicleWheelCount>& loads)
+    {
+        const JPH::Body& body = *constraint.GetVehicleBody();
+        if (!body.IsActive())
+        {
+            return;
+        }
+        JPH::BodyInterface& bodies = context.mPhysicsSystem->GetBodyInterfaceNoLock();
+        const JPH::RMat44 transform = body.GetWorldTransform();
+        const JPH::Array<JPH::Wheel*>& wheels = constraint.GetWheels();
+        vehicle.suspensionLoads = {};
+        for (size_t index = 0; index < kVehicleWheelCount && index < wheels.size(); ++index)
+        {
+            const JPH::Wheel& wheel = *wheels[static_cast<JPH::uint>(index)];
+            if (!wheel.HasContact() || !(loads[index] > 0.0f))
+            {
+                continue;
+            }
+            const JPH::WheelSettings& settings = *wheel.GetSettings();
+            const JPH::RVec3 point = settings.mEnableSuspensionForcePoint ? transform * settings.mSuspensionForcePoint : wheel.GetContactPosition();
+            const JPH::Vec3 force = wheel.GetContactNormal() * loads[index];
+            bodies.AddForce(body.GetID(), force, point, JPH::EActivation::DontActivate);
+            bodies.AddForce(wheel.GetContactBodyID(), -force, point, JPH::EActivation::DontActivate);
+            vehicle.suspensionLoads[index] = loads[index];
+        }
+    }
+
+    // A wheel's suspension load in the last step (N along its contact normal): the multibody suspension's
+    // own push, else the physics engine's spring's impulse over the step.
+    float SuspensionLoad(const Vehicle& vehicle, const JPH::Wheel& wheel, size_t index) const
+    {
+        if (PushesOwnSuspension(vehicle))
+        {
+            return index < kVehicleWheelCount ? vehicle.suspensionLoads[index] : 0.0f;
+        }
+        return std::max(wheel.GetSuspensionLambda() / stepSeconds, 0.0f);
+    }
+
+    // The brush tyres (see AfterGroundFound). Each tyre reads the wheel's motion over the ground in the
+    // contact frame, the load the suspension will carry in this step and the camber to the road, steps its
+    // carcass, and puts the road's force and aligning moment on the body at the contact and the force's
+    // moment about the axle on the wheel's spin. The physics engine's own tyre friction is off (its
+    // impulse limits are zero).
+    void ApplyBrushTyres(Vehicle& vehicle, JPH::VehicleConstraint& constraint, const JPH::PhysicsStepListenerContext& context,
+                         const std::array<float, kVehicleWheelCount>& loads)
     {
         const float dt = context.mDeltaTime;
         if (vehicle.brushTyres.empty() || dt <= 0.0f)
@@ -2555,8 +2685,6 @@ struct PhysicsWorld::Impl
         JPH::BodyInterface& bodies = context.mPhysicsSystem->GetBodyInterfaceNoLock();
         const JPH::Quat rotation = body.GetRotation();
         const JPH::Array<JPH::Wheel*>& wheels = constraint.GetWheels();
-        // All four loads before any tyre pushes: each spring's depends on the others' through the body.
-        const std::array<float, kVehicleWheelCount> loads = PredictSuspensionForces(vehicle, constraint, context);
         const size_t count = std::min(vehicle.brushTyres.size(), static_cast<size_t>(wheels.size()));
         // Each tyre's input first, then the tyres stepped side by side (each touches only its own state),
         // then their forces put on the body and the wheels one after another.
@@ -2582,7 +2710,7 @@ struct PhysicsWorld::Impl
             in.forwardVelocity = velocity.Dot(longitudinal);
             in.lateralVelocity = velocity.Dot(left);
             in.yawRate = body.GetAngularVelocity().Dot(normal);
-            in.load = index < loads.size() ? loads[index] : std::max(wheel.GetSuspensionLambda() / dt, 0.0f);
+            in.load = loads[index];
             // Camber to the road from the wheel's axle (its right, steered): positive top right.
             JPH::Vec3 forward, up, right;
             constraint.GetWheelLocalBasis(&wheel, forward, up, right);
@@ -2924,8 +3052,10 @@ struct PhysicsWorld::Impl
         {
             return;
         }
-        for (JPH::Wheel* wheel : vehicle.constraint->GetWheels())
+        const JPH::Array<JPH::Wheel*>& wheels = vehicle.constraint->GetWheels();
+        for (size_t index = 0; index < wheels.size(); ++index)
         {
+            JPH::Wheel* wheel = wheels[static_cast<JPH::uint>(index)];
             if (!wheel->HasContact())
             {
                 continue;
@@ -2940,7 +3070,7 @@ struct PhysicsWorld::Impl
             {
                 continue;
             }
-            const float load = std::max(wheel->GetSuspensionLambda() / stepSeconds, 0.0f);
+            const float load = SuspensionLoad(vehicle, *wheel, index);
             const float radius = wheel->GetSettings()->mRadius;
             auto* driven = static_cast<JPH::WheelWV*>(wheel);
             const float rolling = RollingResistanceTorque(driven->GetAngularVelocity(), 0.0f, driven->GetSettings()->mInertia, coefficient * load * radius, stepSeconds);
@@ -3146,7 +3276,7 @@ struct PhysicsWorld::Impl
                 state.contactNormal = FromJolt(wheel.GetContactNormal());
                 state.contactLongitudinal = FromJolt(wheel.GetContactLongitudinal());
                 state.contactLateral = FromJolt(wheel.GetContactLateral());
-                state.suspensionForce = wheel.GetSuspensionLambda() / stepSeconds;
+                state.suspensionForce = SuspensionLoad(vehicle, wheel, index);
                 state.longitudinalForce = wheel.GetLongitudinalLambda() / stepSeconds;
                 state.lateralForce = wheel.GetLateralLambda() / stepSeconds;
                 state.slipRatio = wheelWV.mLongitudinalSlip;
@@ -3610,11 +3740,28 @@ VehicleId PhysicsWorld::AddVehicle(const VehicleSettings& settings, const Physic
                 outLongitudinalImpulse = 0.0f;
                 outLateralImpulse = 0.0f;
             });
+    }
+    else if (Impl::PushesOwnSuspension(vehicle))
+    {
+        // The physics engine's tyres on the suspension's own load: its spring, which they would read, pushes nothing.
+        const VehicleId id = static_cast<VehicleId>(impl.vehicles.size());
+        auto* controller = static_cast<JPH::WheeledVehicleController*>(vehicle.constraint->GetController());
+        controller->SetTireMaxImpulseCallback(
+            [&impl, id](JPH::uint wheel, float& outLongitudinalImpulse, float& outLateralImpulse, float, float longitudinalFriction, float lateralFriction, float,
+                        float, float deltaTime)
+            {
+                const float impulse = wheel < kVehicleWheelCount ? impl.vehicles[id].suspensionLoads[wheel] * deltaTime : 0.0f;
+                outLongitudinalImpulse = longitudinalFriction * impulse;
+                outLateralImpulse = lateralFriction * impulse;
+            });
+    }
+    if (!vehicle.brushTyres.empty() || Impl::PushesOwnSuspension(vehicle))
+    {
         const VehicleId id = static_cast<VehicleId>(impl.vehicles.size());
         vehicle.constraint->SetPostCollideCallback(
             [&impl, id](JPH::VehicleConstraint& constraint, const JPH::PhysicsStepListenerContext& context)
             {
-                impl.ApplyBrushTyres(impl.vehicles[id], constraint, context);
+                impl.AfterGroundFound(impl.vehicles[id], constraint, context);
             });
     }
 
@@ -3737,6 +3884,8 @@ void PhysicsWorld::ResetVehicle(VehicleId id, const PhysicsPose& pose, bool keep
         }
     }
     vehicle.tyreSlips = {};
+    vehicle.springs = {};
+    vehicle.suspensionLoads = {};
     vehicle.brushWheels = {};
     vehicle.droppedRotation = {};
     vehicle.spinAngleBefore = {};
