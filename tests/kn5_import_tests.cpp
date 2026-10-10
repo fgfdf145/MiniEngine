@@ -651,6 +651,23 @@ void RulesMatchTheConverter()
     Require(match.key == "WALL", "a name no surface matches is its own, without the digits around it");
     RequireNear(match.friction, kUnknownSurfaceFriction, 1e-6f, "at the unknown surface's friction");
 
+    {
+        // ks_nordschleife: no <track>/data, each layout's surfaces.ini in <track>/<layout>/data.
+        ScopedDirectory track;
+        const auto write = [](const std::filesystem::path& path, const std::string& text)
+        {
+            std::filesystem::create_directories(path.parent_path());
+            std::ofstream(path) << text;
+        };
+        write(track.Path() / "nordschleife" / "data" / "surfaces.ini", "[SURFACE_0]\nKEY=TRM-NRM\nFRICTION=0.98\n");
+        write(track.Path() / "data" / "surfaces.ini", "[SURFACE_0]\nKEY=TRM-NRM\nFRICTION=0.5\n[SURFACE_1]\nKEY=GRASS\nFRICTION=0.4\n");
+        const std::vector<Kn5Surface> layout = Kn5Importer::LoadTrackSurfaces(track.Path() / "models_nordschleife.ini");
+        RequireNear(Kn5Importer::MatchSurface(layout, "1TRM-NRM").friction, 0.98f, 1e-6f, "the layout's own surfaces.ini comes first");
+        RequireNear(Kn5Importer::MatchSurface(layout, "3GRASS").friction, 0.4f, 1e-6f, "then the track's");
+        const std::vector<Kn5Surface> plain = Kn5Importer::LoadTrackSurfaces(track.Path() / "models.ini");
+        RequireNear(Kn5Importer::MatchSurface(plain, "1TRM-NRM").friction, 0.5f, 1e-6f, "models.ini reads the track's data");
+    }
+
     // Perceptual roughness: alpha = sqrt(2 / (n + 2)) is Blinn-Phong's width, and the shader squares
     // the roughness to get alpha.
     RequireNear(Kn5Importer::SpecularExponentToRoughness(0.0f), 1.0f, 1e-6f, "exponent 0 is fully rough");

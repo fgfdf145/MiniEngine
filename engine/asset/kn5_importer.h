@@ -157,6 +157,12 @@ bool IsLayoutPath(const std::filesystem::path& path);
 // with "_<layout>" for models_<layout>.ini.
 std::string ImportName(const std::filesystem::path& source);
 
+// The surfaces a track's physics meshes are made of, for an import of `source` (a kn5 or a
+// layout): a models_<layout>.ini's <track>/<layout>/data/surfaces.ini, then the track's
+// data/surfaces.ini, then the game's own (system/data/surfaces.ini, above content/tracks/<track>),
+// then the four keys every install has. The first definition of a key is the one a mesh gets.
+std::vector<Kn5Surface> LoadTrackSurfaces(const std::filesystem::path& source);
+
 // The models a layout places, in file order. Each [MODEL_n] section with a FILE counts; FILE is
 // relative to the ini, POSITION and ROTATION default to zero (and to zero when malformed).
 // Throws std::runtime_error when the ini cannot be read, places nothing, or names a missing file.

@@ -2449,46 +2449,6 @@ AcIni ReadAcIni(const std::filesystem::path& path)
     return ParseAcIni(file);
 }
 
-// The surfaces a track's physics meshes are made of: the track's data/surfaces.ini, then the game's
-// own (system/data/surfaces.ini, above content/tracks/<track>), then the four keys every install
-// has. The first definition of a key is the one a mesh gets.
-std::vector<Kn5Surface> LoadTrackSurfaces(const std::filesystem::path& trackDirectory)
-{
-    std::vector<Kn5Surface> surfaces;
-    const auto append = [&surfaces](const std::filesystem::path& path)
-    {
-        std::ifstream file(path);
-        if (!file)
-        {
-            return;
-        }
-        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-        for (Kn5Surface& surface : Kn5Importer::ParseSurfaces(text))
-        {
-            surfaces.push_back(std::move(surface));
-        }
-    };
-
-    append(trackDirectory / "data" / "surfaces.ini");
-    std::error_code ec;
-    std::filesystem::path ancestor = std::filesystem::absolute(trackDirectory, ec);
-    for (int level = 0; !ec && level < 6 && ancestor.has_parent_path() && ancestor.parent_path() != ancestor; ++level)
-    {
-        const std::filesystem::path system = ancestor / "system" / "data" / "surfaces.ini";
-        if (std::filesystem::is_regular_file(system, ec))
-        {
-            append(system);
-            break;
-        }
-        ancestor = ancestor.parent_path();
-    }
-    for (const Kn5Surface& builtin : {Kn5Surface{"ROAD", 1.0f}, Kn5Surface{"GRASS", 0.6f}, Kn5Surface{"KERB", 0.92f}, Kn5Surface{"SAND", 0.8f}})
-    {
-        surfaces.push_back(builtin);
-    }
-    return surfaces;
-}
-
 // "x, y, z" as three floats; zero for a missing or malformed value, as the game reads it.
 std::array<float, 3> ParseTriple(const std::map<std::string, std::string>& values, const std::string& key)
 {
@@ -2742,6 +2702,54 @@ std::string ImportName(const std::filesystem::path& source)
     return stem.size() > 7 ? track + "_" + stem.substr(7) : track;
 }
 
+std::vector<Kn5Surface> LoadTrackSurfaces(const std::filesystem::path& source)
+{
+    const std::filesystem::path trackDirectory = source.parent_path();
+    std::vector<Kn5Surface> surfaces;
+    const auto append = [&surfaces](const std::filesystem::path& path)
+    {
+        std::ifstream file(path);
+        if (!file)
+        {
+            return;
+        }
+        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        for (Kn5Surface& surface : Kn5Importer::ParseSurfaces(text))
+        {
+            surfaces.push_back(std::move(surface));
+        }
+    };
+
+    // A layout's own data folder first: models_<layout>.ini reads <track>/<layout>/data, which is
+    // where multi-layout tracks (ks_nordschleife) keep their only surfaces.ini.
+    if (IsLayoutPath(source))
+    {
+        const std::string stem = source.stem().string();
+        if (stem.size() > 7)
+        {
+            append(trackDirectory / stem.substr(7) / "data" / "surfaces.ini");
+        }
+    }
+    append(trackDirectory / "data" / "surfaces.ini");
+    std::error_code ec;
+    std::filesystem::path ancestor = std::filesystem::absolute(trackDirectory, ec);
+    for (int level = 0; !ec && level < 6 && ancestor.has_parent_path() && ancestor.parent_path() != ancestor; ++level)
+    {
+        const std::filesystem::path system = ancestor / "system" / "data" / "surfaces.ini";
+        if (std::filesystem::is_regular_file(system, ec))
+        {
+            append(system);
+            break;
+        }
+        ancestor = ancestor.parent_path();
+    }
+    for (const Kn5Surface& builtin : {Kn5Surface{"ROAD", 1.0f}, Kn5Surface{"GRASS", 0.6f}, Kn5Surface{"KERB", 0.92f}, Kn5Surface{"SAND", 0.8f}})
+    {
+        surfaces.push_back(builtin);
+    }
+    return surfaces;
+}
+
 std::vector<Kn5LayoutModel> ReadLayout(const std::filesystem::path& layoutPath)
 {
     std::vector<Kn5LayoutModel> models;
@@ -2924,7 +2932,7 @@ Kn5ImportReport ConvertToGltf(
         }
     }
 
-    GltfBuilder builder(textureDirectory, options, LoadTrackSurfaces(source.parent_path()));
+    GltfBuilder builder(textureDirectory, options, Kn5Importer::LoadTrackSurfaces(source));
     Kn5ImportReport& report = builder.Report();
     // A car is a lone kn5 beside its data (data.acd, or an unpacked data/car.ini).
     std::error_code carEc;
