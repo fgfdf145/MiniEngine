@@ -128,7 +128,7 @@ struct ScenePassFrameContext
     // Linear Rec.709 to linear Rec.709, applied before tone mapping (see WhiteBalanceMatrix).
     glm::mat3 whiteBalance{1.0f};
     // The display output and calibration (display_calibration.h). display.hdr: the swapchain is
-    // HDR10, so the tone mapping pass uses GT7's HDR curve for display.maxLuminance and writes
+    // HDR10, so the tone mapping pass uses GT7's HDR curve for display.scenePeakNits and writes
     // display-linear values relative to display.uiWhiteNits.
     DisplayOutput display;
     // What the calibration screen shows in place of the scene (the viewport only).

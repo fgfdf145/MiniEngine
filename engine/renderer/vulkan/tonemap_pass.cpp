@@ -156,7 +156,7 @@ void VulkanTonemapPass::Record(
     TonemapPushConstants constants{};
     constants.gbufferView = static_cast<uint32_t>(frame.gbufferView);
     constants.hdrOutput = frame.display.hdr ? 1u : 0u;
-    constants.peakNits = frame.display.maxLuminance;
+    constants.peakNits = frame.display.scenePeakNits;
     constants.toneOperator = ToneOperator(frame);
     for (int column = 0; column < 3; ++column)
     {

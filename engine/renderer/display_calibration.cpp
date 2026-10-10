@@ -34,6 +34,8 @@ DisplayOutput ResolveDisplayOutput(const DisplaySettings& settings, const Displa
     output.maxLuminance = std::clamp(output.maxLuminance, kMinCalibrationPeakNits, kMaxCalibrationPeakNits);
     output.maxFullFrameLuminance = std::clamp(output.maxFullFrameLuminance, kMinCalibrationPeakNits, kMaxCalibrationPeakNits);
     output.minLuminance = std::clamp(output.minLuminance, 0.0f, kMaxCalibrationBlackNits);
+    output.scenePeakNits =
+        settings.scenePeakNits > 0.0f ? std::clamp(settings.scenePeakNits, kMinCalibrationPeakNits, kMaxCalibrationPeakNits) : output.maxLuminance;
 
     if (settings.uiWhiteNits > 0.0f)
     {

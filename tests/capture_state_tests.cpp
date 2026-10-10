@@ -62,6 +62,7 @@ void StateRoundTrips()
     written.renderDebug.display.maxLuminance = 640.0f;
     written.renderDebug.display.minLuminance = 0.025f;
     written.renderDebug.display.paperWhiteNits = 300.0f;
+    written.renderDebug.display.scenePeakNits = 900.0f;
     const std::filesystem::path path = folder / "viewport_1.state.yaml";
     CaptureStateService::Write(path, written);
 

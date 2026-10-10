@@ -2094,7 +2094,7 @@ std::unique_ptr<VulkanRenderer::PreparedView> VulkanRenderer::PrepareView(
     frame.glareImageHeight = wholeExtent.IsValid() ? wholeExtent.height : outputExtent.height;
     frame.glareFNumber = GlareFNumberFromEv100(
         camera.exposureEv100,
-        frame.display.hdr ? frame.display.maxLuminance * kGlareSdrPeakNits / frame.display.paperWhiteNits : kGlareSdrPeakNits);
+        frame.display.hdr ? frame.display.scenePeakNits * kGlareSdrPeakNits / frame.display.paperWhiteNits : kGlareSdrPeakNits);
     frame.taaHistory = view.taaHistory.Advance(taaEnabled);
     frame.taaHistoryScale = TaaHistoryScale(frame.taaHistory.valid, preExposure, view.taaHistoryPreExposure);
     if (dlssEnabled)
@@ -2279,12 +2279,13 @@ void VulkanRenderer::CreateSwapchainResources()
     {
         const DisplayOutput display = ResolveDisplayOutput(State().renderDebug.display, m_displayReport, true);
         LOG_INFO(
-            "HDR output: peak {:.0f} cd/m^2, full frame {:.0f}, black {:.4f}, UI white {:.0f}, paper white {:.0f} ({})",
+            "HDR output: peak {:.0f} cd/m^2, full frame {:.0f}, black {:.4f}, UI white {:.0f}, paper white {:.0f}, scene peak {:.0f} ({})",
             display.maxLuminance,
             display.maxFullFrameLuminance,
             display.minLuminance,
             display.uiWhiteNits,
             display.paperWhiteNits,
+            display.scenePeakNits,
             State().renderDebug.display.calibrated ? "calibrated" : "the display's figures");
     }
     // The swapchain's images as NVRHI textures, which ImGui draws into (RecordEditorLayer).

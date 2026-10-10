@@ -78,6 +78,7 @@ void VisitRenderDebugFields(RenderDebugSettings& settings, Visitor&& visit)
     visit("display", "min_luminance", display.minLuminance);
     visit("display", "ui_white_nits", display.uiWhiteNits);
     visit("display", "paper_white_nits", display.paperWhiteNits);
+    visit("display", "scene_peak_nits", display.scenePeakNits);
     visit("", "toon_exposure_ev", settings.toonExposureEv);
     visit("", "khronos_reference", settings.khronosReference);
     visit("", "render_scale", settings.renderScale);

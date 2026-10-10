@@ -21,7 +21,11 @@ enum class CalibrationPattern : uint32_t
     // Black with a centred square of 10 % of the screen at the level, the ring at 10 000 inside it.
     HdrWindow = 2,
     // The whole screen at the level, the ring at 0 cd/m^2.
-    HdrBlack = 3
+    HdrBlack = 3,
+    // Gran Turismo's own peak estimate (Practical HDR and WCG in GT Sport, 2018): black with the 10 %
+    // window filled by a checkerboard of 10 000 cd/m^2 cells and cells at the level; where the
+    // checkerboard vanishes is the brightest the display shows a scene's highlight.
+    GtPeak = 4
 };
 
 // The calibration the user keeps (saved with the render settings, group "display"). Whether HDR is
@@ -33,7 +37,7 @@ struct DisplaySettings
     // Whether the luminances below were set on the calibration screen. Until then the output uses
     // what the display reports.
     bool calibrated = false;
-    // In cd/m^2: where the display clips a small highlight (GT7's HDR curve peaks here), where it
+    // In cd/m^2: where the display clips a small highlight (the PS5's 10 % window), where it
     // clips a full white screen, and the darkest level it still tells from black.
     float maxLuminance = 1000.0f;
     float maxFullFrameLuminance = 1000.0f;
@@ -44,6 +48,9 @@ struct DisplaySettings
     // the UI white, so the scene's midtones are as bright as in SDR on this desktop and only the
     // highlights go further. 250 is GT7's absolute scale.
     float paperWhiteNits = 0.0f;
+    // The brightest a highlight in the scene gets, in cd/m^2 (GT7's HDR curve peaks here), from
+    // Gran Turismo's checkerboard step; 0 follows maxLuminance (the PS5's 10 % window).
+    float scenePeakNits = 0.0f;
 };
 
 // What the calibration screen shows this frame (never saved).
@@ -80,6 +87,8 @@ struct DisplayOutput
     float uiWhiteNits = 203.0f;
     // The scene's paper white in HDR (see DisplaySettings::paperWhiteNits).
     float paperWhiteNits = 250.0f;
+    // Where GT7's HDR curve peaks (see DisplaySettings::scenePeakNits).
+    float scenePeakNits = 1000.0f;
 };
 
 // BT.2408's graphics white: UI white when nothing says better.

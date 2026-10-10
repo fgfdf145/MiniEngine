@@ -100,7 +100,32 @@ void PatternsShowTheLevel()
     }
     const float share = static_cast<float>(lit) / static_cast<float>(total);
     Require(std::abs(share - 0.1f) < 0.005f, "the window covers 10 % of the screen, got " + std::to_string(share));
-    Require(static_cast<uint32_t>(CalibrationPattern::HdrBlack) == shader::CALIBRATION_HDR_BLACK, "the pattern numbers match the shader's");
+    Require(static_cast<uint32_t>(CalibrationPattern::HdrBlack) == shader::CALIBRATION_HDR_BLACK &&
+                static_cast<uint32_t>(CalibrationPattern::GtPeak) == shader::CALIBRATION_GT_PEAK,
+            "the pattern numbers match the shader's");
+
+    // Gran Turismo's checkerboard: inside the same window, half its cells at 10 000 cd/m^2 and half
+    // at the level, neighbours different; black outside.
+    int bright = 0;
+    int atLevel = 0;
+    for (int y = 0; y < 300; ++y)
+    {
+        for (int x = 0; x < 533; ++x)
+        {
+            const glm::vec2 p((static_cast<float>(x) + 0.5f) / 533.0f * aspect - 0.5f * aspect, (static_cast<float>(y) + 0.5f) / 300.0f - 0.5f);
+            const float nits = CalibrationHdrNits(shader::CALIBRATION_GT_PEAK, 600.0f, p, aspect);
+            bright += nits == shader::kCalibrationRingNits ? 1 : 0;
+            atLevel += nits == 600.0f ? 1 : 0;
+        }
+    }
+    const float brightShare = static_cast<float>(bright) / static_cast<float>(bright + atLevel);
+    Require(std::abs(static_cast<float>(bright + atLevel) / static_cast<float>(total) - 0.1f) < 0.005f, "the checkerboard fills the 10 % window");
+    Require(std::abs(brightShare - 0.5f) < 0.03f, "half the checkerboard is the fixed white, got " + std::to_string(brightShare));
+    const float halfSide = 0.5f * std::sqrt(0.1f * aspect);
+    const float cell = halfSide / 4.0f;
+    Require(CalibrationHdrNits(shader::CALIBRATION_GT_PEAK, 600.0f, glm::vec2(-halfSide + 0.5f * cell), aspect) !=
+                CalibrationHdrNits(shader::CALIBRATION_GT_PEAK, 600.0f, glm::vec2(-halfSide + 1.5f * cell, -halfSide + 0.5f * cell), aspect),
+            "neighbouring cells differ");
 }
 
 // Until a calibration, the display's figures; after, the calibration's; UI white from the OS unless
@@ -121,6 +146,7 @@ void ResolveUsesCalibrationThenReport()
     Require(output.uiWhiteNits == 480.0f, "UI white is Windows' SDR content brightness");
     Require(output.paperWhiteNits == 480.0f, "the paper white follows the UI white");
     Require(std::abs(HdrPaperWhiteScale(output) - 480.0f / 250.0f) < 1e-6f, "the scene is lifted from GT7's 250 to it");
+    Require(output.scenePeakNits == 600.0f, "the scene's peak follows the display's");
 
     settings.calibrated = true;
     settings.maxLuminance = 750.0f;
@@ -129,6 +155,10 @@ void ResolveUsesCalibrationThenReport()
     settings.uiWhiteNits = 250.0f;
     output = ResolveDisplayOutput(settings, report, true);
     Require(output.maxLuminance == 750.0f && output.maxFullFrameLuminance == 350.0f && output.minLuminance == 0.02f, "the calibration");
+    Require(output.scenePeakNits == 750.0f, "the scene's peak follows the calibrated 10 % window");
+    settings.scenePeakNits = 1400.0f;
+    Require(ResolveDisplayOutput(settings, report, true).scenePeakNits == 1400.0f, "Gran Turismo's checkerboard sets the scene's peak");
+    settings.scenePeakNits = 0.0f;
     Require(output.uiWhiteNits == 250.0f, "the override");
     Require(output.paperWhiteNits == 250.0f, "the paper white follows the overridden UI white");
     settings.uiWhiteNits = 0.0f;

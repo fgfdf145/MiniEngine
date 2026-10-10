@@ -29,6 +29,7 @@ LevelRange RangeOf(HdrCalibrationWindow::Step step)
     {
     case Step::FullFrame:
     case Step::Window:
+    case Step::GtPeak:
         return {PqFromNits(kMinCalibrationPeakNits), PqFromNits(kMaxCalibrationPeakNits), 96};
     case Step::Black:
         return {0.0f, PqFromNits(kMaxCalibrationBlackNits), 64};
@@ -48,6 +49,8 @@ float* LevelOf(HdrCalibrationWindow::Step step, DisplaySettings& settings)
         return &settings.maxLuminance;
     case Step::Black:
         return &settings.minLuminance;
+    case Step::GtPeak:
+        return &settings.scenePeakNits;
     default:
         return nullptr;
     }
@@ -64,6 +67,8 @@ CalibrationPattern PatternOf(HdrCalibrationWindow::Step step)
         return CalibrationPattern::HdrWindow;
     case Step::Black:
         return CalibrationPattern::HdrBlack;
+    case Step::GtPeak:
+        return CalibrationPattern::GtPeak;
     default:
         return CalibrationPattern::None;
     }
@@ -77,13 +82,15 @@ const char* TitleOf(HdrCalibrationWindow::Step step)
     case Step::Start:
         return "HDR Calibration";
     case Step::FullFrame:
-        return "1 / 4  Maximum luminance (full screen)";
+        return "1 / 5  Maximum luminance (full screen)";
     case Step::Window:
-        return "2 / 4  Maximum luminance (10 % window)";
+        return "2 / 5  Maximum luminance (10 % window)";
     case Step::Black:
-        return "3 / 4  Minimum luminance (black)";
+        return "3 / 5  Minimum luminance (black)";
+    case Step::GtPeak:
+        return "4 / 5  Scene peak brightness (Gran Turismo)";
     case Step::Review:
-        return "4 / 4  Paper white and review";
+        return "5 / 5  Paper white and review";
     }
     return "";
 }
@@ -100,6 +107,9 @@ const char* InstructionOf(HdrCalibrationWindow::Step step)
     case Step::Black:
         return "Lower the level until the ring just disappears into the background. Darker than this, "
                "the display shows no difference from black.";
+    case Step::GtPeak:
+        return "Gran Turismo's own check: raise the level until the checkerboard is almost invisible. "
+               "It sets the brightest a highlight in the scene (sun on paint, lamps, sky) gets.";
     case Step::Review:
         return "The scene with the calibration. Paper white sets how bright the scene's midtones are; "
                "following the UI white keeps them as bright as in SDR.";
@@ -125,6 +135,8 @@ HdrCalibrationWindow::Step HdrCalibrationWindow::NextStep(Step step)
     case Step::Window:
         return Step::Black;
     case Step::Black:
+        return Step::GtPeak;
+    case Step::GtPeak:
     case Step::Review:
         return Step::Review;
     }
@@ -142,8 +154,10 @@ HdrCalibrationWindow::Step HdrCalibrationWindow::PreviousStep(Step step)
         return Step::FullFrame;
     case Step::Black:
         return Step::Window;
-    case Step::Review:
+    case Step::GtPeak:
         return Step::Black;
+    case Step::Review:
+        return Step::GtPeak;
     }
     return Step::Start;
 }
@@ -221,6 +235,11 @@ void HdrCalibrationWindow::EnterStep(EditorContext& context, Step step)
         m_work.maxLuminance = output.maxLuminance;
         m_work.maxFullFrameLuminance = output.maxFullFrameLuminance;
         m_work.minLuminance = output.minLuminance;
+    }
+    // The scene's peak starts from the 10 % window's until the checkerboard has set its own.
+    if (step == Step::GtPeak && m_work.scenePeakNits <= 0.0f)
+    {
+        m_work.scenePeakNits = m_work.maxLuminance;
     }
     if (step == Step::FullFrame || step == Step::Window || step == Step::Black)
     {
@@ -313,7 +332,8 @@ void HdrCalibrationWindow::DrawStart(EditorContext& context)
     }
     ImGui::Spacing();
     ImGui::TextWrapped(
-        "Next: the three luminance screens of the PS5's Adjust HDR, then the scene's paper white. "
+        "Next: the three luminance screens of the PS5's Adjust HDR, Gran Turismo's checkerboard for the "
+        "scene's peak, then the scene's paper white. "
         "Sit facing the middle of the screen, in the light you play in. Escape cancels.");
 }
 
@@ -408,6 +428,7 @@ void HdrCalibrationWindow::DrawReview(EditorContext& context)
         row("Maximum luminance (full screen)", "%.0f cd/m^2", m_work.maxFullFrameLuminance);
         row("Maximum luminance (10 % window)", "%.0f cd/m^2", m_work.maxLuminance);
         row("Minimum luminance", "%.3f cd/m^2", m_work.minLuminance);
+        row("Scene peak (Gran Turismo)", "%.0f cd/m^2", output.scenePeakNits);
         row("UI white", "%.0f cd/m^2", output.uiWhiteNits);
         row("Paper white", "%.0f cd/m^2", output.paperWhiteNits);
         ImGui::EndTable();

@@ -41,13 +41,33 @@ D3D12 后端合入 main（c3a25f2）后已经能建 HDR10 交换链（`R10G10B10
 6. **跟随显示器**：开着 HDR 输出时，显示器的 HDR 状态变了（Windows 开关、窗口拖到别的显示器）就重建交换链。
 7. **校准界面**（`HdrCalibrationWindow`，Render > HDR Calibration… 和 Graphics Debug 的按钮）：仿 PS5 调整 HDR，视口全屏，
    图案由色调映射 pass 代替场景画出，绝对 cd/m²：
-   - 1/4 全屏最大亮度：整屏是试验亮度，中间一个 10000 cd/m² 的圆环，调高到圆环刚好消失；
-   - 2/4 10% 窗口最大亮度：黑底，中间 10% 面积的方块是试验亮度，圆环同上；
-   - 3/4 最小亮度：整屏试验亮度，圆环 0 cd/m²，调低到圆环刚好融进背景；
-   - 4/4 纸白和总览：实时场景，纸白可跟随 UI 白或手调。
+   - 1/5 全屏最大亮度：整屏是试验亮度，中间一个 10000 cd/m² 的圆环，调高到圆环刚好消失；
+   - 2/5 10% 窗口最大亮度：黑底，中间 10% 面积的方块是试验亮度，圆环同上；
+   - 3/5 最小亮度：整屏试验亮度，圆环 0 cd/m²，调低到圆环刚好融进背景；
+   - 4/5 场景峰值（GT 自己的标定，见下）；
+   - 5/5 纸白和总览：实时场景，纸白可跟随 UI 白或手调。
    试验亮度按 PQ 等分（左右方向键一格），Enter 下一步，Backspace 上一步，Esc 取消（恢复原值），Finish 保存。
 8. **开关**：Graphics Debug 的 Output 段（HDR output、显示器报告、实际使用值、UI 白/纸白、校准按钮、“用显示器自己的数值”）
    和 Render > HDR Output。Vulkan 上开 HDR 时提示 D3D12 更平滑。
+
+### GT 场景峰值标定（2026-10-10 追加）
+
+用户要求：“GT 自己的峰值标定，就是环境里物体的亮度设置”。做法来自 Polyphony 的 *Practical HDR and Wide Color Techniques
+in Gran Turismo SPORT*（SIGGRAPH Asia 2018，桌面 PracticalHDRandWCGinGTS_20181222.pdf，“Our Calibration Process”）：
+屏幕的一部分是固定 10000 nits 的信号（显示器只能出它自己的峰值），旁边是玩家调的信号，调到两者分不出来，玩家调的那个
+已知亮度就是估出来的峰值。只用屏幕的一部分，因为全屏峰值画面在游戏里很少见（显示器的 ABL）。
+
+- 图案 `CalibrationPattern::GtPeak`（4）：黑底，和第 2 步同样的 10% 面积方块，里面 8×8 棋盘格，一半格子 10000 cd/m²、一半试验
+  亮度。调高到棋盘格几乎看不出。
+- 设置 `display.scene_peak_nits`（`DisplaySettings::scenePeakNits`，0 = 跟随 10% 窗口峰值 maxLuminance），解析到
+  `DisplayOutput::scenePeakNits`：GT7 HDR 曲线的峰值和眩光余量（峰值 / 纸白）用它；HDR 元数据仍用显示器的 maxLuminance。
+  进入这一步时若还是 0，从 10% 窗口的值开始。
+- Graphics Debug 的 Output 段：“Scene peak follows display peak” + 手调。`--display-pattern 4,LEVEL` 可直接显示图案。
+- 论文自己也说这个估计在显示器做色调映射（非 HGIG）时偏高（表里 400 实测估成 1100），所以 PS5 的三步保留，场景峰值单独存。
+
+验证：`miniengine.display_calibration`（棋盘格占 10%、两种格子各半、相邻格不同、设置合成）、`miniengine.hdr_calibration_window`
+（第 4 步、从 10% 窗口值起步、只改场景峰值、Finish 保存）；D3D12 强制 HDR10 抓窗口：`--display-pattern 4,300` 的格子 PQ 码
+255（10000）和 159（300 cd/m²）；日志 “scene peak 600”（跟随）/ “1500”（设置）。
 
 ### 顺带修的 D3D12 问题
 

@@ -7,8 +7,8 @@ namespace me
 {
 
 // Graphics Debug > HDR Calibration and Render > HDR Calibration: the PS5's Adjust HDR (maximum
-// full-frame and 10 % window luminance, black level), then the scene's paper white over the live
-// scene (docs/design/2026-10-10-hdr-calibration-design.md). The viewport goes fullscreen and shows
+// full-frame and 10 % window luminance, black level), Gran Turismo's checkerboard for the scene's
+// peak, then the scene's paper white over the live scene (docs/design/2026-10-10-hdr-calibration-design.md). The viewport goes fullscreen and shows
 // each step's pattern; this window sits over it at the bottom.
 class HdrCalibrationWindow final : public EditorWindow
 {
@@ -19,6 +19,7 @@ class HdrCalibrationWindow final : public EditorWindow
         FullFrame,
         Window,
         Black,
+        GtPeak,
         Review
     };
 

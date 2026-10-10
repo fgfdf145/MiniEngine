@@ -7,6 +7,7 @@ static const uint CALIBRATION_NONE = 0u;
 static const uint CALIBRATION_HDR_FULL_FRAME = 1u;
 static const uint CALIBRATION_HDR_WINDOW = 2u;
 static const uint CALIBRATION_HDR_BLACK = 3u;
+static const uint CALIBRATION_GT_PEAK = 4u;
 
 // The ring the patterns hide: at 10 000 cd/m^2 (clipped by every display) or at 0.
 static const float kCalibrationRingNits = 10000.0f;
@@ -25,13 +26,20 @@ float CalibrationHdrNits(uint pattern, float level, float2 p, float aspect)
     {
         return CalibrationRing(p) ? kCalibrationRingNits : level;
     }
-    if (pattern == CALIBRATION_HDR_WINDOW)
+    if (pattern == CALIBRATION_HDR_WINDOW || pattern == CALIBRATION_GT_PEAK)
     {
         // A square of 10 % of the screen's area.
         float halfSide = 0.5f * sqrt(0.1f * aspect);
         if (abs(p.x) > halfSide || abs(p.y) > halfSide)
         {
             return 0.0f;
+        }
+        if (pattern == CALIBRATION_GT_PEAK)
+        {
+            // An 8 x 8 checkerboard: the display's clipped 10 000 cd/m^2 against the level, so it
+            // vanishes where the level reaches what the display really shows.
+            float2 cell = floor((p + float2(halfSide)) * (4.0f / halfSide));
+            return (int(cell.x) + int(cell.y)) % 2 == 0 ? kCalibrationRingNits : level;
         }
         return CalibrationRing(p) ? kCalibrationRingNits : level;
     }

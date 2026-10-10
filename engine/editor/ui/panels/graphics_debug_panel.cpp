@@ -94,11 +94,12 @@ void DrawHdrOutput(EditorContext& context, RenderDebugSettings& debug)
     if (output.hdr)
     {
         ImGui::TextDisabled(
-            "HDR10: peak %.0f, black %.4f, UI white %.0f, paper white %.0f cd/m^2 (%s)",
+            "HDR10: peak %.0f, black %.4f, UI white %.0f, paper white %.0f, scene peak %.0f cd/m^2 (%s)",
             output.maxLuminance,
             output.minLuminance,
             output.uiWhiteNits,
             output.paperWhiteNits,
+            output.scenePeakNits,
             debug.display.calibrated ? "calibrated" : "the display's figures");
     }
     else if (debug.hdrOutput)
@@ -138,6 +139,20 @@ void DrawHdrOutput(EditorContext& context, RenderDebugSettings& debug)
     if (!followUi)
     {
         DragFloatInRange("Paper white (cd/m^2)", &debug.display.paperWhiteNits, kMinUiWhiteNits, kMaxUiWhiteNits, "%.0f");
+    }
+    bool followPeak = debug.display.scenePeakNits <= 0.0f;
+    if (ImGui::Checkbox("Scene peak follows display peak", &followPeak))
+    {
+        debug.display.scenePeakNits = followPeak ? 0.0f : output.scenePeakNits;
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("The brightest a highlight in the scene gets (GT7's HDR curve peaks here). The calibration's\n"
+                          "Gran Turismo checkerboard sets it; following uses the display's 10 %% window peak.");
+    }
+    if (!followPeak)
+    {
+        DragFloatInRange("Scene peak (cd/m^2)", &debug.display.scenePeakNits, kMinCalibrationPeakNits, kMaxCalibrationPeakNits, "%.0f");
     }
     ImGui::EndDisabled();
 

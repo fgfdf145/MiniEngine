@@ -235,10 +235,10 @@ EditorApplicationOptions EditorApplication::ParseArgs(int argc, char** argv)
         if (argument == "--display-pattern")
         {
             const std::array<float, 2> pattern = ParseFloatList<2>(ReadRequiredArgument(i, argc, argv, argument), argument);
-            if (pattern[0] < 0.0f || pattern[0] > static_cast<float>(CalibrationPattern::HdrBlack))
+            if (pattern[0] < 0.0f || pattern[0] > static_cast<float>(CalibrationPattern::GtPeak))
             {
                 throw std::runtime_error("--display-pattern requires a pattern number from 0 to " +
-                                         std::to_string(static_cast<uint32_t>(CalibrationPattern::HdrBlack)) + " and a level");
+                                         std::to_string(static_cast<uint32_t>(CalibrationPattern::GtPeak)) + " and a level");
             }
             options.displayPattern = DisplayCalibrationView{static_cast<CalibrationPattern>(static_cast<uint32_t>(pattern[0])), pattern[1]};
             continue;

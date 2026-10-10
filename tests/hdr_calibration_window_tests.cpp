@@ -138,6 +138,13 @@ void TestStepsAndCancel()
     Require(fixture.Pattern() == CalibrationPattern::HdrBlack, "then black");
     fixture.Press(ImGuiKey_LeftArrow);
     Require(fixture.state.renderDebug.display.minLuminance < 0.005f, "the left arrow lowers the black level");
+    fixture.Press(ImGuiKey_Enter, "hdr_calibration_gt_peak.png");
+    Require(fixture.Pattern() == CalibrationPattern::GtPeak, "then Gran Turismo's checkerboard");
+    Require(fixture.state.renderDebug.display.scenePeakNits == 600.0f, "the scene's peak starts from the 10 % window's");
+    fixture.Press(ImGuiKey_RightArrow);
+    Require(fixture.state.renderDebug.display.scenePeakNits > 600.0f, "the right arrow raises the scene's peak");
+    Require(fixture.state.renderDebug.display.maxLuminance == 600.0f, "without touching the display's");
+    fixture.Press(ImGuiKey_Backspace);
     fixture.Press(ImGuiKey_Backspace);
     Require(fixture.Pattern() == CalibrationPattern::HdrWindow, "Backspace goes back a step");
 
@@ -162,6 +169,8 @@ void TestFinishKeepsTheCalibration()
     fixture.Press(ImGuiKey_Enter);
     fixture.Press(ImGuiKey_Enter);
     fixture.Press(ImGuiKey_Enter);
+    fixture.Press(ImGuiKey_RightArrow);
+    fixture.Press(ImGuiKey_Enter);
     // The window sizes itself to the new step a frame later.
     fixture.Frame(ImGuiKey_None, "hdr_calibration_review.png");
     Require(fixture.Pattern() == CalibrationPattern::None, "the review shows the scene");
@@ -171,6 +180,7 @@ void TestFinishKeepsTheCalibration()
     const DisplaySettings& kept = fixture.state.renderDebug.display;
     Require(kept.calibrated && kept.maxFullFrameLuminance < 600.0f, "Finish keeps the calibration");
     Require(kept.maxLuminance == 600.0f && kept.minLuminance == 0.005f, "untouched levels keep their starting values");
+    Require(kept.scenePeakNits > 600.0f, "Finish keeps the scene's peak");
     Require(fixture.Pattern() == CalibrationPattern::None && !fixture.state.commands.viewportFullscreen, "back to the editor");
 }
 
