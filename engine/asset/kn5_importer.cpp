@@ -6,6 +6,7 @@
 #include "texture_loader.h"
 #include "tyre_library.h"
 
+#include <engine/audio/fmod_bank.h>
 #include <engine/core/log/log.h>
 #include <engine/core/text/ascii.h>
 #include <engine/core/threading/task_system.h>
@@ -3025,6 +3026,22 @@ Kn5ImportReport ConvertToGltf(
         {
             report.carDataProblem = problem;
             LOG_WARN("kn5 '{}': the car's data was not imported: {}", source.filename().string(), problem);
+        }
+
+        // Its sounds: the FMOD bank under sfx/, as WAVs and a .sounds.yaml beside the glTF.
+        if (const std::filesystem::path bank = FindAcCarSoundBank(source); !bank.empty())
+        {
+            std::string soundError;
+            if (ImportFmodBank(bank, FindAcSoundGuids(source), SoundBankPathForModel(gltfPath), soundError))
+            {
+                report.carSounds = true;
+                LOG_INFO("kn5 '{}': sounds imported from '{}'", source.filename().string(), bank.filename().string());
+            }
+            else
+            {
+                report.carSoundsProblem = soundError;
+                LOG_WARN("kn5 '{}': the car's sounds were not imported: {}", source.filename().string(), soundError);
+            }
         }
     }
 

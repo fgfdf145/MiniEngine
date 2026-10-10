@@ -2721,6 +2721,64 @@ add_test(
 
 set_target_properties(miniengine_audio_engine_tests PROPERTIES FOLDER "Tests")
 
+# A car's FMOD sounds: the bank reader against Assetto Corsa's R34 (skipped without the game; or set
+# MINIENGINE_AC_ROOT), the .sounds.yaml round trip and the event player on synthetic sounds.
+add_executable(miniengine_sound_bank_tests
+    sound_bank_tests.cpp
+)
+miniengine_group_target_sources(miniengine_sound_bank_tests)
+miniengine_enable_utf8_code_page(miniengine_sound_bank_tests)
+
+target_link_libraries(miniengine_sound_bank_tests
+    PRIVATE
+        engine_audio
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_sound_bank_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_sound_bank_tests>
+            $<TARGET_FILE_DIR:miniengine_sound_bank_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.sound_bank
+    COMMAND miniengine_sound_bank_tests
+)
+
+set_target_properties(miniengine_sound_bank_tests PROPERTIES FOLDER "Tests")
+
+# The drive's car sounds: telemetry to the FMOD events' parameters and triggers, and the R34's bank
+# playing through VehicleSounds (skipped without Assetto Corsa).
+add_executable(miniengine_vehicle_sounds_tests
+    vehicle_sounds_tests.cpp
+)
+miniengine_group_target_sources(miniengine_vehicle_sounds_tests)
+miniengine_enable_utf8_code_page(miniengine_vehicle_sounds_tests)
+
+target_link_libraries(miniengine_vehicle_sounds_tests
+    PRIVATE
+        engine_editor
+)
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_vehicle_sounds_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_vehicle_sounds_tests>
+            $<TARGET_FILE_DIR:miniengine_vehicle_sounds_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.vehicle_sounds
+    COMMAND miniengine_vehicle_sounds_tests
+)
+
+set_target_properties(miniengine_vehicle_sounds_tests PROPERTIES FOLDER "Tests")
+
 # The DualSense's haptic waveforms. With --device it plays them on a DualSense plugged in by USB, to feel
 # by hand; the test itself needs no pad.
 add_executable(miniengine_haptics_synth_tests

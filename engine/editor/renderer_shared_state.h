@@ -216,6 +216,12 @@ struct RendererSharedState
     // Copied from the editor every frame in ApplyUiActions and read by the backend when it builds
     // the frame. The editor's copy is what the engine settings file saves (EngineViewSettings).
     RenderDebugSettings renderDebug;
+    // The engine's sound, made by the application; null when there is no audio output (--no-audio,
+    // or no playback device). The listener follows the camera (TickSharedFrame). Declared before
+    // vehicleDrive, whose car sounds it must outlive.
+    std::unique_ptr<AudioEngine> audio;
+    // What the Preferences window says of it: the device and format, or why there is none.
+    std::string audioStatus;
     // Play mode: the model being driven as a car, if any (VehicleDriveService).
     VehicleDriveState vehicleDrive;
     // The selected car on the live seven-post rig, if it is running (VehicleRigService).
@@ -231,11 +237,6 @@ struct RendererSharedState
     // animation, time of day and physics. MINIENGINE_FIXED_FRAME_SECONDS, --deterministic and the control
     // channel's deterministic command set it.
     std::optional<float> fixedFrameSeconds;
-    // The engine's sound, made by the application; null when there is no audio output (--no-audio,
-    // or no playback device). The listener follows the camera (TickSharedFrame).
-    std::unique_ptr<AudioEngine> audio;
-    // What the Preferences window says of it: the device and format, or why there is none.
-    std::string audioStatus;
     // The priority and CPUs the process runs at (ApplyProcessAllocation), for the Preferences window.
     std::string processStatus;
 

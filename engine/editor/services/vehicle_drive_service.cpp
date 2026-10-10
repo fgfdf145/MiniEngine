@@ -3,8 +3,10 @@
 #include <engine/asset/ac_car_data.h>
 #include <engine/asset/model_cache.h>
 #include <engine/asset/tyre_library.h>
+#include <engine/audio/audio_engine.h>
 #include <engine/core/input/input.h>
 #include <engine/core/log/log.h>
+#include <engine/core/paths/engine_paths.h>
 #include <engine/editor/renderer_shared_state.h>
 #include <engine/editor/services/vehicle_haptics.h>
 #include <engine/logic/editor_world.h>
@@ -449,6 +451,25 @@ void Start(RendererSharedState& state, entt::entity entity, const VehicleSetting
     session->absOn = settings.useAbs;
     session->tractionControlOn = settings.useTractionControl;
     session->turbo = !settings.turbos.empty();
+    if (AudioEngine* const audio = state.audio.get())
+    {
+        // The sounds imported with the car (Assetto Corsa's FMOD bank), when it has them.
+        const std::filesystem::path bankPath = SoundBankPathForModel(EnginePaths::ResolveProjectPath(world.GetModel(entity).sourcePath));
+        std::error_code existsError;
+        if (std::filesystem::is_regular_file(bankPath, existsError))
+        {
+            std::string soundError;
+            session->sounds = VehicleSounds::Load(*audio, bankPath, soundError);
+            if (session->sounds)
+            {
+                LOG_INFO("'{}': sounds from '{}': {}", session->name, bankPath.filename().string(), session->sounds->Describe());
+            }
+            else
+            {
+                LOG_WARN("'{}': its sounds could not be loaded: {}", session->name, soundError);
+            }
+        }
+    }
     if (carSpec.has_value())
     {
         // The HUD's compounds: the left wheels' tyres.
@@ -1182,6 +1203,26 @@ static void UpdateGamepadFeedback(RendererSharedState& state, VehicleDriveSessio
     input.SetGamepadFeedback(player, feedback);
 }
 
+// The car's own sounds (its .sounds.yaml), heard from the camera placed this frame.
+static void UpdateSounds(RendererSharedState& state, VehicleDriveSession& session, float deltaSeconds)
+{
+    if (!session.sounds)
+    {
+        return;
+    }
+    VehicleSoundInput input;
+    input.telemetry = ShownTelemetry(session);
+    input.wheels = ShownWheels(session);
+    input.body = ShownPose(session);
+    input.throttle = std::max(session.controls.throttle, 0.0f);
+    input.brake = session.controls.brake;
+    input.maxRpm = session.engineMaxRpm;
+    input.cockpit = state.vehicleDrive.cameraView == VehicleCameraView::Cockpit;
+    input.listener = state.camera.position;
+    input.silent = session.paused;
+    session.sounds->Update(input, session.paused ? 0.0f : deltaSeconds);
+}
+
 bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
 {
     VehicleDriveSession* session = state.vehicleDrive.session.get();
@@ -1440,6 +1481,7 @@ bool Tick(RendererSharedState& state, float deltaSeconds, bool keyboardCaptured)
             session->orbit, lookHeld, lookYaw, lookPitch, chase ? camera.lookRecenterRate : camera.headLookRecenterRate, deltaSeconds);
         PlaceCamera(state, *session, pose, deltaSeconds);
     }
+    UpdateSounds(state, *session, deltaSeconds);
     return true;
 }
 

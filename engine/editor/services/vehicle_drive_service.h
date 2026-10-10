@@ -6,6 +6,7 @@
 #include <engine/editor/services/vehicle_gear_shift.h>
 #include <engine/editor/services/vehicle_haptics.h>
 #include <engine/editor/services/vehicle_path_follower.h>
+#include <engine/editor/services/vehicle_sounds.h>
 #include <engine/editor/services/vehicle_steering_assist.h>
 #include <engine/physics/physics_world.h>
 #include <engine/physics/vehicle_settings.h>
@@ -303,6 +304,9 @@ struct VehicleDriveSession
     std::unique_ptr<GamepadHaptics> audioHaptics;
     bool audioHapticsTried = false;
     VehicleAudioHapticsState audioHapticsState;
+    // The car's engine, gears, tyres and wind from its imported sound bank; null without one or without
+    // an audio output.
+    std::unique_ptr<VehicleSounds> sounds;
     // The engine's beat on the actuators follows its firing: AC's data names no cylinder count, and the
     // R34's RB26 has six.
     int engineCylinders = 6;

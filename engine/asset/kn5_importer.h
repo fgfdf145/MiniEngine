@@ -80,6 +80,9 @@ struct Kn5ImportReport
     std::string carData;
     // Why a data.acd next to the kn5 was not imported (a renamed folder does not decrypt).
     std::string carDataProblem;
+    // The car's FMOD sound bank was imported (WAVs under sounds/ and <name>.sounds.yaml), or why not.
+    bool carSounds = false;
+    std::string carSoundsProblem;
     size_t foldedTextureNames = 0;
     size_t scrubbedAttributes = 0;
     size_t scrubbedMatrices = 0;

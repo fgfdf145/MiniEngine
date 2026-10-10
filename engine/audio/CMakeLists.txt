@@ -3,11 +3,17 @@ add_library(engine_audio
     audio_engine.h
     audio_file.cpp
     audio_file.h
+    fmod_bank.cpp
+    fmod_bank.h
     gamepad_haptics.cpp
     gamepad_haptics.h
     haptics_synth.cpp
     haptics_synth.h
     miniaudio_impl.cpp
+    sound_bank.cpp
+    sound_bank.h
+    sound_event.cpp
+    sound_event.h
 )
 miniengine_group_target_sources(engine_audio)
 
@@ -25,6 +31,8 @@ target_link_libraries(engine_audio
     PUBLIC
         engine_core
         glm::glm
+    PRIVATE
+        yaml-cpp::yaml-cpp
 )
 
 # Third-party code compiled in this target: its warnings are not ours.
