@@ -509,6 +509,9 @@ struct VehicleSettings
     float centreCouplingRampTorque = 0.0f;
     float centreCouplingMaxTorque = 0.0f;
     std::array<VehicleAxleDifferential, 2> axleDifferentials{};
+    // A centre differential's own clutch pack between the axles (lock under power, preload, lock on the overrun;
+    // below 0: the axles' limited slip's), when it is a differential and not a coupling.
+    VehicleAxleDifferential centreDifferential{};
     // The gears', the final drive's and the transfer case's losses (off: the drivetrain passes everything).
     VehicleDrivetrainLosses drivetrainLosses;
     // Traction control: the clutch slips once the engine asks the driven wheels for more torque than their
@@ -518,9 +521,6 @@ struct VehicleSettings
     // The body's linear damping, a fraction of its speed lost each second: the physics engine's 0.05, a
     // stand-in for air drag that a car with its own aerodynamics sets to 0.
     float linearDamping = 0.05f;
-    // Past this pitch or roll the constraint stops tilting the car further; 180 leaves it free, so a
-    // car tipped far enough rolls over.
-    float maxPitchRollDegrees = 180.0f;
 
     // The multibody suspension, used when both axles have a type: the hardpoints then decide where
     // each wheel goes and how it leans, the rates replace suspensionFrequencyHz / suspensionDamping
@@ -1043,11 +1043,6 @@ struct VehicleGearboxState
     // gearbox.manualHoldSeconds after the driver's last change. 0 when the box picks the gear itself.
     float manualHoldLeft = 0.0f;
 };
-
-// Launch control: while the box launches (state.launching), the share of the throttle the engine keeps so
-// its revs stay in the launch window instead of running on past it when the clutch cannot pass all the
-// engine makes (traction control holding it to what the tyres take); 1 otherwise.
-float VehicleLaunchThrottle(const VehicleGearbox& gearbox, const VehicleGearboxState& state, float throttle, float engineRpm);
 
 // The engine rpm the gearbox's output turns it at in `gear`; 0 in a gear the box does not have.
 // `outputRpm` is the gearbox's output speed before the gear: the wheels' speed times the final drive.

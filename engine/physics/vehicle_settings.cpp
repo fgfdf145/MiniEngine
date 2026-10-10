@@ -822,6 +822,7 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
         settings.centreCouplingRampTorque = 0.0f;
         settings.centreCouplingMaxTorque = 0.0f;
         settings.axleDifferentials = {};
+        settings.centreDifferential = {};
         if (*spec.drive == VehicleDrive::AllWheel && spec.allWheelDrive.has_value())
         {
             const VehicleAllWheelDrive& awd = *spec.allWheelDrive;
@@ -834,6 +835,8 @@ VehicleSettings ApplyCarSpec(const VehicleSettings& tuning, const VehicleCarSpec
             else if (!awd.coupling)
             {
                 settings.frontTorqueShare = std::clamp(awd.frontShare, 0.0f, 1.0f);
+                settings.centreDifferential = VehicleAxleDifferential{
+                    std::clamp(awd.centreDiffPower, 0.0f, 1.0f), std::max(awd.centreDiffPreload, 0.0f), std::clamp(awd.centreDiffCoast, 0.0f, 1.0f)};
             }
             settings.axleDifferentials[0] = VehicleAxleDifferential{
                 std::clamp(awd.frontDiffPower, 0.0f, 1.0f), std::max(awd.frontDiffPreload, 0.0f), std::clamp(awd.frontDiffCoast, 0.0f, 1.0f)};
@@ -1097,19 +1100,6 @@ void WorkGearboxClutch(const VehicleGearbox& gearbox, VehicleGearboxState& state
         state.latencyLeft = std::max(state.latencyLeft - deltaSeconds, 0.0f);
     }
 }
-}
-
-float VehicleLaunchThrottle(const VehicleGearbox& gearbox, const VehicleGearboxState& state, float throttle, float engineRpm)
-{
-    if (!state.launching || gearbox.launchRpm <= 0.0f)
-    {
-        return 1.0f;
-    }
-    // Cut over the window's last quarter, so the revs settle short of its top and the clutch, closing on
-    // them, stays short of shut until the wheels catch up.
-    const LaunchWindow window = LaunchWindowAt(gearbox, throttle);
-    const float start = window.high - 0.25f * (window.high - window.low);
-    return std::clamp((window.high - engineRpm) / std::max(window.high - start, 1.0f), 0.0f, 1.0f);
 }
 
 void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds, float engineRpm,
