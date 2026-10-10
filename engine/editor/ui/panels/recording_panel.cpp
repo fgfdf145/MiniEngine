@@ -86,7 +86,7 @@ void DrawFormat(ViewportRecordingSettings& settings, RenderExtent size)
     ImGui::RadioButton("AVI (MJPEG)", &format, 1);
     if (ImGui::IsItemHovered())
     {
-        ImGui::SetTooltip("Every frame a JPEG: large files, any platform. Over 4 GB it continues in _2.avi, _3 ...");
+        ImGui::SetTooltip("Every frame a JPEG: large files, any platform. At 3.75 GB it continues in _2.avi, _3 ...");
     }
     settings.format = format == 1 ? ViewportRecordingFormat::Avi : ViewportRecordingFormat::Mp4;
 
