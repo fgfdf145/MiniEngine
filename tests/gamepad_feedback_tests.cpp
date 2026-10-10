@@ -128,6 +128,7 @@ void AudioHapticsFollowTheCar()
     VehicleAudioHapticsState slideState;
     ComputeVehicleAudioHaptics(settings, slide, slideState, kDt);
     slide.wheels[2].slipAngleDegrees = 14.0f;
+    slide.wheels[2].slidingShare = 0.7f; // most of its patch sliding
     haptics = ComputeVehicleAudioHaptics(settings, slide, slideState, kDt);
     Require(haptics.voices.slipAmplitude[0] > 0.3f && haptics.voices.slipAmplitude[1] == 0.0f, "the sliding tyre buzzes on its side");
     Require(haptics.voices.slipHz > 70.0f, "a fast slide buzzes higher");

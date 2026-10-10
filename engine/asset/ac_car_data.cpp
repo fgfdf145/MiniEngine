@@ -661,7 +661,8 @@ void ReadSection(
     }
 }
 
-// The physics engine's tyre from a compound's axle at the load one wheel carries at rest.
+// A tyre's figures (which the brush tyre is fitted to) from a compound's axle at the load one wheel carries
+// at rest.
 VehicleTyreSettings TyreSettingsFor(const VehicleTyreData& tyre, float staticLoadNewtons)
 {
     const auto value = [&](const char* key) -> float

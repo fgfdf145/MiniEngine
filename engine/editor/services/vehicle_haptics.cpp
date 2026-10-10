@@ -73,14 +73,10 @@ constexpr float kBumpOverRoughness = 2.5f;
 constexpr float kBumpFull = 1.0f;
 constexpr float kBumpLevel = 0.9f;
 constexpr float kBumpCooldownSeconds = 0.08f;
-// A sliding tyre: how far it slides (the brush tyre's sliding share of the load, or the slip itself),
-// faded in over the first kSlideFullSpeed m/s of sliding speed, its buzz rising with that speed.
+// A sliding tyre: how far it slides (the brush tyre's sliding share of the load), faded in over the first
+// kSlideFullSpeed m/s of sliding speed, its buzz rising with that speed.
 constexpr float kSlidingShareStart = 0.15f;
 constexpr float kSlidingShareFull = 0.75f;
-constexpr float kSlipRatioStart = 0.08f;
-constexpr float kSlipRatioFull = 0.33f;
-constexpr float kSlipAngleStartDegrees = 5.0f;
-constexpr float kSlipAngleFullDegrees = 15.0f;
 constexpr float kSlideFullSpeed = 3.0f;
 constexpr float kSlipLevel = 0.7f;
 constexpr float kSlipBaseHz = 70.0f;
@@ -168,13 +164,7 @@ float Blend(float deltaSeconds, float timeConstantSeconds)
 // How far a wheel's tyre is sliding, from 0 (gripping) to 1.
 float Sliding(const VehicleWheelState& wheel)
 {
-    if (wheel.brushTyre)
-    {
-        return Saturate((wheel.slidingShare - kSlidingShareStart) / (kSlidingShareFull - kSlidingShareStart));
-    }
-    const float ratio = (std::abs(wheel.slipRatio) - kSlipRatioStart) / (kSlipRatioFull - kSlipRatioStart);
-    const float angle = (std::abs(wheel.slipAngleDegrees) - kSlipAngleStartDegrees) / (kSlipAngleFullDegrees - kSlipAngleStartDegrees);
-    return Saturate(std::max(ratio, angle));
+    return Saturate((wheel.slidingShare - kSlidingShareStart) / (kSlidingShareFull - kSlidingShareStart));
 }
 
 // How fast the tread rubs over the ground (m/s): the wheel spinning against the road, and the road

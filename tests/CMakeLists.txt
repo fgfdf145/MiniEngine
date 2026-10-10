@@ -2288,8 +2288,6 @@ target_link_libraries(miniengine_tyre_tests
         engine_tyre
 )
 
-target_include_directories(miniengine_tyre_tests PRIVATE "${MINIENGINE_TEST_GENERATED_DIR}")
-
 add_test(
     NAME miniengine.tyre
     COMMAND miniengine_tyre_tests

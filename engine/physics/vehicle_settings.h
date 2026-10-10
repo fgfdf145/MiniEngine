@@ -37,18 +37,6 @@ enum class VehicleDrive : uint32_t
     AllWheel = 2
 };
 
-// What makes the tyres' grip.
-enum class VehicleTyreModel : uint32_t
-{
-    // The physics engine's own: friction curves of slip that its constraint solver clamps the
-    // contact's impulse to (VehicleTyreSettings shapes them).
-    PhysicsEngine = 0,
-    // A brush tyre on a flexible carcass (engine/tyre/tyre_brush.h, after Stocco, Biral & Bertolazzi
-    // 2024), its parameters fitted to VehicleTyreSettings' grip and peak slip angle and to the wheel's
-    // size and tyre rate. Its forces replace the physics engine's tyre friction.
-    Brush = 1
-};
-
 // One wheel: its centre in vehicle space and its tyre's size. In a VehicleWheelLayout the centre is
 // where the model draws the wheel at rest.
 struct VehicleWheelGeometry
@@ -443,14 +431,11 @@ struct VehicleSettings
     // the physics engine's own drag of 0.2 of its speed per second.
     float engineCoastTorque = 0.0f;
     float engineCoastRpm = 0.0f;
-    // How hard the clutch drags the wheels along with the engine, torque per rad/s of difference (the
-    // physics engine's 10 when 0). Not used by the car's own drivetrain (a brush-tyred car's).
-    float clutchStrength = 0.0f;
-    // The tyres, by wheel (0 front left, 1 front right, 2 rear left, 3 rear right): with any grip set the
-    // vehicle's tyres multiply the surface's friction (as the game does) instead of the physics engine's
-    // square root of the two.
+    // The tyres, by wheel (0 front left, 1 front right, 2 rear left, 3 rear right). Each is a brush tyre on a
+    // flexible carcass (engine/tyre/tyre_brush.h, after Stocco, Biral & Bertolazzi 2024), fitted to its grip
+    // and peak slips and to the wheel's size and tyre rate; its grip times the surface's ratio, as the game
+    // measures both.
     std::array<VehicleTyreSettings, kVehicleWheelCount> tyres{};
-    VehicleTyreModel tyreModel = VehicleTyreModel::PhysicsEngine;
     // Tyres with the game's thermal data warm and cool, and their grip and pressure follow (the brush tyre only;
     // tyre::TyreThermalModel). Off they stay at their best: the curve's grip of 1 and the ideal pressure. They
     // start at tyreStartTemperature (C; the game's 26 for the air and road).
@@ -1058,6 +1043,11 @@ struct VehicleGearboxState
     // gearbox.manualHoldSeconds after the driver's last change. 0 when the box picks the gear itself.
     float manualHoldLeft = 0.0f;
 };
+
+// Launch control: while the box launches (state.launching), the share of the throttle the engine keeps so
+// its revs stay in the launch window instead of running on past it when the clutch cannot pass all the
+// engine makes (traction control holding it to what the tyres take); 1 otherwise.
+float VehicleLaunchThrottle(const VehicleGearbox& gearbox, const VehicleGearboxState& state, float throttle, float engineRpm);
 
 // The engine rpm the gearbox's output turns it at in `gear`; 0 in a gear the box does not have.
 // `outputRpm` is the gearbox's output speed before the gear: the wheels' speed times the final drive.

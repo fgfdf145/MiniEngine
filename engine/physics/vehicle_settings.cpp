@@ -1004,6 +1004,21 @@ void StartGearChange(const VehicleGearbox& gearbox, VehicleGearboxState& state, 
     state.launching = false;
 }
 
+// The engine revs a launch slips the clutch over: from just under the launch point (scaled by the throttle
+// from the idle) to some way past it, the clutch closing across them.
+struct LaunchWindow
+{
+    float low = 0.0f;
+    float high = 0.0f;
+};
+
+LaunchWindow LaunchWindowAt(const VehicleGearbox& gearbox, float throttle)
+{
+    const float idleRpm = std::max(gearbox.idleRpm, 1.0f);
+    const float launch = idleRpm + (std::max(gearbox.launchRpm, idleRpm) - idleRpm) * std::clamp(throttle, 0.0f, 1.0f);
+    return {0.95f * launch, 1.15f * launch};
+}
+
 // Moving off in a forward gear, a launch rpm slips the clutch on the engine's revs instead.
 void StartLaunch(const VehicleGearbox& gearbox, VehicleGearboxState& state, float engineRpm)
 {
@@ -1047,10 +1062,9 @@ void WorkGearboxClutch(const VehicleGearbox& gearbox, VehicleGearboxState& state
         // the engine settles where the clutch passes what it makes. The launch is over once the wheels
         // turn the engine at its own speed.
         const float gearRpm = VehicleGearRpm(gearbox, state.gear, outputRpm);
-        const float idleRpm = std::max(gearbox.idleRpm, 1.0f);
-        const float launch = idleRpm + (std::max(gearbox.launchRpm, idleRpm) - idleRpm) * throttle;
-        const float low = 0.95f * launch;
-        const float high = 1.15f * launch;
+        const LaunchWindow window = LaunchWindowAt(gearbox, throttle);
+        const float low = window.low;
+        const float high = window.high;
         const float x = std::clamp((engineRpm - low) / std::max(high - low, 1.0f), 0.0f, 1.0f);
         state.clutch = x * x * (3.0f - 2.0f * x);
         state.revMatch = false;
@@ -1083,6 +1097,19 @@ void WorkGearboxClutch(const VehicleGearbox& gearbox, VehicleGearboxState& state
         state.latencyLeft = std::max(state.latencyLeft - deltaSeconds, 0.0f);
     }
 }
+}
+
+float VehicleLaunchThrottle(const VehicleGearbox& gearbox, const VehicleGearboxState& state, float throttle, float engineRpm)
+{
+    if (!state.launching || gearbox.launchRpm <= 0.0f)
+    {
+        return 1.0f;
+    }
+    // Cut over the window's last quarter, so the revs settle short of its top and the clutch, closing on
+    // them, stays short of shut until the wheels catch up.
+    const LaunchWindow window = LaunchWindowAt(gearbox, throttle);
+    const float start = window.high - 0.25f * (window.high - window.low);
+    return std::clamp((window.high - engineRpm) / std::max(window.high - start, 1.0f), 0.0f, 1.0f);
 }
 
 void UpdateAutomaticGearbox(const VehicleGearbox& gearbox, VehicleGearboxState& state, float forward, float outputRpm, float deltaSeconds, float engineRpm,

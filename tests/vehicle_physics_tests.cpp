@@ -1155,7 +1155,6 @@ void TestTyreTemperaturesFollowTheDrive()
     const auto drive = [&](bool temperatures)
     {
         VehicleSettings tuning;
-        tuning.tyreModel = VehicleTyreModel::Brush;
         tuning.brushTyreRibs = 8;
         tuning.brushTyreSegments = 8;
         SetAxleTyres(tuning, true, tyre);
@@ -1293,7 +1292,6 @@ void TestGameTractionControlCutsTheThrottle()
 void TestCarSettlesAfterBrakingToAStop()
 {
     VehicleSettings tuning;
-    tuning.tyreModel = VehicleTyreModel::Brush;
     const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax, tuning);
     PhysicsWorld world;
     AddGroundMesh(world);
@@ -1463,18 +1461,16 @@ void TestStepIsSettable()
     Require(world.GetStepSeconds() == PhysicsWorld::kMinStepSeconds, "and one too short");
 }
 
-// The same drive at other step rates (both tyre models): the car stays stable and gets about as far.
+// The same drive at other step rates: the car stays stable and gets about as far.
 void TestCarDrivesAtAnyStepRate()
 {
-    for (const VehicleTyreModel tyreModel : {VehicleTyreModel::PhysicsEngine, VehicleTyreModel::Brush})
     {
-        const auto drive = [tyreModel](float rateHz)
+        const auto drive = [](float rateHz)
         {
             PhysicsWorld world;
             world.SetStepSeconds(1.0f / rateHz);
             AddGroundMesh(world);
-            VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax);
-            settings.tyreModel = tyreModel;
+            const VehicleSettings settings = FitVehicleSettingsToBounds(kCarMin, kCarMax);
             const VehicleId car = world.AddVehicle(settings, {glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
             Simulate(world, 1.0f);
             VehicleControls controls;
@@ -1483,8 +1479,7 @@ void TestCarDrivesAtAnyStepRate()
             Simulate(world, 4.0f);
             const PhysicsPose pose = world.GetVehiclePose(car);
             const glm::vec3 up = pose.rotation * glm::vec3(0.0f, 1.0f, 0.0f);
-            const std::string name = std::string(tyreModel == VehicleTyreModel::Brush ? "brush" : "slip curves") + " at " +
-                                     std::to_string(static_cast<int>(rateHz)) + " Hz";
+            const std::string name = "at " + std::to_string(static_cast<int>(rateHz)) + " Hz";
             Require(std::isfinite(pose.position.z) && up.y > 0.99f, name + ": the car stays upright, up.y = " + std::to_string(up.y));
             Require(std::abs(pose.position.x) < 1.0f, name + ": and straight, x = " + std::to_string(pose.position.x));
             return world.GetVehicleTelemetry(car).forwardSpeed;
@@ -3094,7 +3089,7 @@ BrakingReport MeasureBraking(const VehicleSettings& settings)
             const bool front = index < 2;
             (front ? frontTorque : rearTorque) += wheel.brakeTorque;
             (front ? frontLoad : rearLoad) += wheel.suspensionForce;
-            if (wheel.slipRatio > 0.5f)
+            if (std::abs(wheel.slipRatio) > 0.5f) // braking slips back: the tread slower than the road
             {
                 (front ? report.frontLockedSeconds : report.rearLockedSeconds) += 0.01f / 2.0f;
             }
@@ -3129,8 +3124,10 @@ void TestBrakeTorqueFollowsTheLoad()
     RequireNear(fixedGentle.totalTorque, 4.0f * 600.0f, 4.0f * 600.0f * 0.03f, "the fixed split's total");
     RequireNear(loadGentle.totalTorque, 4.0f * 600.0f, 4.0f * 600.0f * 0.03f, "is what sharing by load spreads too");
 
-    fixedSplit.maxBrakeTorque = 1100.0f;
-    byLoad.maxBrakeTorque = 1100.0f;
+    // Past where the fixed split's rear locks (950 Nm) and short of where the car's whole grip runs out and
+    // every wheel locks whatever the split (1100 Nm on the brush tyre).
+    fixedSplit.maxBrakeTorque = 1000.0f;
+    byLoad.maxBrakeTorque = 1000.0f;
     const BrakingReport fixedHard = MeasureBraking(fixedSplit);
     const BrakingReport loadHard = MeasureBraking(byLoad);
     std::cout << "hard braking, seconds locked front/rear: fixed " << fixedHard.frontLockedSeconds << "/" << fixedHard.rearLockedSeconds
@@ -3303,12 +3300,20 @@ void TestDrivenWheelsKeepNearTheGround()
     Require(std::abs(switchedOffWhileDriving.meanSlip - free.meanSlip) < 0.02f, "switched off while driving, as well, " + std::to_string(switchedOffWhileDriving.meanSlip));
     Require(std::abs(switchedOnWhileDriving.meanSlip - held.meanSlip) < 0.02f, "switched on while driving, it holds them, " + std::to_string(switchedOnWhileDriving.meanSlip));
 
-    tuning.limitedSlipDifferentials = false;
-    tuning.tractionControlGrip = 0.0f; // with it holding both tyres to the ground, an open differential has nothing to show
-    const LaunchReport open = MeasureLaunch(tuning);
     Require(held.meanGap < 0.03f, "the limited slip keeps the two rear wheels together, " + std::to_string(held.meanGap));
-    // At 1000 Hz a level car launches almost symmetrically, so the open differential is judged against the limited slip.
-    Require(open.meanGap > held.meanGap * 5.0f, "an open differential does not, " + std::to_string(open.meanGap));
+    // A level car on even tyres launches symmetrically, both wheels alike whatever the differential, so the right
+    // rear tyre grips less (a worn one): an open differential lets it spin up past the left, the limited slip
+    // holds the two together. Without traction control, which would hold both tyres to the ground.
+    VehicleSettings uneven = tuning;
+    uneven.tractionControlGrip = 0.0f;
+    uneven.tyres[3].longitudinalGrip *= 0.7f;
+    uneven.tyres[3].lateralGrip *= 0.7f;
+    const LaunchReport locked = MeasureLaunch(uneven);
+    uneven.limitedSlipDifferentials = false;
+    const LaunchReport open = MeasureLaunch(uneven);
+    std::cout << "launch on a weaker right rear tyre, the rear wheels apart: limited slip " << locked.meanGap << ", open " << open.meanGap << '\n';
+    Require(open.meanGap > 0.1f && open.meanGap > 3.0f * locked.meanGap, "an open differential lets the weaker tyre spin, " + std::to_string(open.meanGap) + " against " +
+                                                                              std::to_string(locked.meanGap));
 }
 
 // The Skyline R34's ctrl_4ws.ini (Super HICAS): the steering wheel's angle, scaled up past an oversteer
@@ -3455,10 +3460,10 @@ void TestGearboxLaunchesOnTheEnginesRevs()
     Require(ApplyCarSpec(VehicleSettings{}, spec).shiftUpRpm == 0.0f, "a point past the limiter is ignored");
 }
 
-// Launching on the throttle the engine holds near the launch rpm while the clutch slips, and a car whose
-// tyres can take the torque (four-wheel drive, as the R34) gets away faster than from the idle. A rear-drive
-// car that its tyres hold back gains nothing: traction control slips the clutch either way, and the revs
-// take a moment to rise first.
+// Launching on the throttle the engine holds near the launch rpm while the clutch slips (launch control
+// cutting the throttle at the top of the window), and a car whose tyres can take the torque (four-wheel
+// drive, as the R34) gets away faster than from the idle. Without traction control: with it, both starts
+// get what the tyres take through a clutch it holds to that, and the launch rpm adds nothing.
 void TestLaunchHoldsTheRevs()
 {
     VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec());
@@ -3466,6 +3471,7 @@ void TestLaunchHoldsTheRevs()
     tuning.centreDrive = VehicleCentreDrive::Coupling;
     tuning.centreCouplingRampTorque = 100.0f;
     tuning.centreCouplingMaxTorque = 1000.0f;
+    tuning.tractionControlGrip = 0.0f;
     const auto launch = [&](float launchRpm, float& lowRpm, float& highRpm)
     {
         VehicleSettings car = tuning;

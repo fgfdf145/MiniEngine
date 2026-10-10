@@ -176,7 +176,6 @@ VehicleSettings Gtr()
     layout[3] = {glm::vec3(-0.84f, 0.355f, rearZ), 0.355f, 0.33f};
     VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, me::test::MakeGtrSpec());
     tuning.wheelRadius = 0.355f;
-    tuning.tyreModel = VehicleTyreModel::Brush;
     VehicleSettings settings = FitVehicleSettingsToBounds(glm::vec3(-1.0f, 0.0f, -2.3f), glm::vec3(1.0f, 1.2f, 2.3f), tuning, &layout);
     settings.centerOfMassOffset = glm::vec3(0.0f, 0.38f - settings.chassisCenter.y, -settings.chassisCenter.z);
     return settings;
@@ -214,7 +213,7 @@ void TestOverlayDrawsTheBrushPatch()
 
     const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(car);
     const VehicleWheelState& outer = wheels[0];
-    Require(outer.brushTyre && outer.inContact, "the outer front tyre is a brush tyre on the ground");
+    Require(outer.inContact, "the outer front tyre is on the ground");
     Require(outer.brushRibCount == 50, "the default 50 ribs, got " + std::to_string(outer.brushRibCount));
     float sliding = 0.0f;
     for (int rib = 0; rib < outer.brushRibCount; ++rib)

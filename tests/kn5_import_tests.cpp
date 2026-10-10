@@ -1863,7 +1863,6 @@ void ProbeDrivetrainLosses()
     for (const bool losses : {false, true})
     {
         VehicleSettings tuning;
-        tuning.tyreModel = VehicleTyreModel::Brush;
         tuning.dynamicBrakeBias = false;
         tuning.drivetrainLosses.enabled = losses;
         const VehicleSettings settings = FitVehicleSettingsToBounds(boundsMin, boundsMax, ApplyCarSpec(tuning, *spec), &layout);
@@ -1954,7 +1953,6 @@ void ProbeCarTyreTerms()
     const glm::vec3 boundsMin(-0.5f * track - 0.15f, 0.0f, -0.5f * wheelbase - 0.9f);
     const glm::vec3 boundsMax(0.5f * track + 0.15f, 1.25f, 0.5f * wheelbase + 0.9f);
     VehicleSettings tuning;
-    tuning.tyreModel = VehicleTyreModel::Brush;
     const VehicleSettings withTerms = FitVehicleSettingsToBounds(boundsMin, boundsMax, ApplyCarSpec(tuning, *spec), &layout);
     VehicleSettings withoutTerms = withTerms;
     for (VehicleTyreSettings& tyre : withoutTerms.tyres)

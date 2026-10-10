@@ -70,9 +70,9 @@ struct VehicleWheelState
     // and the angle between the tyre and the way it is moving, in degrees.
     float slipRatio = 0.0f;
     float slipAngleDegrees = 0.0f;
-    // The friction coefficients the tyre's curves gave at that slip, combined with the ground's: the force
-    // the tyre makes is this times suspensionForce. And the most the curves give at any slip, likewise
-    // combined: the tyre's peak grip, which the slip runs up to and then falls back from.
+    // The friction the tyre made at that slip, with the ground's: the force it makes is this times
+    // suspensionForce. And its static coefficients at this load and road: the tyre's peak grip, which the
+    // slip runs up to and then falls back from.
     float longitudinalFriction = 0.0f;
     float lateralFriction = 0.0f;
     float longitudinalPeakFriction = 0.0f;
@@ -93,11 +93,10 @@ struct VehicleWheelState
     // (m) keeps above where the physics engine touches the ground.
     bool unsprungMass = false;
     float tyreDeflection = 0.0f;
-    // With the brush tyre (VehicleTyreModel::Brush): the load it worked with (N; the suspension's push
-    // as foreseen before the step, which suspensionForce gives as it came out), its aligning moment about
-    // the normal (N m), the share of the load on sliding bristles, and the carcass's shift fore-aft and
-    // sideways (m) and twist (rad) against the rim.
-    bool brushTyre = false;
+    // The brush tyre: the load it worked with (N; the suspension's push as foreseen before the step, which
+    // suspensionForce gives as it came out), its aligning moment about the normal (N m), the share of the
+    // load on sliding bristles, and the carcass's shift fore-aft and sideways (m) and twist (rad) against the
+    // rim.
     float tyreLoad = 0.0f;
     float aligningTorque = 0.0f;
     float slidingShare = 0.0f;
@@ -117,10 +116,9 @@ struct VehicleWheelState
     bool treadRollingForward = true;
     int brushRibCount = 0;
     std::array<BrushRib, kMaxBrushRibs> brushRibs{};
-    // The car's own drivetrain (a brush-tyred car): the wheel is a rim and the tyre's belt on its
-    // sidewalls. angularVelocity is the rim's; the belt's speed, how far the rim has turned ahead of it
-    // (rad) and the torque the sidewalls pass from the rim to the belt (N m, the last step's mean).
-    bool ownDrivetrain = false;
+    // The wheel is a rim and the tyre's belt on its sidewalls: angularVelocity is the rim's; the belt's
+    // speed, how far the rim has turned ahead of it (rad) and the torque the sidewalls pass from the rim to
+    // the belt (N m, the last step's mean).
     float beltAngularVelocity = 0.0f;
     float sidewallTwist = 0.0f;
     float sidewallTorque = 0.0f;
@@ -267,7 +265,7 @@ class PhysicsWorld
     VehicleId AddVehicle(const VehicleSettings& settings, const PhysicsPose& pose);
     void SetVehicleControls(VehicleId vehicle, const VehicleControls& controls);
     // Recuts a car's brush tyres into this many ribs and segments along each (0 for the tyre's own count)
-    // while it drives; their carcasses start again from rest. Nothing for a car on the physics engine's tyres.
+    // while it drives; their carcasses start again from rest.
     void SetVehicleBrushTyreBristles(VehicleId vehicle, int ribs, int segmentsPerRib);
     // Switches a car's anti-lock brakes and traction control on or off while it drives (useAbs and
     // useTractionControl): a car without one stays without it, one switched on works as the car's

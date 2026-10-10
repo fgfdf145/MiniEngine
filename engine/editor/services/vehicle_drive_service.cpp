@@ -295,7 +295,6 @@ void PlaceCamera(RendererSharedState& state, VehicleDriveSession& session, const
 VehicleSettings DefaultTuning()
 {
     VehicleSettings tuning;
-    tuning.tyreModel = VehicleTyreModel::Brush;
     // The brakes by the car's own front/rear split (and its ABS), as the game has them.
     tuning.dynamicBrakeBias = false;
     // The tyres warm and cool as the game's do.

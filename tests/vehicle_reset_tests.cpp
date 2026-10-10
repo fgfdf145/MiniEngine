@@ -82,7 +82,6 @@ VehicleSettings Gtr()
     layout[3] = {glm::vec3(-0.84f, 0.355f, rearZ), 0.355f, 0.33f};
     VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, spec);
     tuning.wheelRadius = 0.355f;
-    tuning.tyreModel = VehicleTyreModel::Brush;
     tuning.brushTyreRibs = 8;
     tuning.brushTyreSegments = 8;
     SetAxleTyres(tuning, true, ThermalTyre());

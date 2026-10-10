@@ -66,7 +66,7 @@ void DrawTelemetry(const VehicleDriveStatus& status)
     {
         ImGui::TextDisabled("Car's own data: %s", status.carData.c_str());
     }
-    if (!status.wheels.empty() && status.wheels.front().brushTyre)
+    if (!status.wheels.empty())
     {
         // The brush tyres at work: each wheel's forces, how much of its patch slides, and how far its
         // carcass has shifted and twisted against the rim.
@@ -256,29 +256,13 @@ bool DrawTuning(VehicleSettings& tuning)
         tuning.modelFront = static_cast<VehicleModelFront>(front);
     }
 
-    int tyreModel = static_cast<int>(tuning.tyreModel);
-    static constexpr const char* kTyreLabels[] = {"Physics engine (slip curves)", "Brush, flexible carcass"};
-    if (ImGui::Combo("Tyre Model", &tyreModel, kTyreLabels, IM_ARRAYSIZE(kTyreLabels)))
-    {
-        tuning.tyreModel = static_cast<VehicleTyreModel>(tyreModel);
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip(
-            "Physics engine: Jolt's friction curves of slip ratio and slip angle, each direction on its own.\n"
-            "Brush: bristles over each rib's contact patch on a carcass that shifts, bends and twists against the rim\n"
-            "(Stocco, Biral & Bertolazzi 2024). Grip is shared between braking and cornering, the force builds over\n"
-            "the carcass's relaxation length, and the aligning moment comes from the patch. Takes effect on the next drive.");
-    }
-    ImGui::BeginDisabled(tuning.tyreModel != VehicleTyreModel::Brush);
     int ribs = tuning.brushTyreRibs > 0 ? tuning.brushTyreRibs : tyre::BrushTyreParameters{}.ribs;
     if (DragIntInRange("Brush Ribs", &ribs, 1, tyre::kBrushMaxRibs))
     {
         tuning.brushTyreRibs = ribs;
         ribsChanged = true;
     }
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    if (ImGui::IsItemHovered())
     {
         ImGui::SetTooltip(
             "How many ribs each brush tyre is cut into across its tread, each a row of bristles over its own contact\n"
@@ -286,15 +270,13 @@ bool DrawTuning(VehicleSettings& tuning)
             "step with ribs times segments (10 x 20 is about 0.15 s of physics per simulated second for one car in\n"
             "Release). Applies at once, also while driving.");
     }
-    ImGui::BeginDisabled(tuning.tyreModel != VehicleTyreModel::Brush);
     int segments = tuning.brushTyreSegments > 0 ? tuning.brushTyreSegments : tyre::BrushTyreParameters{}.segmentsPerRib;
     if (DragIntInRange("Brush Segments", &segments, 2, tyre::kBrushMaxSegments))
     {
         tuning.brushTyreSegments = segments;
         ribsChanged = true;
     }
-    ImGui::EndDisabled();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    if (ImGui::IsItemHovered())
     {
         ImGui::SetTooltip(
             "How many segments each rib's contact is cut into along its length, the bristles tracked at each one's\n"

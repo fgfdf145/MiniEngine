@@ -18,6 +18,14 @@
 | 传动系 | `WheeledVehicleController::PostCollide`：发动机、离合器、差速器、各轮转速、刹车锁止的隐式矩阵求解 | 阶段 3 才能替换 |
 | 轮子状态 | 转速、转角、接触数据都在 `JPH::Wheel` 里 | 转速由传动系积分，跟阶段 3 绑定 |
 
+## 更新（2026-10-10）
+
+- 阶段 3 已完成：自有传动系，轮辋/胎带拆分（e59d4ca，见 [2026-10-10-own-drivetrain-design.md](2026-10-10-own-drivetrain-design.md)）。
+- 按用户决定，轮胎只保留 Brush 和柔性环（flex ring，独立原型，尚未上车）两种：
+  - Jolt 的摩擦曲线轮胎（`VehicleTyreModel::PhysicsEngine`）和 Magic Formula 模块（含 `.tir` 读取器、测试和 Python 参考实现）已删除；
+  - 所有车都走自有传动系，`VehicleTyreModel`、`tyreModel` 和 Jolt 粘性离合器的 `clutchStrength` 也一并去掉。
+- 阶段 4 不再被轮胎模式卡住。剩下依赖 Jolt 车辆约束的是：直弹簧模式（没有悬挂几何的车）的弹簧和防倾杆、地面查找、硬限位，以及 Jolt 轮子里存的接触数据和转角。
+
 ## 阶段
 
 1. **悬挂力直接施加（本次完成）**

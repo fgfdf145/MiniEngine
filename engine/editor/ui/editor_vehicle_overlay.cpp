@@ -527,7 +527,7 @@ void DrawVehiclePhysicsOverlay(
     drawList.PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
     for (size_t index = 0; index < wheels.size(); ++index)
     {
-        const bool brushPatch = settings.contactPatch && wheels[index].brushTyre;
+        const bool brushPatch = settings.contactPatch;
         if (settings.tyres)
         {
             DrawTyre(painter, wheels[index], brushPatch);
