@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <optional>
+#include <utility>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -17,6 +18,7 @@
 #include <dxgi1_6.h>
 #include <wrl/client.h>
 
+#include <string>
 #include <vector>
 #endif
 
@@ -80,70 +82,153 @@ std::string NarrowName(const wchar_t* name)
     }
     return narrow;
 }
-}
 
-DisplayHdrInfo QueryDisplayHdrInfo(SDL_Window* window)
+HWND WindowHandle(SDL_Window* window)
 {
-    using Microsoft::WRL::ComPtr;
-
-    DisplayHdrInfo info;
     if (window == nullptr)
     {
-        return info;
+        return nullptr;
     }
-    const auto hwnd = static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
-    if (hwnd == nullptr)
-    {
-        return info;
-    }
-    const HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    return static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+}
+}
 
-    ComPtr<IDXGIFactory1> factory;
-    if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
+class DisplayHdrQuery
+{
+  public:
+    explicit DisplayHdrQuery(SDL_Window* window)
+        : m_hwnd(WindowHandle(window))
     {
-        return info;
     }
-    ComPtr<IDXGIAdapter1> adapter;
-    for (UINT adapterIndex = 0; factory->EnumAdapters1(adapterIndex, &adapter) != DXGI_ERROR_NOT_FOUND; ++adapterIndex)
+
+    const DisplayHdrInfo& Info() const
     {
-        ComPtr<IDXGIOutput> output;
-        for (UINT outputIndex = 0; adapter->EnumOutputs(outputIndex, &output) != DXGI_ERROR_NOT_FOUND; ++outputIndex)
+        return m_info;
+    }
+
+    // Whether the last answer may be out of date: the window is on another display, or the factory
+    // it came from went stale (DXGI marks it when the adapters, the outputs or an output's HDR mode
+    // change). Microseconds, no enumeration.
+    bool Stale() const
+    {
+        return m_factory == nullptr || !m_factory->IsCurrent() || (m_hwnd != nullptr && MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST) != m_monitor);
+    }
+
+    // Everything again, on a new factory.
+    void Full()
+    {
+        using Microsoft::WRL::ComPtr;
+
+        m_info = {};
+        m_factory = nullptr;
+        m_gdiName.clear();
+        if (m_hwnd == nullptr)
         {
-            ComPtr<IDXGIOutput6> output6;
-            DXGI_OUTPUT_DESC1 desc{};
-            if (FAILED(output.As(&output6)) || FAILED(output6->GetDesc1(&desc)) || desc.Monitor != monitor)
+            return;
+        }
+        m_monitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
+        if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&m_factory))))
+        {
+            m_factory = nullptr;
+            return;
+        }
+        ComPtr<IDXGIAdapter1> adapter;
+        for (UINT adapterIndex = 0; m_factory->EnumAdapters1(adapterIndex, &adapter) != DXGI_ERROR_NOT_FOUND; ++adapterIndex)
+        {
+            ComPtr<IDXGIOutput> output;
+            for (UINT outputIndex = 0; adapter->EnumOutputs(outputIndex, &output) != DXGI_ERROR_NOT_FOUND; ++outputIndex)
             {
-                continue;
+                ComPtr<IDXGIOutput6> output6;
+                DXGI_OUTPUT_DESC1 desc{};
+                if (FAILED(output.As(&output6)) || FAILED(output6->GetDesc1(&desc)) || desc.Monitor != m_monitor)
+                {
+                    continue;
+                }
+                m_info.known = true;
+                m_info.hdrEnabled = desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+                m_info.maxLuminance = desc.MaxLuminance;
+                m_info.maxFullFrameLuminance = desc.MaxFullFrameLuminance;
+                m_info.minLuminance = desc.MinLuminance;
+                m_info.name = NarrowName(desc.DeviceName);
+                m_gdiName = desc.DeviceName;
+                SdrWhite();
+                return;
             }
-            info.known = true;
-            info.hdrEnabled = desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
-            info.maxLuminance = desc.MaxLuminance;
-            info.maxFullFrameLuminance = desc.MaxFullFrameLuminance;
-            info.minLuminance = desc.MinLuminance;
-            info.name = NarrowName(desc.DeviceName);
-            if (const std::optional<float> white = QuerySdrWhiteNits(desc.DeviceName))
-            {
-                info.sdrWhiteNits = *white;
-            }
-            return info;
         }
     }
-    return info;
-}
+
+    // Windows' SDR content brightness only (no enumeration).
+    void SdrWhite()
+    {
+        if (m_gdiName.empty())
+        {
+            return;
+        }
+        if (const std::optional<float> white = QuerySdrWhiteNits(m_gdiName.c_str()))
+        {
+            m_info.sdrWhiteNits = *white;
+        }
+    }
+
+  private:
+    HWND m_hwnd = nullptr;
+    HMONITOR m_monitor = nullptr;
+    Microsoft::WRL::ComPtr<IDXGIFactory1> m_factory;
+    std::wstring m_gdiName;
+    DisplayHdrInfo m_info;
+};
 #else
-DisplayHdrInfo QueryDisplayHdrInfo(SDL_Window* window)
+class DisplayHdrQuery
 {
-    static_cast<void>(window);
-    return {};
-}
+  public:
+    explicit DisplayHdrQuery(SDL_Window* window)
+    {
+        static_cast<void>(window);
+    }
+
+    const DisplayHdrInfo& Info() const
+    {
+        return m_info;
+    }
+
+    bool Stale() const
+    {
+        return false;
+    }
+
+    void Full()
+    {
+    }
+
+    void SdrWhite()
+    {
+    }
+
+  private:
+    DisplayHdrInfo m_info;
+};
 #endif
 
-DisplayHdrMonitor::DisplayHdrMonitor(SDL_Window* window, int intervalMs)
-    : m_window(window)
-    , m_intervalMs(intervalMs)
+DisplayHdrInfo QueryDisplayHdrInfo(SDL_Window* window)
+{
+    DisplayHdrQuery query(window);
+    query.Full();
+    return query.Info();
+}
+
+namespace
+{
+// How often the thread checks whether the display changed, and reads the SDR content brightness.
+constexpr std::chrono::milliseconds kStaleCheckInterval{250};
+constexpr std::chrono::milliseconds kSdrWhiteInterval{1000};
+}
+
+DisplayHdrMonitor::DisplayHdrMonitor(SDL_Window* window)
+    : m_query(std::make_unique<DisplayHdrQuery>(window))
 {
     // The first answer before the first frame, so the swapchain starts in the right mode.
-    m_latest = QueryDisplayHdrInfo(m_window);
+    m_query->Full();
+    m_latest = m_query->Info();
     // MINIENGINE_NO_DISPLAY_MONITOR=1 asks once and never again (frame pacing comparisons).
     if (const char* off = std::getenv("MINIENGINE_NO_DISPLAY_MONITOR"); off != nullptr && off[0] == '1')
     {
@@ -174,18 +259,47 @@ DisplayHdrInfo DisplayHdrMonitor::Latest() const
     return m_latest;
 }
 
+void DisplayHdrMonitor::Refresh()
+{
+    {
+        std::lock_guard lock(m_mutex);
+        m_refresh = true;
+    }
+    m_wake.notify_all();
+}
+
 void DisplayHdrMonitor::Run()
 {
+    auto lastSdrWhite = std::chrono::steady_clock::now();
     std::unique_lock lock(m_mutex);
-    while (!m_wake.wait_for(lock, std::chrono::milliseconds(m_intervalMs), [this]
-                            {
-                                return m_stop;
-                            }))
+    while (true)
     {
+        m_wake.wait_for(lock, kStaleCheckInterval, [this]
+                        {
+                            return m_stop || m_refresh;
+                        });
+        if (m_stop)
+        {
+            return;
+        }
+        const bool refresh = std::exchange(m_refresh, false);
         lock.unlock();
-        DisplayHdrInfo info = QueryDisplayHdrInfo(m_window);
+        const auto now = std::chrono::steady_clock::now();
+        if (refresh || m_query->Stale())
+        {
+            m_query->Full();
+            lastSdrWhite = now;
+        }
+        else if (now - lastSdrWhite >= kSdrWhiteInterval)
+        {
+            m_query->SdrWhite();
+            lastSdrWhite = now;
+        }
         lock.lock();
-        m_latest = std::move(info);
+        if (m_latest != m_query->Info())
+        {
+            m_latest = m_query->Info();
+        }
     }
 }
 }

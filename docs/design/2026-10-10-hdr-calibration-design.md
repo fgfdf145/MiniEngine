@@ -22,17 +22,20 @@ D3D12 后端合入 main（c3a25f2）后已经能建 HDR10 交换链（`R10G10B10
 
 1. **显示器信息**（`engine/platform/display/display_hdr.h`，从 704d9bc 之前的版本恢复）：DXGI `IDXGIOutput6::GetDesc1`
    给出窗口所在显示器是否在 HDR、峰值/全屏峰值/黑位；`DisplayConfigGetDeviceInfo(SDR_WHITE_LEVEL)` 给 SDR 内容亮度。
-   后台线程每秒问一次（Windows 改 HDR 开关或 SDR 亮度滑块不发事件）。
+   后台线程每 250 ms 做一次廉价检查（窗口所在显示器变了没有、缓存的 DXGI factory 的 `IsCurrent()`——Windows 切 HDR
+   或显示器变化时它会失效），只有变了、或收到 SDL 的显示器/窗口换屏/HDR 状态事件时才重新枚举 DXGI；SDR 亮度滑块
+   没有任何通知，每秒只读一次 `DisplayConfigGetDeviceInfo`。
 2. **设置**（`DisplaySettings`，渲染设置的 `display` 组，存进 engine settings 和 capture state）：`calibrated`、
    `max_luminance`、`max_full_frame_luminance`、`min_luminance`、`ui_white_nits`（0 = 跟随 Windows）、
    `paper_white_nits`（0 = 跟随 UI 白）。开关仍是顶层的 `hdr_output`。旧的 `hdr_peak_nits` 不再读。
    `ResolveDisplayOutput` 把设置和显示器报告合成本帧用的值：未校准时用显示器报告的亮度，UI 白用 Windows 的 SDR 亮度。
 3. **场景**（`tonemap.frag`）：HDR 时场景先乘 `纸白 / 250`，让 GT7 的 250 cd/m² 纸白落在校准的纸白上（默认 = UI 白，
-   所以中间调和 SDR 一样亮，只有高光更亮），GT7 HDR 曲线的峰值是校准的最大亮度，然后做 BT.2390 黑位抬升
-   `E' = E + b(1-E)^4`（PQ 域，`b = PQ(最小亮度)`），最后除以 UI 白。眩光的余量是峰值 / 纸白。
+   所以中间调和 SDR 一样亮，只有高光更亮），GT7 HDR 曲线的峰值是校准的最大亮度，最后除以 UI 白。眩光的余量是峰值 / 纸白。
+   BT.2390 黑位抬升 `E' = E + b(1-E)^4` 不在这里做，而是在 `hdr_ui_encode.frag` 编成 PQ 之后对整帧（场景和 UI）做一次，
+   `b = PQ(最小亮度)` 由 CPU 每帧算好（`HdrBlackFloorPq`；显示校准图案时为 0，图案必须是绝对亮度）。
 4. **编辑器 UI**（`HdrUiComposite`）：HDR10 时 ImGui 不再直接写 PQ，而是画进一张和交换链一样大的 RGBA16F 图层，写
    sRGB 编码值（大于 1 的场景高光用同一条曲线外推），在这个编码里混合——和 SDR 交换链完全一样；然后
-   `hdr_ui_encode.frag` 一次性解码、转 Rec.2020、以 UI 白为 1.0 编成 PQ 写进交换链。
+   `hdr_ui_encode.frag` 一次性解码、转 Rec.2020、以 UI 白为 1.0 编成 PQ、做黑位抬升后写进交换链。
 5. **HDR 元数据**：D3D12 `IDXGISwapChain4::SetHDRMetaData`（MaxCLL = 峰值，MaxFALL = 全屏峰值，母版亮度 = 峰值/黑位，
    Rec.2020 原色）。Vulkan 不发（Vulkan 的 HDR 不推荐）。
 6. **跟随显示器**：开着 HDR 输出时，显示器的 HDR 状态变了（Windows 开关、窗口拖到别的显示器）就重建交换链。

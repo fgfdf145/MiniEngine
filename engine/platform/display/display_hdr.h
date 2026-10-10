@@ -5,6 +5,7 @@
 // the display configuration API); other platforms report nothing.
 
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -38,26 +39,35 @@ struct DisplayHdrInfo
 // Asks now. A few milliseconds on Windows; call it off the frame path (see DisplayHdrMonitor).
 DisplayHdrInfo QueryDisplayHdrInfo(SDL_Window* window);
 
-// Polls QueryDisplayHdrInfo on its own thread, because Windows sends no event when the user changes
-// the SDR content brightness or turns HDR on; Latest() returns the newest answer.
+// What DisplayHdrMonitor's thread keeps between answers (the DXGI factory and the display the window
+// was on), so most checks cost no enumeration.
+class DisplayHdrQuery;
+
+// Keeps DisplayHdrInfo current on its own thread; Latest() returns the newest answer. Windows sends
+// no event when the user turns HDR on or changes the SDR content brightness, so the thread checks
+// cheaply and often (the window's display, and whether the DXGI factory went stale, which an HDR
+// switch or a display change does) and only enumerates DXGI again when one of them changed or
+// Refresh() asked; the SDR content brightness, which nothing signals, is read once a second.
 class DisplayHdrMonitor
 {
   public:
-    explicit DisplayHdrMonitor(SDL_Window* window, int intervalMs = 1000);
+    explicit DisplayHdrMonitor(SDL_Window* window);
     ~DisplayHdrMonitor();
     DisplayHdrMonitor(const DisplayHdrMonitor&) = delete;
     DisplayHdrMonitor& operator=(const DisplayHdrMonitor&) = delete;
 
     DisplayHdrInfo Latest() const;
+    // Asks again now (SDL's display and window-display events).
+    void Refresh();
 
   private:
     void Run();
 
-    SDL_Window* m_window = nullptr;
-    int m_intervalMs = 1000;
+    std::unique_ptr<DisplayHdrQuery> m_query;
     mutable std::mutex m_mutex;
     std::condition_variable m_wake;
     bool m_stop = false;
+    bool m_refresh = false;
     DisplayHdrInfo m_latest;
     std::thread m_thread;
 };

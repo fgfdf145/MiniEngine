@@ -55,20 +55,20 @@ float PqDecodeNits(float signal)
 
 // ITU-R BT.2390's black level lift, in PQ: E' = E + b (1 - E)^4 with b = PQ(floor). 0 cd/m^2 goes to
 // the display's floor, so the darkest detail lands where the display still shows it; bright values
-// barely move.
+// barely move. floorPq is b, computed once on the CPU (hdr_ui_encode.frag applies it to the whole
+// frame, already in PQ).
+float3 LiftPqToBlackFloor(float3 e, float floorPq)
+{
+    float3 inverse = float3(1.0f) - e;
+    return e + floorPq * inverse * inverse * inverse * inverse;
+}
+
+// The same lift on absolute luminance (the tests' reference).
 float LiftToBlackFloorNits(float nits, float floorNits)
 {
     if (floorNits <= 0.0f)
     {
         return nits;
     }
-    float e = PqEncodeNits(nits);
-    float b = PqEncodeNits(floorNits);
-    float inverse = 1.0f - e;
-    return PqDecodeNits(e + b * inverse * inverse * inverse * inverse);
-}
-
-float3 LiftToBlackFloorNits3(float3 nits, float floorNits)
-{
-    return float3(LiftToBlackFloorNits(nits.x, floorNits), LiftToBlackFloorNits(nits.y, floorNits), LiftToBlackFloorNits(nits.z, floorNits));
+    return PqDecodeNits(LiftPqToBlackFloor(float3(PqEncodeNits(nits)), PqEncodeNits(floorNits)).x);
 }

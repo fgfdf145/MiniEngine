@@ -13,7 +13,8 @@ namespace
 struct HdrUiEncodeConstants
 {
     float uiWhiteNits = 203.0f;
-    float padding[3] = {};
+    float blackFloorPq = 0.0f;
+    float padding[2] = {};
 };
 
 static_assert(sizeof(HdrUiEncodeConstants) == 16, "HdrUiEncodeConstants must match the shader's block");
@@ -66,7 +67,7 @@ nvrhi::IFramebuffer* HdrUiComposite::BeginLayer(nvrhi::ICommandList* commandList
     return m_layerFramebuffer;
 }
 
-void HdrUiComposite::Encode(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* backBuffer, float uiWhiteNits)
+void HdrUiComposite::Encode(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* backBuffer, float uiWhiteNits, float blackFloorPq)
 {
     if (!m_pipeline)
     {
@@ -82,6 +83,7 @@ void HdrUiComposite::Encode(nvrhi::ICommandList* commandList, nvrhi::IFramebuffe
     commandList->setGraphicsState(state);
     HdrUiEncodeConstants constants;
     constants.uiWhiteNits = uiWhiteNits;
+    constants.blackFloorPq = blackFloorPq;
     commandList->setPushConstants(&constants, sizeof(constants));
     commandList->draw(nvrhi::DrawArguments().setVertexCount(3));
 }

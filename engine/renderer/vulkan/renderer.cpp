@@ -1557,7 +1557,13 @@ void VulkanRenderer::RenderFrame(RenderFramePacket& packet)
                                               imguiIo.reads = kImGuiReads;
                                               RecordTransitions(m_view, imguiIo, frame);
 
-                                              RecordEditorLayer(frame.commandList, imageIndex, frame.frameSlot, packet.ui.GetDrawData(), packet.display.uiWhiteNits);
+                                              RecordEditorLayer(
+                                                  frame.commandList,
+                                                  imageIndex,
+                                                  frame.frameSlot,
+                                                  packet.ui.GetDrawData(),
+                                                  packet.display.uiWhiteNits,
+                                                  HdrBlackFloorPq(packet.display, packet.renderDebug.calibrationView.pattern));
                                               m_gpuTimer->Mark("ImGui");
 
                                               if (recordVideoFrame)
@@ -2225,6 +2231,13 @@ void VulkanRenderer::RunWithRenderIdle(const std::function<void()>& work)
 
 void VulkanRenderer::HandleBackendEvent(const SDL_Event& event)
 {
+    // A display came, went or changed mode, or the window moved to another one: ask now rather than
+    // at the monitor's next check.
+    if ((event.type >= SDL_EVENT_DISPLAY_FIRST && event.type <= SDL_EVENT_DISPLAY_LAST) || event.type == SDL_EVENT_WINDOW_DISPLAY_CHANGED ||
+        event.type == SDL_EVENT_WINDOW_HDR_STATE_CHANGED)
+    {
+        m_displayMonitor->Refresh();
+    }
     m_imguiLayer->ProcessEvent(event);
 }
 
@@ -5177,7 +5190,7 @@ void VulkanRenderer::UpdateAutoExposure(VulkanSceneView& view, Camera& camera, c
 }
 
 void VulkanRenderer::RecordEditorLayer(
-    nvrhi::ICommandList* commandList, uint32_t imageIndex, uint32_t frameSlot, ImDrawData* drawData, float uiWhiteNits) const
+    nvrhi::ICommandList* commandList, uint32_t imageIndex, uint32_t frameSlot, ImDrawData* drawData, float uiWhiteNits, float blackFloorPq) const
 {
     // The swapchain image comes from the presentation engine in no state worth keeping (Vulkan:
     // UNDEFINED; D3D12: PRESENT); it is cleared, drawn into, and handed back for presenting.
@@ -5195,7 +5208,7 @@ void VulkanRenderer::RecordEditorLayer(
         m_imguiLayer->GetRenderer().Render(commandList, layer, drawData, frameSlot, true);
         commandList->setTextureState(backBuffer, nvrhi::AllSubresources, nvrhi::ResourceStates::RenderTarget);
         commandList->commitBarriers();
-        m_hdrUi->Encode(commandList, m_backBufferFramebuffers.at(imageIndex), uiWhiteNits);
+        m_hdrUi->Encode(commandList, m_backBufferFramebuffers.at(imageIndex), uiWhiteNits, blackFloorPq);
     }
     else
     {

@@ -23,8 +23,8 @@ class HdrUiComposite
     // What ImGui draws into, cleared to clearColor (an sRGB-encoded colour) and left as a render target.
     nvrhi::IFramebuffer* BeginLayer(nvrhi::ICommandList* commandList, const nvrhi::Color& clearColor);
     // The layer into backBuffer (one of the swapchain's framebuffers), PQ-encoded with 1.0 at
-    // uiWhiteNits.
-    void Encode(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* backBuffer, float uiWhiteNits);
+    // uiWhiteNits and lifted onto the black floor blackFloorPq (HdrBlackFloorPq; 0 for none).
+    void Encode(nvrhi::ICommandList* commandList, nvrhi::IFramebuffer* backBuffer, float uiWhiteNits, float blackFloorPq);
 
   private:
     nvrhi::IDevice* m_device = nullptr;

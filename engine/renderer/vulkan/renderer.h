@@ -463,8 +463,10 @@ class VulkanRenderer : public EditorRenderBackendBase
         const glm::vec3& ambientLuminance,
         const EnvironmentUniformData& environment,
         float preExposure);
-    // uiWhiteNits: where the HDR10 swapchain shows UI white (the frame's DisplayOutput).
-    void RecordEditorLayer(nvrhi::ICommandList* commandList, uint32_t imageIndex, uint32_t frameSlot, ImDrawData* drawData, float uiWhiteNits) const;
+    // uiWhiteNits: where the HDR10 swapchain shows UI white (the frame's DisplayOutput); blackFloorPq:
+    // the black floor the HDR10 encode lifts the frame onto (HdrBlackFloorPq).
+    void RecordEditorLayer(
+        nvrhi::ICommandList* commandList, uint32_t imageIndex, uint32_t frameSlot, ImDrawData* drawData, float uiWhiteNits, float blackFloorPq) const;
     // Meters the histogram the given frame slot last wrote and moves the frame camera's EV100
     // toward it. Must run after AcquireNextImage has waited on that slot's fence.
     void UpdateAutoExposure(VulkanSceneView& view, Camera& camera, const RenderFramePacket& frame, uint32_t frameSlot);

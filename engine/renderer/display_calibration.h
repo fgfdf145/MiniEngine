@@ -101,8 +101,13 @@ DisplayOutput ResolveDisplayOutput(const DisplaySettings& settings, const Displa
 // output.paperWhiteNits (1 in SDR).
 float HdrPaperWhiteScale(const DisplayOutput& output);
 
-// SMPTE ST 2084: cd/m^2 to the PQ signal in [0, 1] and back. The calibration's levels step evenly
-// in PQ, as the eye sees them.
+// The PQ signal of the display's black floor that hdr_ui_encode.frag lifts the frame onto (BT.2390);
+// 0 (no lift) in SDR, without a floor, and while the calibration screen shows a pattern, which must
+// reach the display at its absolute level.
+float HdrBlackFloorPq(const DisplayOutput& output, CalibrationPattern pattern);
+
+// SMPTE ST 2084: cd/m^2 to the PQ signal in [0, 1] and back (hdr_output.slang's, compiled as C++). The
+// calibration's levels step evenly in PQ, as the eye sees them.
 float PqFromNits(float nits);
 float NitsFromPq(float pq);
 }

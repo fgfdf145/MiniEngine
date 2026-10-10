@@ -1,19 +1,19 @@
 #include "display_calibration.h"
 
+#include <engine/renderer/shader_cpp_compat.h>
+
 #include <algorithm>
-#include <cmath>
+
+// The PQ curve the shaders use, compiled as C++ (hdr_output.slang keeps to the subset both accept).
+namespace me::hdr_output_shader
+{
+using namespace glm;
+using namespace me::shader_cpp;
+#include <shaders/vulkan/hdr_output.slang>
+}
 
 namespace me
 {
-
-namespace
-{
-constexpr float kPqM1 = 0.1593017578125f;
-constexpr float kPqM2 = 78.84375f;
-constexpr float kPqC1 = 0.8359375f;
-constexpr float kPqC2 = 18.8515625f;
-constexpr float kPqC3 = 18.6875f;
-}
 
 DisplayOutput ResolveDisplayOutput(const DisplaySettings& settings, const DisplayReport& report, bool hdr)
 {
@@ -53,17 +53,22 @@ float HdrPaperWhiteScale(const DisplayOutput& output)
     return output.hdr ? output.paperWhiteNits / kGt7PaperWhiteNits : 1.0f;
 }
 
+float HdrBlackFloorPq(const DisplayOutput& output, CalibrationPattern pattern)
+{
+    if (!output.hdr || output.minLuminance <= 0.0f || pattern != CalibrationPattern::None)
+    {
+        return 0.0f;
+    }
+    return PqFromNits(output.minLuminance);
+}
+
 float PqFromNits(float nits)
 {
-    const float y = std::clamp(nits / 10000.0f, 0.0f, 1.0f);
-    const float ym = std::pow(y, kPqM1);
-    return std::pow((kPqC1 + kPqC2 * ym) / (1.0f + kPqC3 * ym), kPqM2);
+    return hdr_output_shader::PqEncodeNits(nits);
 }
 
 float NitsFromPq(float pq)
 {
-    const float e = std::pow(std::clamp(pq, 0.0f, 1.0f), 1.0f / kPqM2);
-    const float y = std::pow(std::max(e - kPqC1, 0.0f) / (kPqC2 - kPqC3 * e), 1.0f / kPqM1);
-    return y * 10000.0f;
+    return hdr_output_shader::PqDecodeNits(pq);
 }
 }

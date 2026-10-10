@@ -1,6 +1,7 @@
 // HdrUiComposite's last step on an HDR10 swapchain: the editor frame, drawn sRGB-encoded into a float
 // layer (imgui.frag's HDR10 variant), decoded to linear light, 1.0 placed at the UI white (Windows'
-// SDR content brightness), converted to Rec.2020 and PQ-encoded.
+// SDR content brightness), converted to Rec.2020, PQ-encoded and lifted onto the display's black
+// floor (BT.2390, once per pixel in PQ for the scene and the UI alike).
 #include "d3d_register.slang"
 #include "gt7_tonemap.slang"
 #include "hdr_output.slang"
@@ -11,9 +12,10 @@
 struct HdrUiEncodeConstants
 {
     float uiWhiteNits;
+    // PQ of the display's black floor (HdrBlackFloorPq), 0 for no lift.
+    float blackFloorPq;
     float padding0;
     float padding1;
-    float padding2;
 };
 [[vk::push_constant]] ConstantBuffer<HdrUiEncodeConstants> constants D3D_PUSH_CONSTANTS(0);
 
@@ -24,5 +26,6 @@ float4 main(float4 fragCoord : SV_Position, [[vk::location(0)]] float2 fragTexCo
     // One texel per pixel: the layer is the swapchain's size.
     float3 encoded = uiLayer.Load(int3(int2(fragCoord.xy), 0)).rgb;
     float3 rec2020 = Rec709ToRec2020(SrgbDecodeExtended3(encoded));
-    return float4(PqEncodeNits3(rec2020 * constants.uiWhiteNits), 1.0);
+    float3 pq = PqEncodeNits3(rec2020 * constants.uiWhiteNits);
+    return float4(LiftPqToBlackFloor(pq, constants.blackFloorPq), 1.0);
 }

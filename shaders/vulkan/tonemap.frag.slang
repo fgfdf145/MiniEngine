@@ -43,25 +43,21 @@ static const uint TONEMAP_OPERATOR_NONE = 3u;
 struct TonemapConstants
 {
     uint gbufferView;
-    // 1 for HDR10 output: GT7's HDR curve for peakNits, lifted to blackNits, written relative to
-    // uiWhiteNits (imgui.frag's HDR10 variant puts 1.0 there).
+    // 1 for HDR10 output: GT7's HDR curve for peakNits, written relative to uiWhiteNits (imgui.frag's
+    // HDR10 variant puts 1.0 there; hdr_ui_encode.frag lifts the whole frame to the black floor).
     uint hdrOutput;
     float peakNits;
     // One of the TONEMAP_OPERATOR_* values below.
     uint toneOperator;
     // Auto white balance, linear Rec.709 to linear Rec.709, as three columns (xyz used).
     float4 whiteBalance[3];
-    // The HDR calibration (display_calibration.h): UI white and the display's black floor in cd/m^2,
-    // and the scale that puts GT7's 250 cd/m^2 paper white at the calibrated paper white.
+    // The HDR calibration (display_calibration.h): UI white in cd/m^2, and the scale that puts GT7's
+    // 250 cd/m^2 paper white at the calibrated paper white.
     float uiWhiteNits;
-    float blackNits;
     float paperWhiteScale;
     // A CALIBRATION_* pattern in place of the scene, and its level in cd/m^2.
     uint pattern;
     float patternLevel;
-    float padding0;
-    float padding1;
-    float padding2;
 };
 [[vk::push_constant]] ConstantBuffer<TonemapConstants> constants D3D_PUSH_CONSTANTS(0);
 
@@ -220,8 +216,8 @@ FragmentOutput main(FragmentInput input)
             // HDR10 output, frame-buffer units become nits relative to the UI white, up to the peak.
             if (constants.hdrOutput != 0u)
             {
-                float3 nits = clamp(color * (constants.paperWhiteScale * Gt7FrameBufferToPhysical(1.0f)), float3(0.0f), float3(constants.peakNits));
-                color = LiftToBlackFloorNits3(nits, constants.blackNits) / constants.uiWhiteNits;
+                color = clamp(color * (constants.paperWhiteScale * Gt7FrameBufferToPhysical(1.0f)), float3(0.0f), float3(constants.peakNits)) /
+                        constants.uiWhiteNits;
             }
             else
             {
@@ -234,10 +230,10 @@ FragmentOutput main(FragmentInput input)
         {
             // The scene scaled so GT7's 250 cd/m^2 paper white lands at the calibrated one (the
             // midtones as bright as in SDR on this desktop), frame-buffer units (1.0 = 100 cd/m^2) up
-            // to the display peak, lifted onto the display's black floor, then relative to the UI
-            // white that imgui.frag's HDR10 variant maps back to cd/m^2.
-            float3 nits = TonemapFrameBufferRec709Hdr(color * constants.paperWhiteScale, constants.peakNits) * Gt7FrameBufferToPhysical(1.0f);
-            color = LiftToBlackFloorNits3(nits, constants.blackNits) / constants.uiWhiteNits;
+            // to the display peak, then relative to the UI white that hdr_ui_encode.frag maps back to
+            // cd/m^2 (and lifts onto the display's black floor, in PQ, with the UI).
+            color = TonemapFrameBufferRec709Hdr(color * constants.paperWhiteScale, constants.peakNits) *
+                    (Gt7FrameBufferToPhysical(1.0f) / constants.uiWhiteNits);
         }
         else
         {
