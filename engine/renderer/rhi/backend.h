@@ -63,8 +63,9 @@ class IRenderBackend
         (void)request;
         throw std::runtime_error("This render backend cannot compare DDGI with a reference");
     }
-    // Records the viewport to an MJPEG AVI (Tools > Record Viewport, --record). Its size is the
-    // viewport's when it starts, which stays fixed until it stops.
+    // Records the viewport to an H.264 MP4 or an MJPEG AVI, as the path's extension says (Tools >
+    // Record Viewport, --record). Its size is the viewport's when it starts, which stays fixed until
+    // it stops.
     struct VideoRecordingRequest
     {
         std::filesystem::path path;
@@ -72,6 +73,10 @@ class IRenderBackend
         // Every frame drawn is one video frame (scripted runs, whose frames step a fixed time); else
         // the video plays at the speed the frames were shown.
         bool everyFrame = false;
+        // The H.264 bit rate (MP4); 0 for one fitted to the size and frame rate.
+        uint32_t bitsPerSecond = 0;
+        // The JPEG quality, 1 to 100 (AVI).
+        int jpegQuality = 90;
     };
     virtual bool StartVideoRecording(const VideoRecordingRequest& request, std::string& error)
     {

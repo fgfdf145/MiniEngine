@@ -263,6 +263,39 @@ void WritePhotoModeSettings(std::ostream& output, const PhotoModeSettings& setti
     output << "  },\n";
 }
 
+void LoadViewportRecordingSettings(const YAML::Node& node, ViewportRecordingSettings& settings)
+{
+    if (!node || !node.IsMap())
+    {
+        return;
+    }
+    settings.framesPerSecond =
+        static_cast<uint32_t>(std::max(1, ReadIntOrDefault(node["frames_per_second"], static_cast<int>(settings.framesPerSecond))));
+    if (const YAML::Node format = node["format"]; format && format.IsScalar())
+    {
+        settings.format = format.as<std::string>() == "avi" ? ViewportRecordingFormat::Avi : ViewportRecordingFormat::Mp4;
+    }
+    settings.megabitsPerSecond =
+        static_cast<uint32_t>(std::max(0, ReadIntOrDefault(node["megabits_per_second"], static_cast<int>(settings.megabitsPerSecond))));
+    settings.jpegQuality = ReadIntOrDefault(node["jpeg_quality"], settings.jpegQuality);
+    if (node["folder"] && node["folder"].IsScalar())
+    {
+        settings.folder = node["folder"].as<std::string>();
+    }
+    settings = ClampViewportRecordingSettings(settings);
+}
+
+void WriteViewportRecordingSettings(std::ostream& output, const ViewportRecordingSettings& settings)
+{
+    output << "  \"viewport_recording\": {\n";
+    output << "    \"frames_per_second\": " << settings.framesPerSecond << ",\n";
+    output << "    \"format\": \"" << (settings.format == ViewportRecordingFormat::Avi ? "avi" : "mp4") << "\",\n";
+    output << "    \"megabits_per_second\": " << settings.megabitsPerSecond << ",\n";
+    output << "    \"jpeg_quality\": " << settings.jpegQuality << ",\n";
+    output << "    \"folder\": \"" << EscapeJsonString(settings.folder) << "\"\n";
+    output << "  },\n";
+}
+
 void LoadOptionalUiScale(const YAML::Node& node, std::optional<float>& value)
 {
     if (!node || !node.IsScalar())
@@ -624,6 +657,7 @@ bool LoadEngineSettings(const std::filesystem::path& path, EngineSettings& setti
         LoadProcessSettings(root["process"], settings.process);
         LoadQuadRecordingSettings(root["quad_recording"], settings.quadRecording);
         LoadPhotoModeSettings(root["photo_mode"], settings.photoMode);
+        LoadViewportRecordingSettings(root["viewport_recording"], settings.viewportRecording);
 
         return true;
     }
@@ -717,6 +751,7 @@ bool SaveEngineSettings(const std::filesystem::path& path, const EngineSettings&
         WriteProcessSettings(output, settings.process);
         WriteQuadRecordingSettings(output, settings.quadRecording);
         WritePhotoModeSettings(output, settings.photoMode);
+        WriteViewportRecordingSettings(output, settings.viewportRecording);
         WriteViewSettings(output, settings.view);
         output << "}\n";
 

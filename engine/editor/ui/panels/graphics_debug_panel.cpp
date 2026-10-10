@@ -193,9 +193,8 @@ bool PipelineCheckbox(const char* label, bool* value, bool runs, const char* rea
     }
     return changed;
 }
+}
 
-// The viewport's output resolution: the panel's size, or a fixed one that does not change with the
-// editor's layout or the window (shown at its own aspect, with bars round it).
 void DrawViewportResolution(ViewportResolutionSettings& resolution, const std::optional<RenderExtent>& forced)
 {
     struct Preset
@@ -269,7 +268,6 @@ void DrawViewportResolution(ViewportResolutionSettings& resolution, const std::o
     {
         ImGui::TextDisabled("Fixed at %u x %u by --viewport-size or a recording", forced->width, forced->height);
     }
-}
 }
 
 GraphicsDebugPanel::GraphicsDebugPanel()

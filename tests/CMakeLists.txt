@@ -1916,6 +1916,36 @@ add_test(
 
 set_target_properties(miniengine_photo_mode_panel_tests PROPERTIES FOLDER "Tests")
 
+# The viewport recording's settings (clamps, extension, folder, the settings file) and the Recording
+# panel drawn headless, written as PNGs with MINIENGINE_UI_SNAPSHOT_DIR set.
+add_executable(miniengine_recording_panel_tests
+    recording_panel_tests.cpp
+    imgui_software_raster.h
+)
+miniengine_group_target_sources(miniengine_recording_panel_tests)
+
+target_link_libraries(miniengine_recording_panel_tests
+    PRIVATE
+        engine_editor
+)
+target_include_directories(miniengine_recording_panel_tests PRIVATE "${Stb_INCLUDE_DIR}")
+
+if(WIN32)
+    add_custom_command(TARGET miniengine_recording_panel_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:miniengine_recording_panel_tests>
+            $<TARGET_FILE_DIR:miniengine_recording_panel_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
+
+add_test(
+    NAME miniengine.recording_panel
+    COMMAND miniengine_recording_panel_tests
+)
+
+set_target_properties(miniengine_recording_panel_tests PROPERTIES FOLDER "Tests")
+
 # The quad recording (docs/design/2026-10-07-quad-vehicle-recording-design.md): its canvas layouts,
 # the camera names written on it, where its cameras sit around a car, and its settings in the
 # settings file. Links engine_editor for the cameras and the settings; nothing is rendered.

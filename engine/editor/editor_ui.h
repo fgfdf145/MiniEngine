@@ -224,6 +224,8 @@ struct EditorUiFrameResult
     bool quadRecordingPreview = false;
     // The Photo Mode window's photo size and how it is made.
     PhotoModeSettings photoMode;
+    // The Recording window's settings for the next viewport recording.
+    ViewportRecordingSettings viewportRecording;
 };
 
 // The editor shell, as Unreal's level editor or Unity's main window: the main menu, the toolbar, the

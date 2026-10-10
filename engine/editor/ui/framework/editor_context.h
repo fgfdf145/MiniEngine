@@ -17,6 +17,7 @@
 #include <imgui.h>
 
 #include <chrono>
+#include <filesystem>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -45,6 +46,8 @@ struct VideoRecordingIndicator
     std::string message;
     bool messageIsError = false;
     std::chrono::steady_clock::time_point messageTime{};
+    // The last file saved, for Open Last Recording.
+    std::filesystem::path lastFile;
 };
 
 // The backend's per-frame inputs that only the windows read.
@@ -125,6 +128,8 @@ struct EditorSharedState
     // from the backend, the photo being made or how the last one ended.
     PhotoModeSettings photoMode;
     PhotoStatus photoStatus;
+    // The Recording window's settings for the next viewport recording (kept in the engine settings).
+    ViewportRecordingSettings viewportRecording;
     ImTextureID minimapTexture = ImTextureID{};
     ImTextureID selectionOutlineTexture = ImTextureID{};
     bool dlssAvailable = false;

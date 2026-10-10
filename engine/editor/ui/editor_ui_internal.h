@@ -4,6 +4,7 @@
 // Not part of the public engine_editor interface.
 
 #include <engine/platform/file_dialog/file_dialog.h>
+#include <engine/renderer/render_types.h>
 #include <engine/scene/scene_components.h>
 
 #include <imgui.h>
@@ -56,6 +57,12 @@ bool DragIntInRange(const char* label, int* value, int min, int max);
 // a modal asks for the path to be typed instead. The modal lives in the current ID stack, so call
 // this every frame from the same place, not only when the button was pressed.
 std::optional<std::string> PickFilePath(FileDialogType type, bool requested);
+
+// --- ui/panels/graphics_debug_panel.cpp ------------------------------------
+// The viewport's output resolution: the panel's size, or a fixed one that does not change with the
+// editor's layout or the window (shown at its own aspect, with bars round it). Greyed out with
+// `forced` (--viewport-size, a recording), which it names.
+void DrawViewportResolution(ViewportResolutionSettings& resolution, const std::optional<RenderExtent>& forced);
 
 // --- editor_dockspace.cpp -------------------------------------------------
 // The dock space over the main viewport's work area, with the default layout when it is empty: each

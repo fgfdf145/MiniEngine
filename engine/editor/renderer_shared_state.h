@@ -182,6 +182,8 @@ struct RendererSharedState
     // backend last saw it.
     PhotoModeSettings photoMode;
     PhotoStatus photoStatus;
+    // The Recording window's settings (copied from the editor every frame) for the next recording.
+    ViewportRecordingSettings viewportRecording;
     std::deque<PendingModelLoad> pendingModelLoads;
     std::optional<std::string> pendingScenePath;
     std::filesystem::path engineSettingsPath;

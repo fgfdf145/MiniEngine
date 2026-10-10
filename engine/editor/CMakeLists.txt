@@ -33,6 +33,8 @@ add_library(engine_editor
     services/scene_io_service.h
     services/scene_renderables.cpp
     services/scene_renderables.h
+    services/viewport_recording.cpp
+    services/viewport_recording.h
     services/vehicle_drive_service.cpp
     services/vehicle_rig_service.cpp
     services/vehicle_rig_service.h
@@ -104,6 +106,8 @@ add_library(engine_editor
     ui/panels/photo_mode_panel.h
     ui/panels/quad_recording_panel.cpp
     ui/panels/quad_recording_panel.h
+    ui/panels/recording_panel.cpp
+    ui/panels/recording_panel.h
     ui/panels/scene_panel.cpp
     ui/panels/scene_panel.h
     ui/panels/suspension_rigs_panel.cpp

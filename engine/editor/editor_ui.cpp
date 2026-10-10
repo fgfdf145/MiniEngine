@@ -12,6 +12,7 @@
 #include "ui/panels/graphics_debug_panel.h"
 #include "ui/panels/photo_mode_panel.h"
 #include "ui/panels/quad_recording_panel.h"
+#include "ui/panels/recording_panel.h"
 #include "ui/panels/input_monitor_panel.h"
 #include "ui/panels/scene_panel.h"
 #include "ui/panels/suspension_rigs_panel.h"
@@ -92,6 +93,7 @@ void EditorUiController::RegisterWindows()
     m_windows.Register<SuspensionRigsPanel>();
     m_windows.Register<FlexRingTyrePanel>();
     m_windows.Register<DrivePathsPanel>();
+    m_windows.Register<RecordingPanel>();
     m_windows.Register<QuadRecordingPanel>();
     m_windows.Register<PhotoModePanel>();
     m_windows.Register<ThemePanel>();
@@ -246,6 +248,7 @@ void EditorUiController::BeginFrame(SDL_Window* window, const EngineSettings& se
         m_state.process = settings.process;
         m_state.quadRecording = settings.quadRecording;
         m_state.photoMode = settings.photoMode;
+        m_state.viewportRecording = settings.viewportRecording;
         m_windows.ApplyOpenState(settings.editorUi.windows);
         m_state.commands.autoLayout = settings.editorUi.autoLayout;
         m_hasAppliedEngineSettings = true;
@@ -263,6 +266,7 @@ void EditorUiController::WriteEngineSettings(EngineSettings& settings) const
     settings.process = m_state.process;
     settings.quadRecording = m_state.quadRecording;
     settings.photoMode = m_state.photoMode;
+    settings.viewportRecording = m_state.viewportRecording;
     m_windows.WriteOpenState(settings.editorUi.windows);
     settings.editorUi.autoLayout = m_state.commands.autoLayout;
     m_style.WriteSettings(settings.editorUi);
@@ -309,6 +313,7 @@ EditorUiFrameResult EditorUiController::Draw(
     const platform::process::ProcessAllocation previousProcess = m_state.process;
     const QuadRecordingSettings previousQuadRecording = m_state.quadRecording;
     const PhotoModeSettings previousPhotoMode = m_state.photoMode;
+    const ViewportRecordingSettings previousViewportRecording = m_state.viewportRecording;
     // The Quad Recording window asks for its preview again each frame it draws.
     m_state.quadRecordingPreview = false;
     // Every panel's open state, to save the settings when one opens or closes.
@@ -373,7 +378,8 @@ EditorUiFrameResult EditorUiController::Draw(
                                    std::abs(previousUiScale - m_style.UiScaleMultiplier()) > 0.0001f ||
                                    windowToggled || previousAudio != m_state.audio || previousGraphicsBackend != m_state.commands.graphicsBackend ||
                                    previousProcess != m_state.process ||
-                                   previousQuadRecording != m_state.quadRecording || previousPhotoMode != m_state.photoMode;
+                                   previousQuadRecording != m_state.quadRecording || previousPhotoMode != m_state.photoMode ||
+                                   previousViewportRecording != m_state.viewportRecording;
 
     result.renderDebug = m_state.renderDebug;
     result.audio = m_state.audio;
@@ -390,6 +396,7 @@ EditorUiFrameResult EditorUiController::Draw(
     result.quadRecording = m_state.quadRecording;
     result.quadRecordingPreview = m_state.quadRecordingPreview;
     result.photoMode = m_state.photoMode;
+    result.viewportRecording = m_state.viewportRecording;
     return result;
 }
 

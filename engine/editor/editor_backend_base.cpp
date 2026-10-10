@@ -10,6 +10,7 @@
 #include "services/scene_renderables.h"
 #include "services/vehicle_drive_service.h"
 #include "services/vehicle_rig_service.h"
+#include "services/viewport_recording.h"
 #include "services/world_streaming_service.h"
 
 #include <engine/asset/asset_registry.h>
@@ -310,6 +311,7 @@ void EditorRenderBackendBase::ApplyUiActions(const EditorUiFrameResult& uiFrame)
     State().quadRecording = uiFrame.quadRecording;
     State().quadRecordingPreview = uiFrame.quadRecordingPreview;
     State().photoMode = uiFrame.photoMode;
+    State().viewportRecording = uiFrame.viewportRecording;
     if (AudioEngine* const audio = State().audio.get())
     {
         audio->SetMasterVolume(uiFrame.audio.EffectiveVolume());
@@ -1061,6 +1063,8 @@ bool EditorRenderBackendBase::StartVideoRecordingNow(const VideoRecordingRequest
     settings.height = extent.height;
     settings.framesPerSecond = request.framesPerSecond;
     settings.pacing = request.everyFrame ? VideoPacing::EveryFrame : VideoPacing::RealTime;
+    settings.bitsPerSecond = request.bitsPerSecond;
+    settings.jpegQuality = request.jpegQuality;
     try
     {
         std::filesystem::create_directories(request.path.parent_path());
@@ -1127,6 +1131,7 @@ void EditorRenderBackendBase::StopVideoRecordingNow()
         LOG_ERROR("The recording to '{}' stopped: {}", path.string(), status.error);
         return;
     }
+    indicator.lastFile = status.files.empty() ? path : status.files.front();
     const std::string files = status.files.size() > 1 ? fmt::format(" in {} files", status.files.size()) : std::string{};
     indicator.message = fmt::format(
         "Saved {} ({:.1f} s, {}{})", path.filename().string(), status.videoSeconds, FormatMegabytes(status.bytesWritten), files);
@@ -1142,9 +1147,14 @@ void EditorRenderBackendBase::ToggleVideoRecordingFromEditor()
         StopVideoRecording();
         return;
     }
+    // As the Recording window sets it: H.264 MP4 by default where Media Foundation is there to encode
+    // it (small, and sites take it as is).
+    const ViewportRecordingSettings settings = ClampViewportRecordingSettings(State().viewportRecording);
     VideoRecordingRequest request;
-    // H.264 MP4 where Media Foundation is there to encode it: small, and sites take it as is.
-    request.path = BuildCapturePath("recording", Mp4H264Writer::IsSupported() ? ".mp4" : ".avi");
+    request.path = BuildCapturePath("recording", ViewportRecordingExtension(settings), ViewportRecordingFolder(settings));
+    request.framesPerSecond = settings.framesPerSecond;
+    request.bitsPerSecond = settings.megabitsPerSecond * 1'000'000u;
+    request.jpegQuality = settings.jpegQuality;
     std::string error;
     if (!StartVideoRecording(request, error))
     {
