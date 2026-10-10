@@ -283,6 +283,22 @@ bool DrawTuning(VehicleSettings& tuning)
             "ends. More place where the bristles start to slide more finely; the cost grows in step, as with the ribs.\n"
             "Applies at once, also while driving.");
     }
+    DragFloatInRange("Belt Inertia Share", &tuning.beltInertiaShare, 0.05f, 0.95f, "%.2f", 0.01f);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "Each wheel turns as a rim (with the hub, brake disc and half-shaft end) and the tyre's belt on its\n"
+            "sidewalls: the belt's share of the wheel's spin inertia. 0.5 by SWIFT's belt for a car tyre of the R34's\n"
+            "size (Pacejka 2006). Takes effect on the next drive.");
+    }
+    DragFloatInRange("Sidewall Twist Damping", &tuning.sidewallTorsionDampingRatio, 0.0f, 0.5f, "%.3f", 0.001f);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "The sidewalls' torsional damping rolling, as a share of critical with the rim held (the belt's own ring,\n"
+            "some 50 to 70 Hz). 0.03 by Massaro et al. (2023): a car tyre's torsional mode at 3.4 %. Standing still it\n"
+            "rises with the carcass's own damping. Takes effect on the next drive.");
+    }
 
     ImGui::Checkbox("Use the Car's Own Data", &tuning.useCarData);
     if (ImGui::IsItemHovered())

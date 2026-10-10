@@ -1,6 +1,7 @@
 #include "ae86_car_spec.h"
 #include "gtr_car_spec.h"
 
+#include <engine/core/threading/task_system.h>
 #include <engine/physics/collision_filter.h>
 #include <engine/physics/physics_world.h>
 #include <engine/physics/water_surface.h>
@@ -3268,6 +3269,58 @@ LaunchReport MeasureLaunch(const VehicleSettings& tuning, const std::function<vo
 // spin up on its revs, several times the speed of the ground. Traction control slips the clutch past what
 // the tyres take, and a limited-slip differential keeps the two wheels of an axle turning together where the
 // physics engine's own let them take turns spinning.
+// A four-wheel drive with a centre differential (half the torque to each axle) launching on weaker front
+// tyres: an open centre lets the front axle spin up past the rear, the centre's clutch pack (Assetto Corsa's
+// CENTRE_DIFF_POWER) holds the axles together and the rear takes the drive the front cannot.
+void TestCentreDifferentialHoldsTheAxlesTogether()
+{
+    VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec());
+    tuning.drive = VehicleDrive::AllWheel;
+    tuning.centreDrive = VehicleCentreDrive::Differential;
+    tuning.frontTorqueShare = 0.5f;
+    tuning.tractionControlGrip = 0.0f;
+    for (const size_t front : {size_t{0}, size_t{1}})
+    {
+        tuning.tyres[front].longitudinalGrip *= 0.5f;
+        tuning.tyres[front].lateralGrip *= 0.5f;
+    }
+    const auto launch = [&](float centreLock)
+    {
+        VehicleSettings car = tuning;
+        car.centreDifferential = VehicleAxleDifferential{centreLock, 0.0f, centreLock};
+        PhysicsWorld world;
+        AddGroundMesh(world);
+        const VehicleId id = world.AddVehicle(FitVehicleSettingsToBounds(kCarMin, kCarMax, car), {glm::vec3(0.0f, 0.3f, -190.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+        Simulate(world, 1.0f);
+        VehicleControls controls;
+        controls.throttle = 1.0f;
+        world.SetVehicleControls(id, controls);
+        float gap = 0.0f;
+        int samples = 0;
+        for (int frame = 0; frame < 3 * 60; ++frame)
+        {
+            world.Update(1.0f / 60.0f);
+            const float speed = world.GetVehicleTelemetry(id).forwardSpeed;
+            if (speed < 2.0f)
+            {
+                continue;
+            }
+            const std::vector<VehicleWheelState> wheels = world.GetVehicleWheels(id);
+            const float frontSlip = 0.5f * (wheels[0].angularVelocity * wheels[0].radius + wheels[1].angularVelocity * wheels[1].radius) / speed - 1.0f;
+            const float rearSlip = 0.5f * (wheels[2].angularVelocity * wheels[2].radius + wheels[3].angularVelocity * wheels[3].radius) / speed - 1.0f;
+            gap += frontSlip - rearSlip;
+            ++samples;
+        }
+        Require(samples > 60, "the car gets going");
+        return gap / static_cast<float>(samples);
+    };
+    const float open = launch(0.0f);
+    const float locked = launch(0.6f);
+    std::cout << "AWD launch on weaker front tyres, front slip over rear: open centre " << open << ", centre clutch pack " << locked << '\n';
+    Require(open > 0.1f, "an open centre lets the weaker axle spin up, " + std::to_string(open));
+    Require(locked < 0.5f * open, "the centre's clutch pack holds the axles together, " + std::to_string(locked));
+}
+
 void TestDrivenWheelsKeepNearTheGround()
 {
     VehicleSettings tuning = ApplyCarSpec(VehicleSettings{}, MakeBoxsterSpec());
@@ -3460,9 +3513,8 @@ void TestGearboxLaunchesOnTheEnginesRevs()
     Require(ApplyCarSpec(VehicleSettings{}, spec).shiftUpRpm == 0.0f, "a point past the limiter is ignored");
 }
 
-// Launching on the throttle the engine holds near the launch rpm while the clutch slips (launch control
-// cutting the throttle at the top of the window), and a car whose tyres can take the torque (four-wheel
-// drive, as the R34) gets away faster than from the idle. Without traction control: with it, both starts
+// Launching on the throttle the engine holds near the launch rpm while the clutch slips, and a car whose
+// tyres can take the torque (four-wheel drive, as the R34) gets away faster than from the idle. Without traction control: with it, both starts
 // get what the tyres take through a clutch it holds to that, and the launch rpm adds nothing.
 void TestLaunchHoldsTheRevs()
 {
@@ -3665,6 +3717,18 @@ void TestDegenerateMeshIsRejected()
 
 int main()
 {
+    // The engine's task system, as in the editor: each car's four brush tyres step side by side.
+    struct Tasks
+    {
+        Tasks()
+        {
+            me::TaskSystem::Initialize();
+        }
+        ~Tasks()
+        {
+            me::TaskSystem::Shutdown();
+        }
+    } tasks;
     try
     {
         TestFitPlacesWheelsInsideTheBounds();
@@ -3726,6 +3790,7 @@ int main()
         TestTyreTemperaturesFollowTheDrive();
         TestGameTractionControlCutsTheThrottle();
         TestDrivenWheelsKeepNearTheGround();
+        TestCentreDifferentialHoldsTheAxlesTogether();
         TestMultibodyCarRestsAtItsDesignPosition(false);
         TestMultibodyCarRestsAtItsDesignPosition(true);
         TestUnsprungCarStandsOnItsTyres();

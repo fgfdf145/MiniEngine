@@ -107,6 +107,7 @@ miniengine_group_target_sources(miniengine_vehicle_physics_tests)
 
 target_link_libraries(miniengine_vehicle_physics_tests
     PRIVATE
+        engine_core
         engine_physics
 )
 
